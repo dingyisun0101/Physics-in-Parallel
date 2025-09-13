@@ -1,0 +1,17 @@
+[package]
+name = "physic_in_parallel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Automatic parallelism 
+rayon = { version = "1.11"}
+
+# Number traits (real + complex)
+num-traits = "0.2"
+num-complex = "0.4"
+
+# IO
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+
