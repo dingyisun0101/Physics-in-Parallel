@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 # Number traits (real + complex)
 num-traits = "0.2"
-num-complex = "0.4"
+num-complex = { version ="0.4", features = ["serde"]}
 
 # Random number generation
 rand = { version = "0.9", features = ["std", "small_rng"] }
@@ -21,8 +21,8 @@ ahash = "0.8"
 hashbrown = "0.16"
 
 # IO
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
 
 
 
