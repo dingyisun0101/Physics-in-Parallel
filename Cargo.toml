@@ -3,6 +3,20 @@ name = "physics_in_parallel"
 version = "0.1.0"
 edition = "2024"
 
+description = "High-performance infrastructure for numerical simulations in physics"
+license = "MIT OR Apache-2.0"   # Use a valid SPDX expression, or use `license-file = "LICENSE"`
+
+# STRONGLY RECOMMENDED:
+readme = "README.md"
+repository = "git@github.com:dingyisun0101/Physics-in-Parallel.git"
+homepage = "https://github.com/dingyisun0101/Physics-in-Parallel"
+documentation = "https://github.com/dingyisun0101/Physics-in-Parallel"
+keywords = ["physics", "simulation", "math", "tensor", "scientific"]
+categories = ["science"]
+
+
+
+
 [dependencies]
 # Number traits (real + complex)
 num-traits = "0.2"
