@@ -20,6 +20,8 @@ use core::fmt::{Debug, Display};
 use core::iter::{Product, Sum};
 use num_complex::Complex;
 use num_traits::{Num, NumCast, One, Zero};
+use sealed::Sealed;
+use serde::Serialize;
 
 // ==============================================================================
 // ------------------- Sealing: keep impl surface controlled --------------------
@@ -41,7 +43,7 @@ mod sealed {
         num_complex::Complex<f32>, num_complex::Complex<f64>
     );
 }
-use sealed::Sealed;
+
 
 
 
@@ -68,6 +70,7 @@ pub trait Scalar:
     + Sum<Self>
     + Product<Self>
     + Sealed
+    + Serialize
 {
     /// The associated *real* type:
     /// - reals: `Real = Self`
