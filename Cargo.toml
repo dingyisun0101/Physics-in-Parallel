@@ -1,17 +1,33 @@
 [package]
-name = "physic_in_parallel"
+name = "physics_in_parallel"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Automatic parallelism 
-rayon = { version = "1.11"}
-
 # Number traits (real + complex)
 num-traits = "0.2"
 num-complex = "0.4"
 
+# Random number generation
+rand = { version = "0.9", features = ["std", "small_rng"] }
+rand_distr = "0.5"
+rand_chacha = "0.9"
+
+# Automatic parallelism 
+rayon = { version = "1.11"}
+
+# Fast hash maps
+ahash = "0.8"
+hashbrown = "0.16"
+
 # IO
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+
+
+
+[profile.release]
+opt-level = 3  # Maximum optimization
+lto = true     # Enable link-time optimization (slower compile, faster runtime)
+codegen-units = 1  # Better optimization at the cost of compile time
 

@@ -1,4 +1,2 @@
 // src/lib.rs
-
-mod field;
-mod linalg;
+pub mod math_fundations;
