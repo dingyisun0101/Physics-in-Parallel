@@ -6,9 +6,10 @@
 */
 
 use rayon::prelude::*;
-use super::scalar::Scalar;
-use super::tensor::dense::Tensor;
+use serde::Serialize;
 
+use super::super::scalar::Scalar;
+use super::super::tensor::dense::Tensor;
 
 
 // ============================================================================
@@ -16,9 +17,9 @@ use super::tensor::dense::Tensor;
 // ============================================================================
 
 /// Structure-of-Arrays list of n vectors of fixed dimensionality D,
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VectorList<T: Scalar, const D: usize> {
-    data: Tensor<T>, // shape = [D, n]
+    pub data: Tensor<T>, // shape = [D, n]
 }
 
 /// Small mutable view over one vector (row) in SoA.
@@ -274,3 +275,39 @@ impl_binop_delegate!(Sub, sub);
 impl_binop_delegate!(Mul, mul);
 impl_binop_delegate!(Div, div);
 impl_binop_delegate!(BitAnd, bitand);
+
+
+
+
+
+// ============================================================================
+// ---------------------------- High Level Ops --------------------------------
+// ============================================================================
+
+impl<T: Scalar, const D: usize> VectorList<T, D> {
+    /// Scale each i-th vector by `scales[i]`. Length of `scales` must be `n`.
+    #[inline]
+    pub fn scale_by_list(mut self, scales: &Vec<T>) -> Self {
+        let n = self.num_vec();
+        assert!(
+            scales.len() == n,
+            "scale_by_list: scales.len() = {}, expected n = {}",
+            scales.len(),
+            n
+        );
+
+        // For each dimension k, multiply the column slice [k*n .. (k+1)*n]
+        // elementwise by scales[i].
+        for k in 0..D {
+            let start = k * n;
+            let dst = &mut self.data.data[start .. start + n];
+
+            dst.par_iter_mut()
+               .enumerate()
+               .for_each(|(i, x)| {
+                   *x = *x * unsafe { *scales.get_unchecked(i) };
+               });
+        }
+        self
+    }
+}

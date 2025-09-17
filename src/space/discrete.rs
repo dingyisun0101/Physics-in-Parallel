@@ -6,7 +6,7 @@ use serde::Serialize;
 use rayon::prelude::*;
 use rand::random_range;
 
-use super::super::math_fundations::scalar::Scalar;
+use super::super::math::scalar::Scalar;
 
 //==========================================================================================
 // ------------------------- General Formalism: Discrete Space -----------------------------
@@ -41,7 +41,7 @@ pub trait Space<T: Scalar> {
 pub const VACANCY: usize = usize::MAX;
 
 // Grid configuration data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GridConfig {
     pub d: usize,           // dimension
     pub l: usize,           // maximum length scale (linear size)
@@ -70,7 +70,7 @@ impl GridConfig {
 }
 
 // Types of grid
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum GridType<T: Scalar> {
     Empty,
     Uniform { val: T },
@@ -80,7 +80,7 @@ pub enum GridType<T: Scalar> {
 
 
 // --------------------------------- Main def and impl ----------------------------------
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Grid<T: Scalar> {
     pub cfg: GridConfig,
     pub kind: GridType<T>,

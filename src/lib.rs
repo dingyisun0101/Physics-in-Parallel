@@ -1,3 +1,3 @@
 // src/lib.rs
-pub mod math_fundations;
+pub mod math;
 pub mod space;

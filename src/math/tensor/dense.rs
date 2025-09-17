@@ -9,6 +9,8 @@ use std::fmt::Display;
 use std::ops::{Add, Sub, Mul, Div, BitAnd};
 use std::str::FromStr;
 use rayon::prelude::*;
+use serde::Serialize;
+use num_traits::NumCast;
 
 use super::super::scalar::Scalar;
 use super::sparse::Tensor as TensorSparse;
@@ -17,7 +19,7 @@ use super::sparse::Tensor as TensorSparse;
 // -------------------------- Basic Struct --------------------------
 //===================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Tensor<T: Scalar> {
     pub shape: Vec<usize>,
     pub data: Vec<T>,
@@ -62,6 +64,50 @@ impl<T: Scalar> Tensor<T> {
         unsafe { *self.data.get_unchecked_mut(idx) = val }
     }
 }
+
+
+
+
+
+//===================================================================
+// ----------------------- Parallel Iterator ------------------------
+//===================================================================
+
+impl<T: Scalar> Tensor<T> {
+    /// Parallel fill with a copyable value.
+    #[inline]
+    pub fn par_fill(&mut self, value: T)
+    where
+        T: Copy,
+    {
+        self.data.par_iter_mut().for_each(|x| *x = value);
+    }
+
+    /// Parallel elementwise map (in-place).
+    #[inline]
+    pub fn par_map_inplace<F>(&mut self, f: F)
+    where
+        T: Copy,
+        F: Fn(T) -> T + Sync + Send,
+    {
+        self.data.par_iter_mut().for_each(|x| *x = f(*x));
+    }
+
+    /// Parallel elementwise zip-with assignment: self[i] = f(self[i], other[i]).
+    #[inline]
+    pub fn par_zip_with_inplace<F>(&mut self, other: &Tensor<T>, f: F)
+    where
+        T: Copy,
+        F: Fn(T, T) -> T + Sync + Send,
+    {
+        assert_eq!(self.data.len(), other.data.len(), "shape mismatch");
+        self.data
+            .par_iter_mut()
+            .zip(other.data.par_iter())
+            .for_each(|(a, &b)| *a = f(*a, b));
+    }
+}
+
 
 //===================================================================
 // --------------------------- Accessors ----------------------------
@@ -142,6 +188,58 @@ impl_tensor_op!(Sub, sub, -);
 impl_tensor_op!(Mul, mul, *);
 impl_tensor_op!(Div, div, /);
 impl_tensor_op!(BitAnd, bitand, &);
+
+
+
+// ===================================================================
+// ---------------------------- Type Casting --------------------------
+// ===================================================================
+
+impl<T: Scalar> Tensor<T> {
+    /* 
+        Try to cast the entire tensor into another scalar type `U`.
+        Real→Real or Complex→Complex: component-wise cast.
+        Real→Complex: imag part becomes 0.
+        Complex→Real: imag part dropped (per `Scalar::from_re_im` contract).
+        Fails if any component cannot be represented in the target type.
+    */
+
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, &'static str> {
+        #[inline(always)]
+        fn cast_scalar<T: Scalar, U: Scalar>(x: T) -> Result<U, &'static str> {
+            let r_t: T::Real = x.re();
+            let i_t: T::Real = x.im();
+
+            // Cast real and imaginary parts into U::Real
+            let r_u: U::Real = NumCast::from(r_t).ok_or("real part out of range for target type")?;
+            let i_u: U::Real = NumCast::from(i_t).ok_or("imag part out of range for target type")?;
+
+            // Build the target value (imag ignored for real targets)
+            Ok(U::from_re_im(r_u, i_u))
+        }
+
+        let data: Result<Vec<U>, _> = self
+            .data
+            .par_iter()
+            .map(|&x| cast_scalar::<T, U>(x))
+            .collect();
+
+        Ok(Tensor {
+            shape: self.shape.clone(),
+            data: data?,
+        })
+    }
+
+    /// Cast the entire tensor into another scalar type `U`, panicking on failure.
+    /// Use this when you’re sure the cast cannot overflow/underflow.
+    #[inline]
+    pub fn cast_to<U: Scalar>(&self) -> Tensor<U> {
+        self.try_cast_to::<U>()
+            .expect("tensor cast failed: component out of range for target type")
+    }
+}
+
+
 
 
 

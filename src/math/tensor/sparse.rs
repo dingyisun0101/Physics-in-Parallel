@@ -13,6 +13,7 @@ use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
 use rayon::iter::ParallelBridge;
 use std::ops::{Add, Sub, Mul, Div, BitAnd};
+use num_traits::NumCast;
 
 use super::super::scalar::Scalar;
 use super::dense::Tensor as TensorDense;
@@ -250,6 +251,59 @@ impl_sparse_scalar_binop_rhs_scalar!(Sub, sub, -);
 impl_sparse_scalar_binop_rhs_scalar!(Mul, mul, *);
 impl_sparse_scalar_binop_rhs_scalar!(Div, div, /);
 
+
+
+
+
+// ===================================================================
+// ---------------------------- Type Casting --------------------------
+// ===================================================================
+
+impl<T: Scalar> Tensor<T> {
+    /*
+        Try to cast the sparse tensor into another scalar type `U`.
+        Real→Real or Complex→Complex: component-wise cast.
+        Real→Complex: imag part becomes 0.
+        Complex→Real: imag part dropped (per `Scalar::from_re_im` contract).
+        Zeros are automatically pruned.
+     */
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, &'static str> {
+        #[inline(always)]
+        fn cast_scalar<T: Scalar, U: Scalar>(x: T) -> Result<U, &'static str> {
+            let r_t: T::Real = x.re();
+            let i_t: T::Real = x.im();
+
+            let r_u: U::Real =
+                NumCast::from(r_t).ok_or("real part out of range for target type")?;
+            let i_u: U::Real =
+                NumCast::from(i_t).ok_or("imag part out of range for target type")?;
+
+            Ok(U::from_re_im(r_u, i_u))
+        }
+
+        let out_pairs: Result<Vec<(usize, U)>, _> = self
+            .data
+            .par_iter()
+            .map(|(&k, &v)| {
+                cast_scalar::<T, U>(v).map(|u| (k, u))
+            })
+            .filter_map(|res| match res {
+                Ok((k, v)) if v != U::zero() => Some(Ok((k, v))),
+                Ok(_) => None, // drop zeros
+                Err(e) => Some(Err(e)),
+            })
+            .collect();
+
+        Ok(Tensor::<U>::from_flat_pairs(self.shape.clone(), out_pairs?))
+    }
+
+    /// Cast the sparse tensor into another scalar type `U`, panicking on failure.
+    #[inline]
+    pub fn cast_to<U: Scalar>(&self) -> Tensor<U> {
+        self.try_cast_to::<U>()
+            .expect("sparse tensor cast failed: component out of range for target type")
+    }
+}
 
 
 

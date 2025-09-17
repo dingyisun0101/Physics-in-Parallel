@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"   # Use a valid SPDX expression, or use `license-f
 
 # STRONGLY RECOMMENDED:
 readme = "README.md"
-repository = "git@github.com:dingyisun0101/Physics-in-Parallel.git"
+repository = "https://github.com/dingyisun0101/Physics-in-Parallel"
 homepage = "https://github.com/dingyisun0101/Physics-in-Parallel"
 documentation = "https://github.com/dingyisun0101/Physics-in-Parallel"
 keywords = ["physics", "simulation", "math", "tensor", "scientific"]
