@@ -1,8 +1,12 @@
 // src/math_foundations/vector_list.rs
-/*
-    VectorList is a wrapper for tensor::dense::Tensor.
-    It interprets tensor in a SoA layout [D, n] to represent an n-element list of D-dimensional vectors.
-    It provides high level accesors to manipulate the vectors.
+/*!
+A **Structure-of-Arrays (SoA)** wrapper over the dense `Tensor<T>` type to represent
+a list of fixed-length vectors. The underlying `Tensor` has shape **[D, n]** where:
+
+- `D` is the (runtime) vector dimensionality.
+- `n` is the number of vectors in the list (runtime).
+
+This layout stores all 0-th components together, then all 1-st components, etc.
 */
 
 use rayon::prelude::*;
@@ -11,255 +15,244 @@ use serde::Serialize;
 use super::super::scalar::Scalar;
 use super::super::tensor::dense::Tensor;
 
-
 // ============================================================================
 // --------------------------- Struct Def: SoA --------------------------------
 // ============================================================================
 
-/// Structure-of-Arrays list of n vectors of fixed dimensionality D,
+/// A list of `n` vectors in **Structure-of-Arrays** form backed by `Tensor<T>`.
+/// Invariant: `data.shape == [D, n]` with both dimensions > 0 allowed (n may be 0).
 #[derive(Debug, Clone, Serialize)]
-pub struct VectorList<T: Scalar, const D: usize> {
-    pub data: Tensor<T>, // shape = [D, n]
+pub struct VectorList<T: Scalar> {
+    /// Underlying dense storage; must always have shape `[D, n]`.
+    pub data: Tensor<T>,
 }
 
-/// Small mutable view over one vector (row) in SoA.
-pub struct VecRefMut<'a, T, const D: usize> {
-    cols: [&'a mut T; D],
+/// Mutable proxy to one vector (column index `i`) exposing D disjoint `&mut T`.
+pub struct VecRefMut<'a, T: Scalar> {
+    cols: Vec<&'a mut T>,
 }
-impl<'a, T: Scalar, const D: usize> VecRefMut<'a, T, D> {
-    #[inline] pub fn get(&self, k: usize) -> &T { self.cols[k] }
-    #[inline] pub fn get_mut(&mut self, k: usize) -> &mut T { self.cols[k] }
-    #[inline] pub fn set_from(&mut self, vals: [T; D]) where T: Copy {
-        for k in 0..D { *self.cols[k] = vals[k]; }
+
+impl<'a, T: Scalar> VecRefMut<'a, T> {
+    #[inline] pub fn len(&self) -> usize { self.cols.len() }
+
+    #[inline] pub fn get(&self, k: usize) -> &T {
+        debug_assert!(k < self.cols.len());
+        self.cols[k]
+    }
+
+    #[inline] pub fn get_mut(&mut self, k: usize) -> &mut T {
+        debug_assert!(k < self.cols.len());
+        self.cols[k]
+    }
+
+    #[inline] pub fn set_from(&mut self, vals: &[T]) where T: Copy {
+        assert!(vals.len() == self.cols.len(), "set_from: length mismatch");
+        for (dst, &v) in self.cols.iter_mut().zip(vals.iter()) { **dst = v; }
     }
 }
 
-impl<T: Scalar, const D: usize> VectorList<T, D> {
-    /// Create with `n` vectors (all components default-initialized).
+// ============================================================================
+// ------------------------------ Constructors --------------------------------
+// ============================================================================
+
+impl<T: Scalar> VectorList<T> {
+    /// Create a new list with `n` vectors of dimensionality `dim`, default-initialized.
+    /// Internally calls `Tensor::new(vec![dim, n])`.
     #[inline]
-    pub fn new(n: usize) -> Self {
-        Self { data: Tensor::new(vec![D, n]) }
+    pub fn new(dim: usize, n: usize) -> Self {
+        assert!(dim > 0, "VectorList::new: dim must be > 0");
+        Self { data: Tensor::new(vec![dim, n]) }
     }
 
-    /// Wrap an existing SoA tensor (must be shape [D, n]).
+    /// Wrap an existing dense tensor as a `VectorList`, asserting shape `[D, n]`.
     #[inline]
     pub fn from_tensor(t: Tensor<T>) -> Self {
-        assert!(t.shape.len() == 2 && t.shape[0] == D, "VectorList expects shape [D, n]");
+        assert!(t.shape.len() == 2, "VectorList expects rank-2 tensor [D, n]");
         Self { data: t }
     }
 
-    /// Number of vectors `n` (derived from the Tensor shape).
+    /// Number of vectors `n` (second dimension).
     #[inline]
-    pub fn num_vec(&self) -> usize {
-        assert!(self.data.shape.len() == 2 && self.data.shape[0] == D, "shape must be [D, n]");
+    pub fn num_vectors(&self) -> usize {
+        debug_assert!(self.data.shape.len() == 2);
         self.data.shape[1]
     }
 
-    /// Dimensionality (compile-time constant).
+    /// Dimensionality `D` (first dimension).
     #[inline]
-    pub const fn dim(&self) -> usize { D }
+    pub fn dim(&self) -> usize {
+        debug_assert!(self.data.shape.len() == 2);
+        self.data.shape[0]
+    }
 
-    /// Borrow the underlying tensor (shape [D, n]).
+    /// Borrow the underlying tensor (shape `[D, n]`).
     #[inline] pub fn as_tensor(&self) -> &Tensor<T> { &self.data }
 
-    /// Consume into the underlying tensor (shape [D, n]).
+    /// Consume and return the underlying tensor (shape `[D, n]`).
     #[inline] pub fn into_tensor(self) -> Tensor<T> { self.data }
 }
-
-
-
-
 
 // ============================================================================
 // ----------------------------- Accessors ------------------------------------
 // ============================================================================
-impl<T: Scalar, const D: usize> VectorList<T, D> {
-    /// Immutable slice of dimension `k` (length = n). SoA-contiguous.
+
+impl<T: Scalar> VectorList<T> {
+    /// Immutable slice of dimension `k` (length `n`). Contiguous SoA chunk.
     #[inline]
     pub fn dim_slice(&self, k: usize) -> &[T] {
-        assert!(k < D, "dim_slice: k {} out of range (D={})", k, D);
-        let n = self.num_vec();
+        let d = self.dim(); assert!(k < d, "dim_slice: k {} out of range (D={})", k, d);
+        let n = self.num_vectors();
         let (start, end) = (k * n, (k + 1) * n);
         &self.data.data[start..end]
     }
 
-    /// Mutable slice of dimension `k` (length = n). SoA-contiguous.
+    /// Mutable slice of dimension `k` (length `n`). Contiguous SoA chunk.
     #[inline]
     pub fn dim_slice_mut(&mut self, k: usize) -> &mut [T] {
-        assert!(k < D, "dim_slice_mut: k {} out of range (D={})", k, D);
-        let n = self.num_vec();
+        let d = self.dim(); assert!(k < d, "dim_slice_mut: k {} out of range (D={})", k, d);
+        let n = self.num_vectors();
         let (start, end) = (k * n, (k + 1) * n);
         &mut self.data.data[start..end]
     }
 
-    /// Scalar access (i, k) = i-th vector’s k-th component.
+    /// Immutable scalar access to component `(i,k)`.
     #[inline]
     pub fn get(&self, i: usize, k: usize) -> &T {
-        assert!(k < D, "get: k {} out of range (D={})", k, D);
-        let n = self.num_vec();
-        assert!(i < n, "get: i {} out of range (n={})", i, n);
-        &self.data.data[k * n + i]
+        let d = self.dim(); let n = self.num_vectors();
+        assert!(k < d && i < n, "get: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
+        self.data.get(&[k, i])
     }
 
-    /// Mutable scalar access (i, k).
+    /// Mutable scalar access to component `(i,k)`.
     #[inline]
     pub fn get_mut(&mut self, i: usize, k: usize) -> &mut T {
-        assert!(k < D, "get_mut: k {} out of range (D={})", k, D);
-        let n = self.num_vec();
-        assert!(i < n, "get_mut: i {} out of range (n={})", i, n);
-        &mut self.data.data[k * n + i]
+        let d = self.dim(); let n = self.num_vectors();
+        assert!(k < d && i < n, "get_mut: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
+        self.data.get_mut(&[k, i])
     }
 
-    /// Return i-th vector as a tiny copied array `[T; D]` (no heap).
+    /// Set component `(i,k)` to `val`.
     #[inline]
-    pub fn get_vec(&self, i: usize) -> [T; D]
-    where
-        T: Copy,
-    {
-        let n = self.num_vec();
+    pub fn set(&mut self, i: usize, k: usize, val: T) {
+        let d = self.dim(); let n = self.num_vectors();
+        assert!(k < d && i < n, "set: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
+        self.data.set(&[k, i], val);
+    }
+
+    /// Return the `i`-th vector as a new `Vec<T>` of length `D` (copied).
+    #[inline]
+    pub fn get_vec(&self, i: usize) -> Vec<T> where T: Copy {
+        let d = self.dim(); let n = self.num_vectors();
         assert!(i < n, "get_vec: i {} out of range (n={})", i, n);
-        std::array::from_fn(|k| unsafe {
-            // Safety: bounds checked above; k<n dims, SoA layout index = k*n + i
-            *self.data.data.get_unchecked(k * n + i)
-        })
+        let mut out = Vec::with_capacity(d);
+        for k in 0..d {
+            let flat = k * n + i;
+            out.push(*self.data.get_by_idx(flat));
+        }
+        out
     }
 
-    /// Mutable proxy to i-th vector providing D disjoint `&mut T`.
-    /// Uses `unsafe` internally to construct element-wise &mut refs at offsets `k*n + i`.
+    /// Create a mutable proxy to the `i`-th vector exposing `D` disjoint `&mut T`.
     #[inline]
-    pub fn get_vec_mut(&mut self, i: usize) -> VecRefMut<'_, T, D> {
-        let n = self.num_vec();
+    pub fn get_vec_mut(&mut self, i: usize) -> VecRefMut<'_, T> {
+        let d = self.dim(); let n = self.num_vectors();
         assert!(i < n, "get_vec_mut: i {} out of range (n={})", i, n);
-        // SAFETY: For fixed `i`, the D indices `k*n + i` are all distinct for k=0..D-1.
+
+        // SAFETY: indices (k*n + i) are all distinct for fixed `i`.
         let p = self.data.data.as_mut_ptr();
-        let cols = std::array::from_fn(|k| unsafe { &mut *p.add(k * n + i) });
+        let cols = (0..d).map(|k| unsafe { &mut *p.add(k * n + i) }).collect();
         VecRefMut { cols }
     }
 }
-
 
 // ============================================================================
 // ---------------------------- Normalization ---------------------------------
 // ============================================================================
 
-impl<T, const D: usize> VectorList<T, D>
+impl<T> VectorList<T>
 where
-    T: Scalar + PartialOrd
+    T: Scalar + PartialOrd,
 {
-    // In-place L2 normalization
+    /// In-place L2 normalization of each vector `i`: `v_i ← v_i / ||v_i||` if `||v_i|| > 0`.
     #[inline]
     pub fn normalize(&mut self) {
-        let n = self.num_vec();
+        let d = self.dim(); let n = self.num_vectors();
+        if n == 0 || d == 0 { return; }
 
-        for i in 0..n {
-            // 1) compute norm of row i
+        // 1) norms: [n]
+        let mut norms = Tensor::<T>::new(vec![n]);
+        norms.data.par_iter_mut().enumerate().for_each(|(i, ni)| {
             let mut s = T::zero();
-            for k in 0..D {
-                let idx = k * n + i;                // SoA index (k, i)
-                let x   = self.data.data[idx];
+            for k in 0..d {
+                let x = self.data.data[k * n + i];
                 s = s + x * x;
             }
-            let nrm = <T as Scalar>::sqrt(s);
+            *ni = <T as Scalar>::sqrt(s);
+        });
 
-            // 2) scale row i if nonzero
-            if nrm > T::zero() {
-                for k in 0..D {
-                    let idx = k * n + i;
-                    // write back normalized component
-                    self.data.data[idx] = self.data.data[idx] / nrm;
-                }
-            }
+        // 2) divide each SoA slice by norms
+        for k in 0..d {
+            let xs = self.dim_slice_mut(k);
+            let ns = &norms.data;
+            xs.par_iter_mut().zip(ns.par_iter()).for_each(|(x, &nrm)| {
+                if nrm > T::zero() { *x = *x / nrm; }
+            });
         }
     }
 
-    /// Compute per-vector L2 norms and unit vectors.
-    /// Allocates only the returned outputs:
-    /// - `norms`: Tensor<T> with shape [n]
-    /// - `units`: VectorList<T, D> with shape [D, n]
+    /// Return `(norms, units)` where norms: `[n]`, units: `[D,n]` (zero maps to zero unit).
     #[inline]
-    pub fn to_polar(&self) -> (Tensor<T>, VectorList<T, D>) {
-        let n = self.num_vec();
+    pub fn to_polar(&self) -> (Tensor<T>, VectorList<T>) {
+        let d = self.dim(); let n = self.num_vectors();
 
-        // -------- 1) norms: [n] --------
+        // 1) norms
         let mut norms = Tensor::<T>::new(vec![n]);
-        norms
-            .data
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(i, ni)| {
-                let mut s = T::zero();
-                // sum over dims
-                for k in 0..D {
-                    let x = unsafe { *self.data.data.get_unchecked(k * n + i) };
-                    s = s + x * x;
-                }
-                *ni = <T as Scalar>::sqrt(s);
+        norms.data.par_iter_mut().enumerate().for_each(|(i, ni)| {
+            let mut s = T::zero();
+            for k in 0..d {
+                let flat = k * n + i;
+                let x = *self.data.get_by_idx(flat);
+                s = s + x * x;
+            }
+            *ni = <T as Scalar>::sqrt(s);
+        });
+
+        // 2) units
+        let mut units = VectorList::<T>::new(d, n);
+        for k in 0..d {
+            let src = self.dim_slice(k);
+            let dst = units.dim_slice_mut(k);
+            dst.par_iter_mut().enumerate().for_each(|(i, u)| {
+                let nrm = norms.data[i];
+                let x = unsafe { *src.get_unchecked(i) };
+                *u = if nrm > T::zero() { x / nrm } else { T::zero() };
             });
-
-        // -------- 2) unit vectors: [D, n] --------
-        let mut units = VectorList::<T, D>::new(n);
-        for k in 0..D {
-            // source and destination column slices (length n)
-            let src_start = k * n;
-            let src = &self.data.data[src_start .. src_start + n];
-            let dst = &mut units.data.data[src_start .. src_start + n];
-
-            dst.par_iter_mut()
-               .enumerate()
-               .for_each(|(i, u)| {
-                   let nrm = norms.data[i];
-                   let x = unsafe { *src.get_unchecked(i) };
-                   *u = if nrm > T::zero() { x / nrm } else { T::zero() };
-               });
         }
 
         (norms, units)
     }
 }
 
-
-
 // ============================================================================
 // ------------------------------ Arithmetics ---------------------------------
 // ============================================================================
 
-// Arithmetic ops: delegate to `Tensor` after shape checks.
-// These consume `self` and `rhs` (matching your `Tensor` ops signatures).
-
-impl<T, const D: usize> VectorList<T, D>
-where
-    T: Scalar,
-{
+impl<T: Scalar> VectorList<T> {
     #[inline]
     fn assert_same_shape(&self, other: &Self) {
-        // Both must be [D, n] with the same n.
-        assert!(
-            self.data.shape.len() == 2 && self.data.shape[0] == D,
-            "lhs shape must be [D, n], got {:?}",
-            self.data.shape
-        );
-        assert!(
-            other.data.shape.len() == 2 && other.data.shape[0] == D,
-            "rhs shape must be [D, n], got {:?}",
-            other.data.shape
-        );
-        assert!(
-            self.num_vec() == other.num_vec(),
-            "VectorList length mismatch: {} vs {}",
-            self.num_vec(),
-            other.num_vec()
-        );
+        assert!(self.data.shape.len() == 2 && other.data.shape.len() == 2);
+        assert!(self.dim() == other.dim(), "D mismatch: {} vs {}", self.dim(), other.dim());
+        assert!(self.num_vectors() == other.num_vectors(), "n mismatch: {} vs {}", self.num_vectors(), other.num_vectors());
     }
 }
 
 macro_rules! impl_binop_delegate {
     ($trait:ident, $method:ident) => {
-        impl<T, const D: usize> core::ops::$trait for VectorList<T, D>
+        impl<T> core::ops::$trait for VectorList<T>
         where
-            T: Scalar + core::ops::$trait<Output = T>,
+            T: Scalar + core::ops::$trait<Output = T> + Send + Sync,
         {
             type Output = Self;
-
             #[inline]
             fn $method(self, rhs: Self) -> Self::Output {
                 self.assert_same_shape(&rhs);
@@ -276,38 +269,44 @@ impl_binop_delegate!(Mul, mul);
 impl_binop_delegate!(Div, div);
 impl_binop_delegate!(BitAnd, bitand);
 
-
-
-
-
 // ============================================================================
 // ---------------------------- High Level Ops --------------------------------
 // ============================================================================
 
-impl<T: Scalar, const D: usize> VectorList<T, D> {
-    /// Scale each i-th vector by `scales[i]`. Length of `scales` must be `n`.
+impl<T: Scalar> VectorList<T> {
+    /// Scale each vector `i` by `scales[i]`. Requires `scales.len() == n`.
     #[inline]
-    pub fn scale_by_list(mut self, scales: &Vec<T>) -> Self {
-        let n = self.num_vec();
-        assert!(
-            scales.len() == n,
-            "scale_by_list: scales.len() = {}, expected n = {}",
-            scales.len(),
-            n
-        );
+    pub fn scale_by_list(mut self, scales: &[T]) -> Self {
+        let n = self.num_vectors();
+        assert!(scales.len() == n, "scale_by_list: scales.len()={}, n={}", scales.len(), n);
 
-        // For each dimension k, multiply the column slice [k*n .. (k+1)*n]
-        // elementwise by scales[i].
-        for k in 0..D {
-            let start = k * n;
-            let dst = &mut self.data.data[start .. start + n];
-
-            dst.par_iter_mut()
-               .enumerate()
-               .for_each(|(i, x)| {
-                   *x = *x * unsafe { *scales.get_unchecked(i) };
-               });
+        let d = self.dim();
+        for k in 0..d {
+            let slice = self.dim_slice_mut(k);
+            slice.par_iter_mut().enumerate().for_each(|(i, x)| {
+                *x = *x * unsafe { *scales.get_unchecked(i) };
+            });
         }
         self
+    }
+}
+
+
+// ============================================================================
+// ---------------------------- Casting --------------------------------
+// ============================================================================
+impl<T: Scalar> VectorList<T> {
+    /// Cast the underlying `[D, n]` tensor into a new `VectorList<U>`, consuming `self`.
+    /// Delegates to `Tensor::cast_to::<U>()`.
+    #[inline]
+    pub fn cast_to<U: Scalar>(self) -> VectorList<U> {
+        VectorList { data: self.data.cast_to::<U>() }
+    }
+
+    /// Cast into a new `VectorList<U>` without consuming `self` (clones first).
+    /// Useful when you want to keep the original list.
+    #[inline]
+    pub fn cast_to_ref<U: Scalar>(&self) -> VectorList<U> {
+        VectorList { data: self.data.cast_to::<U>() }
     }
 }
