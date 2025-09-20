@@ -12,8 +12,9 @@ Goals:
 # Highlights
 
 - `Tensor<T>::new(shape)`: zero-initialized tensor of shape `shape`.
-- `index`, `get`, `get_mut`, `set`: multi-index access **with negative indices supported**.
-- `get_by_idx*`, `set_by_idx`: fast linear-index access (with bounds assert + unchecked).
+- `index`, `get`, `get_mut`, `set`: multi-index access with **periodic wrapping** on each axis.
+- **Negative indices are allowed** and are wrapped to the corresponding positive location.
+- `get_by_idx*`, `set_by_idx`: linear-index access with **wrap-around** (toroidal) semantics.
 - `par_fill`, `par_map_inplace`, `par_zip_with_inplace`: parallel in-place transforms.
 - `Add/Sub/Mul/Div/BitAnd`: parallel elementwise binary ops with shape checks.
 - `try_cast_to::<U>()` / `cast_to::<U>()`: whole-tensor scalar type conversion.
@@ -28,6 +29,13 @@ Goals:
 > - `fn from_re_im(r: Self::Real, i: Self::Real) -> Self`
 > - `fn zero() -> Self`, `fn default() -> Self`
 > and typical arithmetic traits. Adjust bounds if your `Scalar` differs.
+
+> **Semantics (Important!)**  
+> - All accessors use **toroidal wrapping**:
+>   - Axis index `a` maps to `((a % dim) + dim) % dim` (Euclidean modulo).
+>   - Linear index `k` maps to `k % len`.
+> - Therefore, **no accessor ever panics on index** (except rank-mismatch in `index()` via debug-assert).
+> - These semantics are ideal for lattice/periodic-boundary simulations.
 
 */
 
@@ -80,50 +88,67 @@ impl<T: Scalar> Tensor<T> {
             data: vec![T::default(); size],
         }
     }
+
+    /// Number of elements (a.k.a. linear size).
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// True iff there are zero elements (never true given our shape assertion).
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+//===================================================================
+// ------------------------ Index Wrapping --------------------------
+//===================================================================
+
+/// Euclidean modulo for axis indices (supports negatives).
+#[inline(always)]
+fn wrap_axis_index(idx: isize, dim: usize) -> usize {
+    debug_assert!(dim > 0);
+    let d = dim as isize;
+    let mut m = idx % d;
+    if m < 0 { m += d; }
+    m as usize
+}
+
+/// Wrap linear index into `[0, len)`.
+#[inline(always)]
+fn wrap_linear_index(idx: usize, len: usize) -> usize {
+    debug_assert!(len > 0);
+    idx % len
 }
 
 //===================================================================
 // ------------------------- Raw Accessors --------------------------
 //===================================================================
-// These methods operate on **linear** indices and use `get_unchecked` after
-// explicit bound assertions.
+// These methods operate on **linear** indices and always return
+// a valid reference by wrapping the index into range.
 
 impl<T: Scalar> Tensor<T> {
     #[inline(always)]
     pub fn get_by_idx(&self, idx: usize) -> &T {
-        assert!(idx < self.data.len(), "Index {} out of bounds", idx);
-        unsafe { self.data.get_unchecked(idx) }
+        let k = wrap_linear_index(idx, self.data.len());
+        // SAFETY: k < len by construction
+        unsafe { self.data.get_unchecked(k) }
     }
 
     #[inline(always)]
     pub fn get_by_idx_mut(&mut self, idx: usize) -> &mut T {
-        assert!(idx < self.data.len(), "Index {} out of bounds", idx);
-        unsafe { self.data.get_unchecked_mut(idx) }
+        let k = wrap_linear_index(idx, self.data.len());
+        // SAFETY: k < len by construction
+        unsafe { self.data.get_unchecked_mut(k) }
     }
 
     #[inline(always)]
     pub fn set_by_idx(&mut self, idx: usize, val: T) {
-        assert!(idx < self.data.len(), "Index {} out of bounds", idx);
-        unsafe { *self.data.get_unchecked_mut(idx) = val }
-    }
-}
-
-//===================================================================
-// ------------------------ Index Normalization ---------------------
-//===================================================================
-
-#[inline(always)]
-fn norm_axis_index(idx: isize, dim: usize) -> usize {
-    // Support negative indices: -1 → dim-1, -2 → dim-2, ...
-    if idx >= 0 {
-        let u = idx as usize;
-        assert!(u < dim, "Index out of bounds on axis (>=0): {} !< {}", u, dim);
-        u
-    } else {
-        // Avoid overflow on isize::MIN by doing (-(idx+1)) + 1
-        let abs = (-(idx + 1)) as usize + 1;
-        assert!(abs <= dim, "Index out of bounds on axis (<0): -{} > dim {}", abs, dim);
-        dim - abs
+        let k = wrap_linear_index(idx, self.data.len());
+        // SAFETY: k < len by construction
+        unsafe { *self.data.get_unchecked_mut(k) = val }
     }
 }
 
@@ -143,48 +168,53 @@ where
         &self.shape
     }
 
+    /// Row-major linearization with **per-axis periodic wrapping**.
+    ///
+    /// - Accepts negative indices and arbitrarily large/small signed values.
+    /// - Never panics due to out-of-bounds (only rank mismatch is debug-asserted).
     #[inline(always)]
     fn index(&self, indices: &[isize]) -> usize {
         debug_assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
-        // Row-major linearization with negative-index support.
+
+        // Compute flat index by accumulating a * stride.
+        // We iterate from the last axis to the first to build the stride.
         let mut flat = 0usize;
         let mut stride = 1usize;
-        for (rev_axis, &dim) in self.shape.iter().rev().enumerate() {
-            let axis = self.shape.len() - 1 - rev_axis;
-            let raw = indices[axis];
-            let a = if raw >= 0 {
-                let u = raw as usize;
-                assert!(u < dim, "Index out of bounds on axis {}: {} >= {}", axis, u, dim);
-                u
-            } else {
-                let abs = (-(raw + 1)) as usize + 1;
-                assert!(abs <= dim, "Index out of bounds on axis {}: -{} > {}", axis, abs, dim);
-                dim - abs
-            };
+
+        for (&dim, &raw_a) in self.shape.iter().rev().zip(indices.iter().rev()) {
+            let a = wrap_axis_index(raw_a, dim);
             flat += a * stride;
             stride *= dim;
         }
         flat
     }
 
+    /// Get by (wrapped) multi-index. Returns a copy of T (Scalar assumed Copy).
     #[inline(always)]
     fn get(&self, indices: &[isize]) -> T {
         let k = self.index(indices);
+        // SAFETY: k is wrapped into [0, len)
         unsafe { *self.data.get_unchecked(k) }
     }
 
+    /// Get mutable reference by (wrapped) multi-index.
+    /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
     fn get_mut(&mut self, indices: &[isize]) -> Option<&mut T> {
         let k = self.index(indices);
+        // SAFETY: k is wrapped into [0, len)
         Some(unsafe { self.data.get_unchecked_mut(k) })
     }
 
+    /// Set value at (wrapped) multi-index.
     #[inline(always)]
     fn set(&mut self, indices: &[isize], val: T) {
         let k = self.index(indices);
+        // SAFETY: k is wrapped into [0, len)
         unsafe { *self.data.get_unchecked_mut(k) = val }
     }
 
+    /// Parallel fill with a constant value.
     #[inline]
     fn par_fill(&mut self, value: T)
     where
@@ -193,6 +223,7 @@ where
         self.data.par_iter_mut().for_each(|x| *x = value);
     }
 
+    /// Parallel in-place map with a pure function.
     #[inline]
     fn par_map_in_place<F>(&mut self, f: F)
     where
@@ -202,6 +233,10 @@ where
         self.data.par_iter_mut().for_each(|x| *x = f(*x));
     }
 
+    /// Parallel in-place zip with another tensor-like structure.
+    ///
+    /// This calls `other.get(&idx)` for each linear position `k`,
+    /// converting `k` to a row-major multi-index `idx`.
     #[inline]
     fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
     where
@@ -221,6 +256,7 @@ where
                 let mut idx = vec![0isize; rank];
                 for ax in (0..rank).rev() {
                     let d = dims[ax];
+                    // `rem % d` is in [0, d); convert to isize (non-negative)
                     idx[ax] = (rem % d) as isize;
                     rem /= d;
                 }
@@ -229,6 +265,7 @@ where
             });
     }
 
+    /// Eager, element-wise type cast (panics on failure).
     #[inline]
     fn cast_to<U: Scalar>(&self) -> Self::Repr<U>
     where
@@ -240,8 +277,6 @@ where
     }
 }
 
-
-
 //===================================================================
 // ------------------------- Arithmetic Ops -------------------------
 //===================================================================
@@ -250,10 +285,11 @@ macro_rules! impl_tensor_op {
     ($trait:ident, $method:ident, $op:tt) => {
         impl<T> $trait for Tensor<T>
         where
-            T: Scalar + $trait<Output = T> + Send + Sync,
+            T: Scalar + $trait<Output = T> + Send + Sync + Copy,
         {
             type Output = Self;
 
+            /// Parallel elementwise binary op with shape check.
             #[inline]
             fn $method(self, rhs: Self) -> Self::Output {
                 assert_eq!(self.shape, rhs.shape, "Tensor shape mismatch");
@@ -261,6 +297,7 @@ macro_rules! impl_tensor_op {
                 let a = self.data;
                 let b = rhs.data;
 
+                // NOTE: into_par_iter() consumes; map is parallel and lock-free.
                 let data = a
                     .into_par_iter()
                     .zip(b.into_par_iter())
@@ -279,9 +316,6 @@ impl_tensor_op!(Mul, mul, *);
 impl_tensor_op!(Div, div, /);
 impl_tensor_op!(BitAnd, bitand, &);
 
-
-
-
 // ===================================================================
 // ---------------------------- Type Casting -------------------------
 // ===================================================================
@@ -289,6 +323,9 @@ impl_tensor_op!(BitAnd, bitand, &);
 impl<T: Scalar> Tensor<T> {
     /// Attempt to cast `self` (component-wise) into `Tensor<U>`.
     /// Returns an error if any component over/underflows or cannot be represented.
+    ///
+    /// - Complex→Real: uses `.re()`/`.im()` pair and reconstructs `U` via `from_re_im`.
+    /// - Parallelized over elements.
     pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, &'static str> {
         #[inline(always)]
         fn cast_scalar<T: Scalar, U: Scalar>(x: T) -> Result<U, &'static str> {
@@ -316,14 +353,13 @@ impl<T: Scalar> Tensor<T> {
     }
 }
 
-
-
-
 // ===================================================================
 // ---------------------- Convenience Constructors -------------------
 // ===================================================================
 
 impl<T: Scalar + Display> ToString for Tensor<T> {
+    /// Serializes as nested bracket blocks with `;` separators, e.g.:
+    /// `[[1;2;3];[4;5;6]]` for a 2×3 tensor.
     fn to_string(&self) -> String {
         fn format_recursive<T: Display>(data: &[T], shape: &[usize]) -> String {
             if shape.len() == 1 {
@@ -358,6 +394,10 @@ impl<T: Scalar + Display> ToString for Tensor<T> {
 }
 
 impl<T: Scalar + FromStr> Tensor<T> {
+    /// Parse a small tensor from a bracketed `;`-separated string produced by `ToString`.
+    ///
+    /// # Panics
+    /// Panics on malformed input or inconsistent row lengths.
     pub fn from_string(s: &str) -> Self {
         let normalized = s
             .trim()
@@ -415,15 +455,13 @@ impl<T: Scalar> Tensor<T> {
         let mut data = vec![T::zero(); size];
 
         for (&k, &v) in sparse.iter() {
+            // SAFETY: k < size as guaranteed by the sparse structure.
             unsafe { *data.get_unchecked_mut(k) = v; }
         }
 
         Self { shape, data }
     }
 }
-
-
-
 
 //===================================================================
 // -------------------------- Utilities -----------------------------
@@ -473,3 +511,30 @@ where
         <Self as TensorTrait<T>>::par_map_in_place(self, f);
     }
 }
+
+//===================================================================
+// --------------------------- Extra Notes --------------------------
+//===================================================================
+//
+// • Complexity:
+//   - `index()`: O(rank), very small constant factors.
+//   - `get/set`: O(1) after index computation; use raw accessors if you pre-linearize.
+//   - All parallel ops are data-parallel with rayon; choose chunk sizes via rayon global config.
+//
+// • Safety:
+//   - All internal reads/writes use `get_unchecked` after **wrapping** the index; thus safe.
+//   - The only potential panic is a **debug assertion** on index rank mismatch.
+//
+// • Determinism:
+//   - Wrapping semantics are deterministic for any `isize` index (including extreme negatives).
+//   - Linear wrapping is `idx % len` which matches typical circular buffer behavior.
+//
+// • Interop:
+//   - If you need **clamped** or **panic-on-OOB** behavior for certain algorithms,
+//     consider adding alternate accessors (`get_clamped`, `get_strict`) alongside these.
+//
+// • Testing tips:
+//   - Ensure `get([-1, -1]) == get([shape[0]-1, shape[1]-1])`.
+//   - Ensure `get([shape[0] as isize, 0]) == get([0, 0])`.
+//   - For linear: `get_by_idx(len) == get_by_idx(0)`; `get_by_idx(usize::MAX)` is valid and wraps.
+//

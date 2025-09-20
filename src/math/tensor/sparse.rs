@@ -13,10 +13,18 @@ A **hash-backed sparse N-D tensor** where only nonzeros are stored.
 This module mirrors the dense tensor API where it makes sense, and defers to
 `dense::Tensor` for convenient interop via `to_dense()` / `from_dense()`.
 
-**Update:** Multi-index accessors (`index`, `get_opt`, `get`, `set`, `add_assign_at`)
-now accept `&[isize]` and support **negative indices (Python-style)** on each axis:
-`-1` = last, `-2` = second from last, etc. Internal storage and flat indices remain
-`usize`.
+# Update — Access Semantics (Important!)
+
+Multi-index accessors (`index`, `get_opt`, `get`, `set`, `add_assign_at`) now accept `&[isize]`
+and apply **toroidal (periodic) wrapping** on each axis:
+
+- Axis index `a` maps to `((a % dim) + dim) % dim` (Euclidean modulo).
+- Negative indices are allowed (`-1` = last, `-2` = second last, ...).
+- **No out-of-bounds panics** from indexing (rank mismatch remains a debug assert).
+
+Flat-index helpers (`get_by_flat`, `set_by_flat`) also **wrap linearly** by `size = ∏ shape`.
+Thus every accessor deterministically targets a valid location; implicit zeros remain zero unless set.
+
 */
 
 use ahash::AHashMap;
@@ -49,23 +57,60 @@ pub struct Tensor<T: Scalar> {
 }
 
 // ===================================================================
-// ---------------------- Index Normalization ------------------------
+// ------------------------- Size & Helpers --------------------------
 // ===================================================================
 
-#[inline(always)]
-fn norm_axis_index(idx: isize, dim: usize) -> usize {
-    // Map negative indices: -1 → dim-1, -2 → dim-2, ...
-    // Panic if out of bounds (like Rust slice semantics).
-    if idx >= 0 {
-        let u = idx as usize;
-        assert!(u < dim, "Index out of bounds on axis (>=0): {} !< {}", u, dim);
-        u
-    } else {
-        // Avoid overflow on isize::MIN by transforming as (-(idx+1)) + 1
-        let abs = (-(idx + 1)) as usize + 1;
-        assert!(abs <= dim, "Index out of bounds on axis (<0): -{} > dim {}", abs, dim);
-        dim - abs
+impl<T: Scalar> Tensor<T> {
+    /// Total number of sites (dense size) = product of dimensions.
+    #[inline(always)]
+    pub fn len_dense(&self) -> usize {
+        self.shape.iter().product::<usize>()
     }
+
+    /// Rank (number of dimensions).
+    #[inline(always)]
+    pub fn rank(&self) -> usize {
+        self.shape.len()
+    }
+
+    /// Shape slice.
+    #[inline(always)]
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    /// Number of **explicit** nonzeros (`nnz`).
+    #[inline(always)]
+    pub fn nnz(&self) -> usize {
+        self.data.len()
+    }
+
+    /// True if the tensor stores no explicit nonzeros.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+// ===================================================================
+// ---------------------- Index Wrapping (toroidal) ------------------
+// ===================================================================
+
+/// Euclidean modulo for axis indices (supports negatives).
+#[inline(always)]
+fn wrap_axis_index(idx: isize, dim: usize) -> usize {
+    debug_assert!(dim > 0);
+    let d = dim as isize;
+    let mut m = idx % d;
+    if m < 0 { m += d; }
+    m as usize
+}
+
+/// Wrap linear flat index into `[0, size)`.
+#[inline(always)]
+fn wrap_linear_index(k: usize, size: usize) -> usize {
+    debug_assert!(size > 0);
+    k % size
 }
 
 // ===================================================================
@@ -76,50 +121,32 @@ impl<T: Scalar> Tensor<T> {
     /// Create an **empty** sparse tensor with a given shape.
     ///
     /// # Panics
-    /// Panics if `shape` is empty (rank 0).
+    /// Panics if `shape` is empty (rank 0) or contains a zero dimension.
     #[inline]
     pub fn new(shape: Vec<usize>) -> Self {
         assert!(!shape.is_empty(), "Tensor rank must be >= 1");
+        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
         Self {
             shape,
             data: AHashMap::default(),
         }
     }
 
-    /// Rank (number of dimensions).
-    #[inline]
-    pub fn rank(&self) -> usize {
-        self.shape.len()
-    }
-
-    /// Number of **explicit** nonzeros (`nnz`).
-    #[inline]
-    pub fn nnz(&self) -> usize {
-        self.data.len()
-    }
-
-    /// True if the tensor stores no explicit nonzeros.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-
-    /// Convert a multi-index (with possible negatives) to a **row-major** flat index.
+    /// Convert a multi-index (with negatives allowed) to a **row-major** flat index,
+    /// using **per-axis periodic wrapping**.
     ///
     /// Same linearization as the dense tensor; this ensures interop is consistent.
     ///
     /// # Panics
-    /// - If `idx.len() != self.shape.len()`.
-    /// - If any axis index is out of bounds (after normalization).
+    /// - Only if `idx.len() != self.shape.len()` (debug assertion).
     #[inline]
     pub fn index(&self, idx: &[isize]) -> usize {
-        assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
+        debug_assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
         let mut flat = 0usize;
         let mut stride = 1usize;
-        for (rev_axis, &dim) in self.shape.iter().rev().enumerate() {
-            let axis = self.shape.len() - 1 - rev_axis;
-            let a_u = norm_axis_index(idx[axis], dim);
-            flat += a_u * stride;
+        for (&dim, &a_raw) in self.shape.iter().rev().zip(idx.iter().rev()) {
+            let a = wrap_axis_index(a_raw, dim);
+            flat += a * stride;
             stride *= dim;
         }
         flat
@@ -172,18 +199,6 @@ impl<T: Scalar> Tensor<T> {
         }
     }
 
-    /// **Internal helper**: build from `(flat_index, value)` pairs, dropping zeros.
-    #[inline]
-    fn from_flat_pairs(shape: Vec<usize>, pairs: Vec<(usize, T)>) -> Self {
-        let mut map = AHashMap::with_capacity(pairs.len());
-        for (k, v) in pairs {
-            if v != T::zero() {
-                map.insert(k, v);
-            }
-        }
-        Self { shape, data: map }
-    }
-
     /// Iterate over `(flat_index, &value)` of nonzeros.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (&usize, &T)> {
@@ -194,7 +209,7 @@ impl<T: Scalar> Tensor<T> {
     ///
     /// Caller must guarantee that `k` is a valid row-major flat index.
     #[inline]
-    pub fn set_by_flat(&mut self, k: usize, val: T) {
+    pub fn set_by_flat_unchecked(&mut self, k: usize, val: T) {
         if val == T::zero() {
             self.data.remove(&k);
         } else {
@@ -202,10 +217,30 @@ impl<T: Scalar> Tensor<T> {
         }
     }
 
-    /// Get by flat index with zero default.
+    /// Set by flat index with **wrap-around** modulo total dense size.
+    #[inline]
+    pub fn set_by_flat(&mut self, k: usize, val: T) {
+        let kk = wrap_linear_index(k, self.len_dense());
+        self.set_by_flat_unchecked(kk, val);
+    }
+
+    /// Get by flat index with zero default (wrapped modulo total dense size).
     #[inline]
     pub fn get_by_flat(&self, k: usize) -> T {
-        self.data.get(&k).copied().unwrap_or_else(T::zero)
+        let kk = wrap_linear_index(k, self.len_dense());
+        self.data.get(&kk).copied().unwrap_or_else(T::zero)
+    }
+
+    /// **Internal helper**: build from `(flat_index, value)` pairs, dropping zeros.
+    #[inline]
+    fn from_flat_pairs(shape: Vec<usize>, pairs: Vec<(usize, T)>) -> Self {
+        let mut map = AHashMap::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            if v != T::zero() {
+                map.insert(k, v);
+            }
+        }
+        Self { shape, data: map }
     }
 }
 
@@ -407,6 +442,9 @@ impl<T: Scalar> Tensor<T> {
 impl<T: Scalar> Tensor<T> {
     /// Build from `(indices, value)` **triplets**; zeros are skipped.
     ///
+    /// Note: The constructor is strict on bounds (no wrapping) to catch
+    /// authoring mistakes; use runtime `set()` if you want wrapping.
+    ///
     /// ```
     /// // 2×3 example, with entries at (0,1)=2, (1,2)=3
     /// // let s = Tensor::<f64>::from_triplets(vec![2,3], vec![(vec![0,1],2.0),(vec![1,2],3.0)]);
@@ -419,21 +457,16 @@ impl<T: Scalar> Tensor<T> {
             assert_eq!(idx.len(), shape.len(), "Triplet index rank mismatch");
             let mut flat = 0usize;
             let mut stride = 1usize;
-            for (rev_axis, &dim) in shape.iter().rev().enumerate() {
-                let axis = shape.len() - 1 - rev_axis;
-                let a = idx[axis];
-                assert!(
-                    a < dim,
-                    "Index out of bounds on axis {}: {} >= {}",
-                    axis,
-                    a,
-                    dim
-                );
+            for (&dim, &a) in shape.iter().rev().zip(idx.iter().rev()) {
+                assert!(a < dim, "Index out of bounds on an axis: {} >= {}", a, dim);
                 flat += a * stride;
                 stride *= dim;
             }
             flat
         }
+
+        assert!(!shape.is_empty(), "Tensor rank must be >= 1");
+        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
 
         let mut map = AHashMap::default();
         for (idx, v) in triplets {
@@ -451,7 +484,7 @@ impl<T: Scalar> Tensor<T> {
     /// Useful for debugging or interop with dense algorithms.
     #[inline]
     pub fn to_dense(&self) -> TensorDense<T> {
-        let size: usize = self.shape.iter().product();
+        let size: usize = self.len_dense();
         let mut out = vec![T::zero(); size];
         for (&k, &v) in &self.data {
             out[k] = v;
@@ -498,28 +531,32 @@ where
         &self.shape
     }
 
+    /// Row-major flat index with **per-axis periodic wrapping**.
     #[inline(always)]
     fn index(&self, indices: &[isize]) -> usize {
         Tensor::<T>::index(self, indices)
     }
 
+    /// Get by (wrapped) multi-index, returning zero if absent.
     #[inline(always)]
     fn get(&self, indices: &[isize]) -> T {
         Tensor::<T>::get(self, indices)
     }
 
+    /// Sparse backend cannot safely yield `&mut T` via multi-index; return None.
     #[inline(always)]
     fn get_mut(&mut self, _indices: &[isize]) -> Option<&mut T> {
-        // Sparse backend can’t safely yield &mut to internal map without
-        // exposing its structure; return None to signal not supported.
         None
     }
 
+    /// Set value at (wrapped) multi-index (zero removes the entry).
     #[inline(always)]
     fn set(&mut self, indices: &[isize], val: T) {
         Tensor::<T>::set(self, indices, val)
     }
 
+    /// Parallel "fill": if `value == 0`, clears all entries; else sets all **existing**
+    /// entries to `value` (keeps support but makes values uniform).
     #[inline]
     fn par_fill(&mut self, value: T)
     where
@@ -539,6 +576,7 @@ where
         self.data = new_map;
     }
 
+    /// Parallel map-in-place over **existing** nonzeros; zeros after mapping are pruned.
     #[inline]
     fn par_map_in_place<F>(&mut self, f: F)
     where
@@ -560,6 +598,7 @@ where
         }
     }
 
+    /// Parallel zip-with over **self's support** only, using `other.get(idx)` to read.
     #[inline]
     fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
     where
@@ -596,6 +635,7 @@ where
         }
     }
 
+    /// Cast elementwise to another scalar type (panics on failure).
     #[inline]
     fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
     where
@@ -605,3 +645,30 @@ where
             .expect("sparse tensor cast failed: component out of range for target type")
     }
 }
+
+// ===================================================================
+// --------------------------- Extra Notes ---------------------------
+// ===================================================================
+//
+// • Semantics:
+//   - All axis/linear indices are wrapped (toroidal); no OOB panics during access.
+//   - Implicit zeros remain zero unless set; writing zero deletes the key.
+//   - `get_mut()` by multi-index is unsupported for sparse and returns `None`.
+//
+// • Complexity:
+//   - `index()`: O(rank).
+//   - `get/set`: O(1) average (hash map) after index computation.
+//   - Binary ops: O(nnz_a + nnz_b) + sorting cost for union keys.
+//
+// • Determinism:
+//   - Wrapping semantics are deterministic for any `isize` (incl. large negatives).
+//   - Flat wrapping uses `k % (∏ shape)`.
+//
+// • Interop:
+//   - `to_dense()` / `from_dense()` share the same row-major convention as `dense::Tensor`.
+//
+// • Testing hints:
+//   - With shape [3,4], ensure `get([-1, -1]) == get([2, 3])`.
+//   - Ensure `set([3, 0], v)` wraps to `[0, 0]`.
+//   - Linear: `get_by_flat(size) == get_by_flat(0)`; large `k` wraps.
+//
