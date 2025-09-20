@@ -1,19 +1,18 @@
 [package]
 name = "physics_in_parallel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 description = "High-performance infrastructure for numerical simulations in physics"
-license = "MIT OR Apache-2.0"   # Use a valid SPDX expression, or use `license-file = "LICENSE"`
+license = "MIT OR Apache-2.0"  
 
-# STRONGLY RECOMMENDED:
+
 readme = "README.md"
 repository = "https://github.com/dingyisun0101/Physics-in-Parallel"
 homepage = "https://github.com/dingyisun0101/Physics-in-Parallel"
 documentation = "https://github.com/dingyisun0101/Physics-in-Parallel"
 keywords = ["physics", "simulation", "math", "tensor", "scientific"]
 categories = ["science"]
-
 
 
 
@@ -37,7 +36,6 @@ hashbrown = "0.16"
 # IO
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
-
 
 
 [profile.release]
