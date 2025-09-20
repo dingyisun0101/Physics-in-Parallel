@@ -59,28 +59,31 @@ The exact sentinel is **your contract**: downstream code should treat `VacancyVa
 as “no occupant / no data.”
 */
 pub trait VacancyValue: Sized + Clone {
-    /// Return the **sentinel** value for vacancy for this type.
-    fn vacancy() -> Self;
+    /// Type-specific sentinel for "vacant".
+    const VACANCY: Self;
+
+    // Optional ergonomic non-const helper:
+    #[inline]
+    fn vacancy() -> Self { Self::VACANCY }
 }
 
 // Unsigned integers
-impl VacancyValue for u8    { #[inline] fn vacancy() -> Self { u8::MAX    } }
-impl VacancyValue for u16   { #[inline] fn vacancy() -> Self { u16::MAX   } }
-impl VacancyValue for u32   { #[inline] fn vacancy() -> Self { u32::MAX   } }
-impl VacancyValue for u64   { #[inline] fn vacancy() -> Self { u64::MAX   } }
-impl VacancyValue for usize { #[inline] fn vacancy() -> Self { usize::MAX } }
+impl VacancyValue for usize { const VACANCY: usize = usize::MAX; }
+impl VacancyValue for u64  { const VACANCY: u64  = u64::MAX; }
+impl VacancyValue for u32  { const VACANCY: u32  = u32::MAX; }
+impl VacancyValue for u16  { const VACANCY: u16  = u16::MAX; }
+impl VacancyValue for u8   { const VACANCY: u8   = u8::MAX;  }
 
 // Signed integers
-impl VacancyValue for i8    { #[inline] fn vacancy() -> Self { i8::MAX    } }
-impl VacancyValue for i16   { #[inline] fn vacancy() -> Self { i16::MAX   } }
-impl VacancyValue for i32   { #[inline] fn vacancy() -> Self { i32::MAX   } }
-impl VacancyValue for i64   { #[inline] fn vacancy() -> Self { i64::MAX   } }
-impl VacancyValue for isize { #[inline] fn vacancy() -> Self { isize::MAX } }
+impl VacancyValue for isize { const VACANCY: isize = isize::MAX; }
+impl VacancyValue for i64   { const VACANCY: i64   = i64::MAX; }
+impl VacancyValue for i32   { const VACANCY: i32   = i32::MAX; }
+impl VacancyValue for i16   { const VACANCY: i16   = i16::MAX; }
+impl VacancyValue for i8    { const VACANCY: i8    = i8::MAX;  }
 
-// Floats (choose MAX; consider `NAN` if your math tolerates it)
-impl VacancyValue for f32   { #[inline] fn vacancy() -> Self { f32::MAX   } }
-impl VacancyValue for f64   { #[inline] fn vacancy() -> Self { f64::MAX   } }
-
+// Floats (keep as MAX; switch to NAN/INFINITY if your math prefers)
+impl VacancyValue for f64 { const VACANCY: f64 = f64::MAX; }
+impl VacancyValue for f32 { const VACANCY: f32 = f32::MAX; }
 
 
 // ======================================================================================
