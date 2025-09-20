@@ -63,6 +63,8 @@ Stateful generator that owns a **sampling kernel** and can populate
 #[derive(Clone)]
 pub struct RandPairGenerator {
     kernel: Box<dyn Kernel>,
+    pub source_coords_cache: VectorList<isize>,
+    pub target_coords_cache: VectorList<isize>,
 }
 
 impl RandPairGenerator {
@@ -70,9 +72,11 @@ impl RandPairGenerator {
     ///
     /// This is a convenience wrapper around `create_kernel(kernel_type)`.
     #[inline]
-    pub fn new(kernel_type: KernelType) -> Self {
+    pub fn new(kernel_type: KernelType, dim: usize, num_pairs: usize) -> Self {
         let kernel = create_kernel(kernel_type);
-        Self { kernel }
+        let source_coords_cache: VectorList<isize> = VectorList::new(dim, num_pairs);
+        let target_coords_cache = source_coords_cache.clone();
+        Self { kernel, source_coords_cache, target_coords_cache }
     }
 
     /**
@@ -99,15 +103,13 @@ impl RandPairGenerator {
     */
     #[inline]
     pub fn random(
-        &self,
-        source_coords: &mut VectorList<isize>,
-        target_coords: &mut VectorList<isize>,
+        &mut self,
         randomize_source: bool,
     ) {
         gen_random_idx_pairs_by_kernel(
             self.kernel.as_ref(),
-            source_coords,
-            target_coords,
+            &mut self.source_coords_cache,
+            &mut self.target_coords_cache,
             randomize_source,
         );
     }
