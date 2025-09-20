@@ -20,7 +20,7 @@ aggressive inlining, and rich documentation.
   - `l`: linear side length per axis (total sites = `l^d`),
   - `c`: arbitrary physical scale/unit (kept meta),
   - `periodic`: wrap vs clamp.
-- `GridType<T>` for one-shot initialization of grid states.
+- `GridInitMethod<T>` for one-shot initialization of grid states.
 - `Grid<T>`:
   - data stored row-major (axis 0 … axis d-1; last axis varies fastest),
   - `coord_to_index([i0, …, i_{d-1}]) = (((i0 * l + i1) * l + …) * l + i_{d-1})`.
@@ -125,7 +125,7 @@ impl GridConfig {
 
 
 // ======================================================================================
-// ---------------------------------- GridType ------------------------------------------
+// -------------------------------- GridInitMethod --------------------------------------
 // ======================================================================================
 
 /**
@@ -133,15 +133,15 @@ One-shot **initialization strategy** for a grid.
 
 - `Empty`: leave `data` as default values (or set to vacancy in your pipeline).
 - `Uniform { val }`: fill the grid with `val`.
-- `RandomUniform { choices }`: pick uniformly among `choices` for each site.
+- `RandomUniformChoices { choices }`: pick uniformly among `choices` for each site.
 - `Dispersal { val }`: set a **single central** site to `val` (others remain default).
 */
 #[derive(Debug, Clone, Serialize)]
-pub enum GridType<T: Scalar> {
+pub enum GridInitMethod<T: Scalar> {
     Empty,
     Uniform { val: T },
-    RandomUniform { choices: Vec<T> },
-    Dispersal { val: T },
+    RandomUniformChoices { choices: Vec<T> },
+    SeededCenter { val: T },
 }
 
 
@@ -165,8 +165,6 @@ pub enum GridType<T: Scalar> {
 pub struct Grid<T: Scalar> {
     /// Configuration (rank, side length, scale, periodicity).
     pub cfg: GridConfig,
-    /// How the grid was initialized (kept for provenance; not enforced at runtime).
-    pub kind: GridType<T>,
     /// Row-major storage for all sites (length = `l^d`).
     pub data: Vec<T>,
 }
@@ -218,7 +216,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
 impl<T: Scalar + VacancyValue> Grid<T> {
     /**
-    Build a new grid with the given `cfg` and initialization `kind`.
+    Build a new grid with the given `cfg` and initialization `init_method`.
 
     - `Empty`: leaves `data` at `T::default()`.  
       If you want **Empty → vacancy**, call `fill_vacancy()` after construction.
@@ -228,26 +226,26 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     - `Dispersal { val }`: set the **center** site to `val` (others remain default).
     */
     #[inline]
-    pub fn new(cfg: GridConfig, kind: GridType<T>) -> Self {
+    pub fn new(cfg: GridConfig, init_method: GridInitMethod<T>) -> Self {
         let mut data = vec![T::default(); cfg.num_sites()];
 
-        match &kind {
-            GridType::Empty => {
+        match &init_method {
+            GridInitMethod::Empty => {
                 // If you prefer Empty→Vacancy, uncomment:
                 // let v = T::vacancy();
                 // data.par_iter_mut().for_each(|x| *x = v.clone());
             }
-            GridType::Uniform { val } => {
+            GridInitMethod::Uniform { val } => {
                 data.par_iter_mut().for_each(|slot| *slot = val.clone());
             }
-            GridType::RandomUniform { choices } => {
+            GridInitMethod::RandomUniformChoices { choices } => {
                 assert!(!choices.is_empty(), "RandomUniform requires non-empty `choices`");
                 data.par_iter_mut().for_each(|slot| {
                     let i = random_range(0..choices.len());
                     *slot = choices[i].clone();
                 });
             }
-            GridType::Dispersal { val } => {
+            GridInitMethod::SeededCenter { val } => {
                 // Put a single non-vacant marker at the **center**.
                 // Center coordinate is (l/2, l/2, ..., l/2).
                 let mut idx = 0usize;
@@ -259,7 +257,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
             }
         }
 
-        Self { cfg, kind, data }
+        Self { cfg, data }
     }
 
     // --- Private helpers -----------------------------------------------------
@@ -440,7 +438,6 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
         let mut new = Grid {
             cfg: new_cfg.clone(),
-            kind: self.kind.clone(),
             data: vec![T::default(); new_cfg.num_sites()],
         };
 
