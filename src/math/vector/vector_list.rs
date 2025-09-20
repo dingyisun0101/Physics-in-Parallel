@@ -7,13 +7,31 @@ a list of fixed-length vectors. The underlying `Tensor` has shape **[D, n]** whe
 - `n` is the number of vectors in the list (runtime).
 
 This layout stores all 0-th components together, then all 1-st components, etc.
+
+Note: This module uses the **dense** backend, but is compatible with the unified
+`Tensor` trait. Accessors accept `isize` indices and support Python-style negative
+indices (`-1` = last, `-2` = second last, ...).
 */
 
 use rayon::prelude::*;
 use serde::Serialize;
 
-use super::super::scalar::Scalar;
-use super::super::tensor::dense::Tensor;
+use crate::math::scalar::Scalar;
+use crate::math::tensor::{ dense::Tensor, tensor_trait::TensorTrait }; // bring trait methods into scope if needed
+
+// Small helper to normalize possibly-negative indices to usize
+#[inline(always)]
+fn norm_index(ix: isize, dim: usize) -> usize {
+    if ix >= 0 {
+        let u = ix as usize;
+        assert!(u < dim, "index out of bounds: {} !< {}", u, dim);
+        u
+    } else {
+        let abs = (-(ix + 1)) as usize + 1;
+        assert!(abs <= dim, "index out of bounds: -{} > {}", abs, dim);
+        dim - abs
+    }
+}
 
 // ============================================================================
 // --------------------------- Struct Def: SoA --------------------------------
@@ -115,52 +133,58 @@ impl<T: Scalar> VectorList<T> {
         &mut self.data.data[start..end]
     }
 
-    /// Immutable scalar access to component `(i,k)`.
+    /// Immutable scalar access to component `(i,k)`; accepts negative indices.
+    /// NOTE: returns `T` by value to match the `Tensor` trait.
     #[inline]
-    pub fn get(&self, i: usize, k: usize) -> &T {
+    pub fn get(&self, i: isize, k: isize) -> T {
         let d = self.dim(); let n = self.num_vectors();
-        assert!(k < d && i < n, "get: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
-        self.data.get(&[k, i])
+        let ku = norm_index(k, d);
+        let iu = norm_index(i, n);
+        self.data.get(&[ku as isize, iu as isize])
     }
 
-    /// Mutable scalar access to component `(i,k)`.
+    /// Mutable scalar access to component `(i,k)`; accepts negative indices.
     #[inline]
-    pub fn get_mut(&mut self, i: usize, k: usize) -> &mut T {
+    pub fn get_mut(&mut self, i: isize, k: isize) -> &mut T {
         let d = self.dim(); let n = self.num_vectors();
-        assert!(k < d && i < n, "get_mut: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
-        self.data.get_mut(&[k, i])
+        let ku = norm_index(k, d);
+        let iu = norm_index(i, n);
+        self.data.get_mut(&[ku as isize, iu as isize]).unwrap()
     }
 
-    /// Set component `(i,k)` to `val`.
+    /// Set component `(i,k)` to `val`; accepts negative indices.
     #[inline]
-    pub fn set(&mut self, i: usize, k: usize, val: T) {
+    pub fn set(&mut self, i: isize, k: isize, val: T) {
         let d = self.dim(); let n = self.num_vectors();
-        assert!(k < d && i < n, "set: index out of range (i={}, k={}, D={}, n={})", i, k, d, n);
-        self.data.set(&[k, i], val);
+        let ku = norm_index(k, d);
+        let iu = norm_index(i, n);
+        self.data.set(&[ku as isize, iu as isize], val);
     }
 
     /// Return the `i`-th vector as a new `Vec<T>` of length `D` (copied).
+    /// Accepts negative index for `i`.
     #[inline]
-    pub fn get_vec(&self, i: usize) -> Vec<T> where T: Copy {
+    pub fn get_vec(&self, i: isize) -> Vec<T> where T: Copy {
         let d = self.dim(); let n = self.num_vectors();
-        assert!(i < n, "get_vec: i {} out of range (n={})", i, n);
+        let iu = norm_index(i, n);
         let mut out = Vec::with_capacity(d);
         for k in 0..d {
-            let flat = k * n + i;
+            let flat = k * n + iu;
             out.push(*self.data.get_by_idx(flat));
         }
         out
     }
 
     /// Create a mutable proxy to the `i`-th vector exposing `D` disjoint `&mut T`.
+    /// Accepts negative index for `i`.
     #[inline]
-    pub fn get_vec_mut(&mut self, i: usize) -> VecRefMut<'_, T> {
+    pub fn get_vec_mut(&mut self, i: isize) -> VecRefMut<'_, T> {
         let d = self.dim(); let n = self.num_vectors();
-        assert!(i < n, "get_vec_mut: i {} out of range (n={})", i, n);
+        let iu = norm_index(i, n);
 
-        // SAFETY: indices (k*n + i) are all distinct for fixed `i`.
+        // SAFETY: indices (k*n + iu) are all distinct for fixed column `iu`.
         let p = self.data.data.as_mut_ptr();
-        let cols = (0..d).map(|k| unsafe { &mut *p.add(k * n + i) }).collect();
+        let cols = (0..d).map(|k| unsafe { &mut *p.add(k * n + iu) }).collect();
         VecRefMut { cols }
     }
 }
@@ -269,10 +293,6 @@ impl_binop_delegate!(Mul, mul);
 impl_binop_delegate!(Div, div);
 impl_binop_delegate!(BitAnd, bitand);
 
-// ============================================================================
-// ---------------------------- High Level Ops --------------------------------
-// ============================================================================
-
 impl<T: Scalar> VectorList<T> {
     /// Scale each vector `i` by `scales[i]`. Requires `scales.len() == n`.
     #[inline]
@@ -291,10 +311,10 @@ impl<T: Scalar> VectorList<T> {
     }
 }
 
+// ============================================================================
+// ------------------------------- Casting ------------------------------------
+// ============================================================================
 
-// ============================================================================
-// ---------------------------- Casting --------------------------------
-// ============================================================================
 impl<T: Scalar> VectorList<T> {
     /// Cast the underlying `[D, n]` tensor into a new `VectorList<U>`, consuming `self`.
     /// Delegates to `Tensor::cast_to::<U>()`.

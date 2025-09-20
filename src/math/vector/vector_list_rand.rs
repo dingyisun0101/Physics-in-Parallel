@@ -80,7 +80,11 @@ pub fn gen_haar_vectors(dim: usize, n: usize) -> VectorList<f64> {
 /// The returned `VectorList<isize>` has shape `[dim, n]`, initialized to zeros.
 /// For each column `i`, we set `v_i[axis] = sign`.
 #[inline]
-pub fn gen_neighborhood_vectors(dim: usize, n: usize, displacements: Vec<f64>) -> VectorList<isize> {
+pub fn gen_neighborhood_vectors(
+    dim: usize,
+    n: usize,
+    displacements: Vec<f64>,
+) -> VectorList<isize> {
     assert!(dim > 0, "gen_neighborhood_vectors: dim must be > 0");
     assert!(
         displacements.len() == n,
@@ -92,10 +96,21 @@ pub fn gen_neighborhood_vectors(dim: usize, n: usize, displacements: Vec<f64>) -
     let mut vl = VectorList::<isize>::new(dim, n);
 
     for (i, code_f) in displacements.into_iter().enumerate() {
+        // Validate `code_f`
+        assert!(
+            code_f.is_finite(),
+            "gen_neighborhood_vectors: displacement must be finite, got {code_f}"
+        );
+        assert!(
+            code_f >= 0.0,
+            "gen_neighborhood_vectors: displacement {code_f} must be >= 0"
+        );
         assert!(
             code_f.fract() == 0.0,
-            "gen_neighborhood_vectors: displacement {} is not an integer", code_f
+            "gen_neighborhood_vectors: displacement {} is not an integer",
+            code_f
         );
+
         let code = code_f as usize;
         assert!(
             code < 2 * dim,
@@ -104,14 +119,16 @@ pub fn gen_neighborhood_vectors(dim: usize, n: usize, displacements: Vec<f64>) -
             2 * dim,
             dim
         );
-        let axis = code / 2;
-        let sign = if code % 2 == 0 { 1 } else { -1 };
-        vl.set(i, axis, sign);
+
+        let axis = code / 2;                 // 0..dim-1
+        let sign: isize = if code % 2 == 0 { 1 } else { -1 };
+
+        // VectorList::set expects (i: isize, k: isize, val: T) and supports negatives.
+        vl.set(i as isize, axis as isize, sign);
     }
 
     vl
 }
-
 
 
 

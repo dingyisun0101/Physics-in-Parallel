@@ -12,17 +12,23 @@ A **hash-backed sparse N-D tensor** where only nonzeros are stored.
 
 This module mirrors the dense tensor API where it makes sense, and defers to
 `dense::Tensor` for convenient interop via `to_dense()` / `from_dense()`.
+
+**Update:** Multi-index accessors (`index`, `get_opt`, `get`, `set`, `add_assign_at`)
+now accept `&[isize]` and support **negative indices (Python-style)** on each axis:
+`-1` = last, `-2` = second from last, etc. Internal storage and flat indices remain
+`usize`.
 */
 
 use ahash::AHashMap;
+use num_traits::NumCast;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
 use std::ops::{Add, Sub, Mul, Div, BitAnd};
-use num_traits::NumCast;
 
 use super::super::scalar::Scalar;
 use super::dense::Tensor as TensorDense;
+use super::tensor_trait::TensorTrait; // unified trait alias
 
 // ===================================================================
 // --------------------------- Struct Def ----------------------------
@@ -40,6 +46,26 @@ use super::dense::Tensor as TensorDense;
 pub struct Tensor<T: Scalar> {
     shape: Vec<usize>,
     data: AHashMap<usize, T>, // flat index -> value (non-zero)
+}
+
+// ===================================================================
+// ---------------------- Index Normalization ------------------------
+// ===================================================================
+
+#[inline(always)]
+fn norm_axis_index(idx: isize, dim: usize) -> usize {
+    // Map negative indices: -1 → dim-1, -2 → dim-2, ...
+    // Panic if out of bounds (like Rust slice semantics).
+    if idx >= 0 {
+        let u = idx as usize;
+        assert!(u < dim, "Index out of bounds on axis (>=0): {} !< {}", u, dim);
+        u
+    } else {
+        // Avoid overflow on isize::MIN by transforming as (-(idx+1)) + 1
+        let abs = (-(idx + 1)) as usize + 1;
+        assert!(abs <= dim, "Index out of bounds on axis (<0): -{} > dim {}", abs, dim);
+        dim - abs
+    }
 }
 
 // ===================================================================
@@ -66,12 +92,6 @@ impl<T: Scalar> Tensor<T> {
         self.shape.len()
     }
 
-    /// Shape vector.
-    #[inline]
-    pub fn shape(&self) -> &[usize] {
-        &self.shape
-    }
-
     /// Number of **explicit** nonzeros (`nnz`).
     #[inline]
     pub fn nnz(&self) -> usize {
@@ -84,25 +104,22 @@ impl<T: Scalar> Tensor<T> {
         self.data.is_empty()
     }
 
-    /// Convert a multi-index to a **row-major** flat index. Panics if out of bounds.
+    /// Convert a multi-index (with possible negatives) to a **row-major** flat index.
     ///
     /// Same linearization as the dense tensor; this ensures interop is consistent.
+    ///
+    /// # Panics
+    /// - If `idx.len() != self.shape.len()`.
+    /// - If any axis index is out of bounds (after normalization).
     #[inline]
-    pub fn index(&self, idx: &[usize]) -> usize {
+    pub fn index(&self, idx: &[isize]) -> usize {
         assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
         let mut flat = 0usize;
         let mut stride = 1usize;
         for (rev_axis, &dim) in self.shape.iter().rev().enumerate() {
             let axis = self.shape.len() - 1 - rev_axis;
-            let a = idx[axis];
-            assert!(
-                a < dim,
-                "Index out of bounds on axis {}: {} >= {}",
-                axis,
-                a,
-                dim
-            );
-            flat += a * stride;
+            let a_u = norm_axis_index(idx[axis], dim);
+            flat += a_u * stride;
             stride *= dim;
         }
         flat
@@ -110,14 +127,14 @@ impl<T: Scalar> Tensor<T> {
 
     /// Get `Option<&T>` at multi-index (`None` if implicit zero).
     #[inline]
-    pub fn get_opt(&self, idx: &[usize]) -> Option<&T> {
+    pub fn get_opt(&self, idx: &[isize]) -> Option<&T> {
         let k = self.index(idx);
         self.data.get(&k)
     }
 
     /// Get the value at multi-index, returning **zero** if absent.
     #[inline]
-    pub fn get(&self, idx: &[usize]) -> T {
+    pub fn get(&self, idx: &[isize]) -> T {
         self.get_opt(idx).copied().unwrap_or_else(T::zero)
     }
 
@@ -125,7 +142,7 @@ impl<T: Scalar> Tensor<T> {
     ///
     /// This keeps the sparse invariant (no explicit zeros).
     #[inline]
-    pub fn set(&mut self, idx: &[usize], val: T) {
+    pub fn set(&mut self, idx: &[isize], val: T) {
         let k = self.index(idx);
         if val == T::zero() {
             self.data.remove(&k);
@@ -136,7 +153,7 @@ impl<T: Scalar> Tensor<T> {
 
     /// Add (accumulate) `delta` into entry at multi-index, then prune zero.
     #[inline]
-    pub fn add_assign_at(&mut self, idx: &[usize], delta: T)
+    pub fn add_assign_at(&mut self, idx: &[isize], delta: T)
     where
         T: Add<Output = T>,
     {
@@ -462,5 +479,129 @@ impl<T: Scalar> Tensor<T> {
             .collect();
 
         Self::from_flat_pairs(shape, pairs)
+    }
+}
+
+// ===================================================================
+// -------------------- TensorTrait Implementation -------------------
+// ===================================================================
+
+impl<T> TensorTrait<T> for Tensor<T>
+where
+    T: Scalar,
+{
+    type Repr<U: Scalar> = Tensor<U>;
+
+    /// Shape vector.
+    #[inline]
+    fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    #[inline(always)]
+    fn index(&self, indices: &[isize]) -> usize {
+        Tensor::<T>::index(self, indices)
+    }
+
+    #[inline(always)]
+    fn get(&self, indices: &[isize]) -> T {
+        Tensor::<T>::get(self, indices)
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, _indices: &[isize]) -> Option<&mut T> {
+        // Sparse backend can’t safely yield &mut to internal map without
+        // exposing its structure; return None to signal not supported.
+        None
+    }
+
+    #[inline(always)]
+    fn set(&mut self, indices: &[isize], val: T) {
+        Tensor::<T>::set(self, indices, val)
+    }
+
+    #[inline]
+    fn par_fill(&mut self, value: T)
+    where
+        T: Copy + Send + Sync,
+    {
+        if value == T::zero() {
+            self.data.clear();
+            return;
+        }
+
+        // Only update existing nonzeros to the constant value.
+        let keys: Vec<usize> = self.data.keys().copied().collect();
+        let mut new_map = AHashMap::with_capacity(keys.len());
+        for k in keys {
+            new_map.insert(k, value);
+        }
+        self.data = new_map;
+    }
+
+    #[inline]
+    fn par_map_in_place<F>(&mut self, f: F)
+    where
+        T: Copy + Send + Sync,
+        F: Fn(T) -> T + Sync + Send,
+    {
+        // Clone pairs, map in parallel to (k, v'), drop zeros, rebuild.
+        let pairs: Vec<(usize, T)> = self.iter().map(|(&k, &v)| (k, v)).collect();
+
+        let mapped: Vec<(usize, T)> = pairs
+            .into_par_iter()
+            .map(|(k, v)| (k, f(v)))
+            .filter(|&(_, v)| v != T::zero())
+            .collect();
+
+        self.data.clear();
+        for (k, v) in mapped {
+            self.data.insert(k, v);
+        }
+    }
+
+    #[inline]
+    fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
+    where
+        Rhs: TensorTrait<T> + ?Sized,
+        T: Copy + Send + Sync,
+        F: Fn(T, T) -> T + Sync + Send,
+    {
+        // Only iterate over current nonzeros in `self`.
+        let rank = self.shape.len();
+        let dims = self.shape.clone();
+
+        let pairs: Vec<(usize, T)> = self.iter().map(|(&k, &v)| (k, v)).collect();
+
+        let zipped: Vec<(usize, T)> = pairs
+            .into_par_iter()
+            .map(|(k, a)| {
+                // linear -> multi-index (row-major)
+                let mut rem = k;
+                let mut idx = vec![0isize; rank];
+                for ax in (0..rank).rev() {
+                    let d = dims[ax];
+                    idx[ax] = (rem % d) as isize;
+                    rem /= d;
+                }
+                let b = other.get(&idx);
+                (k, f(a, b))
+            })
+            .filter(|&(_, r)| r != T::zero())
+            .collect();
+
+        self.data.clear();
+        for (k, v) in zipped {
+            self.data.insert(k, v);
+        }
+    }
+
+    #[inline]
+    fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
+    where
+        T: Scalar,
+    {
+        self.try_cast_to::<U>()
+            .expect("sparse tensor cast failed: component out of range for target type")
     }
 }

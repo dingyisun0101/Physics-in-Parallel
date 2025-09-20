@@ -1,15 +1,19 @@
+// src/math_foundations/tensor/tensor_rand.rs
 /*
-    Fill **dense** tensors with random numbers (parallelized).
+    Fill tensors (dense **or** sparse) with random numbers (parallelized).
 
     Design goals
     ------------
-    - **Thread-safe & parallel**: Every element is sampled independently in a
-      `par_iter_mut()` loop. Each loop body creates its own local RNG via
-      `rand::rng()` so there is no shared mutable state or locking.
+    - **Thread-safe & parallel**: Every element is sampled independently via
+      `TensorTrait::par_map_inplace`, using a fresh thread-local RNG (`rand::rng()`).
+    - **Backend-agnostic**: Works with any tensor that implements the `Tensor` trait
+      (dense or sparse), applying maps **in-place** over elements (sparse: only
+      existing nonzeros are touched by `par_map_inplace` per your trait semantics).
     - **Clear type split**:
-        * `Tensor<f64>`: Uniform / Normal / Bernoulli (0.0 or 1.0)
-        * `Tensor<i64>`: UniformInt / Bernoulli (0 or 1)
-        * `Tensor<usize>`: UniformInt
+        * `T = f64`: Uniform / Normal / Bernoulli (0.0 or 1.0)
+        * `T = i64`: UniformInt / Bernoulli (0 or 1)
+        * `T = usize`: UniformInt
+        * `T = isize`: UniformInt
     - **No duplication**: Small distribution-specific fillers; user code calls
       the single public dispatcher `fill_random`.
 
@@ -19,90 +23,119 @@
     - `rand::rng()` (Rand ≥ 0.9) yields a fast thread-local RNG; great with Rayon.
 */
 
-use rayon::prelude::*;
 use rand::rng;
 use rand_distr::{Bernoulli, Distribution, Normal, Uniform};
 
 use super::super::scalar::Scalar;
-use super::dense::Tensor;
+use super::tensor_trait::TensorTrait;
 
 // ============================================================================
 // ------------------------- Distribution-specific fillers --------------------
 // ============================================================================
 
 #[inline]
-fn fill_normal_f64(tensor: &mut Tensor<f64>, mean: f64, std: f64) {
+pub fn fill_normal_f64<Ten>(tensor: &mut Ten, mean: f64, std: f64)
+where
+    Ten: TensorTrait<f64>,
+{
     let dist = Normal::new(mean, std)
         .expect("fill_normal_f64: invalid normal params (std must be > 0)");
-    tensor.data.par_iter_mut().for_each(|x| {
+
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = dist.sample(&mut rng_local);
+        dist.sample(&mut rng_local)
     });
 }
 
 #[inline]
-fn fill_uniform_f64(tensor: &mut Tensor<f64>, low: f64, high: f64) {
-    let dist = Uniform::new(low, high)
-        .expect("fill_uniform_f64: invalid uniform bounds (require low < high)");
-    tensor.data.par_iter_mut().for_each(|x| {
+pub fn fill_uniform_f64<Ten>(tensor: &mut Ten, low: f64, high: f64)
+where
+    Ten: TensorTrait<f64>,
+{
+    // For floats, Uniform::new expects low < high.
+    let dist = Uniform::new(low, high).expect("fill_uniform_f64: low must be < high");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = dist.sample(&mut rng_local);
+        dist.sample(&mut rng_local)
     });
 }
 
 #[inline]
-fn fill_bernoulli_f64(tensor: &mut Tensor<f64>, p: f64) {
-    let dist = Bernoulli::new(p)
-        .expect("fill_bernoulli_f64: invalid p (must be in [0,1])");
-    tensor.data.par_iter_mut().for_each(|x| {
+pub fn fill_bernoulli_f64<Ten>(tensor: &mut Ten, p: f64)
+where
+    Ten: TensorTrait<f64>,
+{
+    let dist =
+        Bernoulli::new(p).expect("fill_bernoulli_f64: invalid p (must be in [0,1])");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = if dist.sample(&mut rng_local) { 1.0 } else { 0.0 };
+        if dist.sample(&mut rng_local) {
+            1.0
+        } else {
+            0.0
+        }
     });
 }
 
 #[inline]
-fn fill_uniform_i64(tensor: &mut Tensor<i64>, low: i64, high: i64) {
-    // For integers, `Uniform::new_inclusive` constructs directly and panics if low > high.
-    let dist = Uniform::new_inclusive(low, high).unwrap();
-    tensor.data.par_iter_mut().for_each(|x| {
+pub fn fill_uniform_i64<Ten>(tensor: &mut Ten, low: i64, high: i64)
+where
+    Ten: TensorTrait<i64>,
+{
+    let dist = Uniform::new_inclusive(low, high)
+        .expect("fill_uniform_i64: low must be <= high");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = dist.sample(&mut rng_local);
+        dist.sample(&mut rng_local)
     });
 }
 
 #[inline]
-fn fill_bernoulli_i64(tensor: &mut Tensor<i64>, p: f64) {
-    let dist = Bernoulli::new(p)
-        .expect("fill_bernoulli_i64: invalid p (must be in [0,1])");
-    tensor.data.par_iter_mut().for_each(|x| {
+pub fn fill_bernoulli_i64<Ten>(tensor: &mut Ten, p: f64)
+where
+    Ten: TensorTrait<i64>,
+{
+    let dist =
+        Bernoulli::new(p).expect("fill_bernoulli_i64: invalid p (must be in [0,1])");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = if dist.sample(&mut rng_local) { 1 } else { 0 };
+        if dist.sample(&mut rng_local) {
+            1
+        } else {
+            0
+        }
     });
 }
 
 /// `usize` version
 #[inline]
-pub fn fill_uniform_usize(tensor: &mut Tensor<usize>, low: i64, high: i64) {
+pub fn fill_uniform_usize<Ten>(tensor: &mut Ten, low: i64, high: i64)
+where
+    Ten: TensorTrait<usize>,
+{
     let (low_u, high_u) = match (usize::try_from(low), usize::try_from(high)) {
         (Ok(lo), Ok(hi)) if lo <= hi => (lo, hi),
-        _ => panic!(
-            "fill_uniform_usize: invalid bounds for usize: low={low}, high={high}"
-        ),
+        _ => panic!("fill_uniform_usize: invalid bounds for usize: low={low}, high={high}"),
     };
-    let dist = Uniform::new_inclusive(low_u, high_u).unwrap();
-    tensor.data.par_iter_mut().for_each(|x| {
+    let dist = Uniform::new_inclusive(low_u, high_u)
+        .expect("fill_uniform_usize: low must be <= high (usize)");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = dist.sample(&mut rng_local);
+        dist.sample(&mut rng_local)
     });
 }
 
 /// `isize` version
 #[inline]
-pub fn fill_uniform_isize(tensor: &mut Tensor<isize>, low: i64, high: i64) {
-    let dist = Uniform::new_inclusive(low, high).unwrap();
-    tensor.data.par_iter_mut().for_each(|x| {
+pub fn fill_uniform_isize<Ten>(tensor: &mut Ten, low: i64, high: i64)
+where
+    Ten: TensorTrait<isize>,
+{
+    let dist = Uniform::new_inclusive(low, high)
+        .expect("fill_uniform_isize: low must be <= high");
+    tensor.par_map_in_place(|_| {
         let mut rng_local = rng();
-        *x = dist.sample(&mut rng_local) as isize;
+        dist.sample(&mut rng_local) as isize
     });
 }
 
@@ -123,30 +156,37 @@ pub enum RandType {
     Bernoulli { p: f64 },
 }
 
-/// Fill a `Tensor<T>` with random values according to `spec`.
+/// Fill a tensor with random values according to `spec`.
 ///
-/// Supported:
+/// Supported element types:
 /// - **f64**: `Uniform`, `Normal`, `Bernoulli`
 /// - **i64**: `UniformInt`, `Bernoulli`
 /// - **usize**: `UniformInt`
+/// - **isize**: `UniformInt`
 ///
 /// Panics on unsupported combinations.
 #[inline]
-pub fn fill_random<T>(tensor: &mut Tensor<T>, spec: RandType)
+pub fn fill_random<T, Ten>(tensor: &mut Ten, spec: RandType)
 where
-    T: FillDispatch, // FillDispatch already implies Scalar below
+    T: FillDispatch + Copy + Send + Sync,
+    Ten: TensorTrait<T>,
 {
     T::dispatch_fill(tensor, spec)
 }
 
 // Type-level dispatch: implement per element type.
 pub trait FillDispatch: Scalar + Sized {
-    fn dispatch_fill(tensor: &mut Tensor<Self>, spec: RandType);
+    fn dispatch_fill<Ten>(tensor: &mut Ten, spec: RandType)
+    where
+        Ten: TensorTrait<Self>;
 }
 
 // ---------------------- impl for f64 ----------------------
 impl FillDispatch for f64 {
-    fn dispatch_fill(tensor: &mut Tensor<Self>, spec: RandType) {
+    fn dispatch_fill<Ten>(tensor: &mut Ten, spec: RandType)
+    where
+        Ten: TensorTrait<Self>,
+    {
         match spec {
             RandType::Uniform { low, high } => fill_uniform_f64(tensor, low, high),
             RandType::Normal { mean, std } => fill_normal_f64(tensor, mean, std),
@@ -160,7 +200,10 @@ impl FillDispatch for f64 {
 
 // ---------------------- impl for i64 ----------------------
 impl FillDispatch for i64 {
-    fn dispatch_fill(tensor: &mut Tensor<Self>, spec: RandType) {
+    fn dispatch_fill<Ten>(tensor: &mut Ten, spec: RandType)
+    where
+        Ten: TensorTrait<Self>,
+    {
         match spec {
             RandType::UniformInt { low, high } => fill_uniform_i64(tensor, low, high),
             RandType::Bernoulli { p } => fill_bernoulli_i64(tensor, p),
@@ -171,7 +214,10 @@ impl FillDispatch for i64 {
 
 // ---------------------- impl for usize ----------------------
 impl FillDispatch for usize {
-    fn dispatch_fill(tensor: &mut Tensor<Self>, spec: RandType) {
+    fn dispatch_fill<Ten>(tensor: &mut Ten, spec: RandType)
+    where
+        Ten: TensorTrait<Self>,
+    {
         match spec {
             RandType::UniformInt { low, high } => fill_uniform_usize(tensor, low, high),
             RandType::Bernoulli { .. } => {
@@ -184,26 +230,32 @@ impl FillDispatch for usize {
 
 // ---------------------- impl for isize ----------------------
 impl FillDispatch for isize {
-    fn dispatch_fill(tensor: &mut Tensor<Self>, spec: RandType) {
+    fn dispatch_fill<Ten>(tensor: &mut Ten, spec: RandType)
+    where
+        Ten: TensorTrait<Self>,
+    {
         match spec {
             RandType::UniformInt { low, high } => fill_uniform_isize(tensor, low, high),
             RandType::Bernoulli { .. } => {
-                panic!("fill_random<usize>: Bernoulli not supported")
+                panic!("fill_random<isize>: Bernoulli not supported")
             }
-            _ => panic!("fill_random<usize>: only UniformInt supported"),
+            _ => panic!("fill_random<isize>: only UniformInt supported"),
         }
     }
 }
 
 /* ------------------------------ Examples ------------------------------------
 
-let mut t1: Tensor<f64>  = Tensor::zeros(vec![100]);
-fill_random(&mut t1, RandType::Normal { mean: 0.0, std: 1.0 });
+use crate::math_foundations::tensor::tensor_rand::{fill_random, RandType};
+use crate::math_foundations::tensor::tensor_trait::Tensor as TensorTrait;
 
-let mut t2: Tensor<i64>  = Tensor::zeros(vec![100]);
-fill_random(&mut t2, RandType::UniformInt { low: -5, high: 5 });
-
-let mut t3: Tensor<usize> = Tensor::zeros(vec![100]);
-fill_random(&mut t3, RandType::UniformInt { low: 0, high: 10 });
+// Works with any backend that implements the Tensor trait (dense or sparse):
+fn demo_fill_any_backend<T, Ten>(t: &mut Ten)
+where
+    T: FillDispatch + Copy + Send + Sync,
+    Ten: TensorTrait<T>,
+{
+    fill_random::<T, _>(t, RandType::UniformInt { low: 0, high: 10 });
+}
 
 ------------------------------------------------------------------------------- */

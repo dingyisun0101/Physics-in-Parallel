@@ -52,3 +52,37 @@ fn vector_list_demo() {
     let _diff = vl_scaled_back.clone() - vl_scaled_back.clone();
     let _hadamard = vl_scaled_back.clone() * vl_scaled_back.clone();
 }
+
+
+fn test_haar_random_vectors() {
+    use physics_in_parallel::math::{vector::vector_list::VectorList};
+    use physics_in_parallel::math::{vector::vector_list_rand::fill_haar_vectors};
+    
+    let d = 3;
+    let n = 20;
+
+    // 1) Create empty vector list
+    let mut vl = VectorList::<f64>::new(d, n);
+
+    // 2) Fill with Haar-random unit vectors
+    fill_haar_vectors(&mut vl);
+
+    // 3) Print and check normalization
+    println!("Generated {n} Haar random vectors in {d}D:");
+    for i in 0..n {
+        let v = vl.get_vec(i as isize);
+
+        // compute L2 norm
+        let norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+
+        println!("{:?}, norm = {:.6}", v, norm);
+
+        // check ~1.0
+        assert!(
+            (norm - 1.0).abs() < 1e-10,
+            "Vector {} not normalized: norm = {}",
+            i,
+            norm
+        );
+    }
+}
