@@ -87,8 +87,8 @@ impl Kernel for PowerLawKernel {
     #[inline]
     fn sample(&self, n: usize) -> Vec<f64> {
         // Read params from `self.kind` (no duplicates).
-        let (mu, l_pow, c_pow) = match self.kind {
-            KernelType::PowerLaw { mu, .. } => (mu, self.l_pow, self.c_pow),
+        let (mu, l_pow, c_pow, c) = match self.kind {
+            KernelType::PowerLaw { c, mu, .. } => (mu, self.l_pow, self.c_pow, c),
             _ => unreachable!("PowerLawKernel.kind must be PowerLaw"),
         };
 
@@ -102,7 +102,7 @@ impl Kernel for PowerLawKernel {
             } else if u < 0.0 {
                 u = 0.0;
             }
-            *x = (u * (l_pow - c_pow) + c_pow).powf(-1.0 / mu);
+            *x = (u * (l_pow - c_pow) + c_pow).powf(-1.0 / mu).max(c);
         });
         out
     }

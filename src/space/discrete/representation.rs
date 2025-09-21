@@ -95,23 +95,21 @@ Configuration for a **d-dimensional cubic lattice** with equal side length per a
 
 - `d`: rank (e.g., 1D line, 2D square, 3D cube, …)
 - `l`: side length per axis (total sites = `l^d`)
-- `c`: arbitrary **scale/constant** (kept as meta for physics)
 - `periodic`: if `true`, out-of-bounds indices **wrap**; else they **clamp** to `[0, l-1]`
 */
 #[derive(Debug, Clone, Serialize)]
 pub struct GridConfig {
     pub d: usize,
     pub l: usize,
-    pub c: f64,
     pub periodic: bool,
 }
 
 impl GridConfig {
     /// Create a new config. Panics if `d == 0` or `l == 0`.
     #[inline]
-    pub fn new(d: usize, l: usize, c: f64, periodic: bool) -> Self {
+    pub fn new(d: usize, l: usize, periodic: bool) -> Self {
         assert!(d > 0 && l > 0, "GridConfig requires d>0 and l>0; got d={d}, l={l}");
-        Self { d, l, c, periodic }
+        Self { d, l, periodic }
     }
 
     /// Total site count `l^d`.
@@ -342,59 +340,6 @@ impl<T: Scalar + VacancyValue + Serialize> Space<T> for Grid<T> {
         self.data.par_iter_mut().for_each(|x| *x = val.clone());
     }
 
-    /**
-    Build a **nearest-neighbor adjacency matrix** for the grid.
-
-    - Graph has `n = l^d` nodes.
-    - An undirected edge exists between sites that differ by `±1` along **exactly one** axis.
-    - Periodic vs clamped boundary matches `cfg.periodic`.
-
-    Returns a dense `n×n` matrix of `0.0/1.0`.  
-    For large grids this is memory-heavy; prefer sparse representations in production.
-    */
-    fn to_adj_matrix(&mut self) -> Vec<Vec<f64>> {
-        let d = self.cfg.d;
-        let l = self.cfg.l as isize;
-        let n = self.linear_size();
-
-        let mut adj = vec![vec![0.0_f64; n]; n];
-
-        // Decode flat index → coordinates (row-major, last axis fastest).
-        let decode = |mut idx: usize| {
-            let mut coord = vec![0isize; d];
-            for k in (0..d).rev() {
-                coord[k] = (idx % self.cfg.l) as isize;
-                idx /= self.cfg.l;
-            }
-            coord
-        };
-
-        for i in 0..n {
-            let coord = decode(i);
-
-            for dim in 0..d {
-                for &delta in &[-1isize, 1isize] {
-                    // neighbor by ±1 step on axis `dim`
-                    let mut neigh = coord.clone();
-                    let x = neigh[dim] + delta;
-                    neigh[dim] = if self.cfg.periodic {
-                        ((x % l) + l) % l
-                    } else {
-                        x.clamp(0, l - 1)
-                    };
-
-                    // Encode neighbor coords → flat index
-                    let mut lin = 0usize;
-                    for &c in &neigh {
-                        lin = lin * self.cfg.l + (c as usize);
-                    }
-                    adj[i][lin] = 1.0;
-                }
-            }
-        }
-        adj
-    }
-
     /// Save the grid to `output_file` in JSON after optional **downscaling** to side `l_target`.
     ///
     /// The JSON schema is:
@@ -435,7 +380,6 @@ impl<T: Scalar + VacancyValue> Grid<T> {
         let new_cfg = GridConfig {
             d,
             l: l_new,
-            c: self.cfg.c,
             periodic: self.cfg.periodic,
         };
 

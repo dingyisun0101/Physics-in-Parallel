@@ -28,9 +28,6 @@ pub trait Space<T: Scalar> {
     /// Safe write at multi-index `coord`.
     fn set(&mut self, coord: &[isize], val: T);
 
-    /// Construct nearest-neighbor adjacency (±1 along each axis).
-    fn to_adj_matrix(&mut self) -> Vec<Vec<f64>>;
-
     /// Save the grid after **optional downscaling** to side length `l_target`.
     ///
     /// The `output_dir` is treated as a **file path** here (not a directory).
