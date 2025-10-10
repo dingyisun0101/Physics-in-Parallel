@@ -118,20 +118,6 @@ fn wrap_linear_index(k: usize, size: usize) -> usize {
 // ===================================================================
 
 impl<T: Scalar> Tensor<T> {
-    /// Create an **empty** sparse tensor with a given shape.
-    ///
-    /// # Panics
-    /// Panics if `shape` is empty (rank 0) or contains a zero dimension.
-    #[inline]
-    pub fn new(shape: Vec<usize>) -> Self {
-        assert!(!shape.is_empty(), "Tensor rank must be >= 1");
-        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
-        Self {
-            shape,
-            data: AHashMap::default(),
-        }
-    }
-
     /// Convert a multi-index (with negatives allowed) to a **row-major** flat index,
     /// using **per-axis periodic wrapping**.
     ///
@@ -525,6 +511,20 @@ where
 {
     type Repr<U: Scalar> = Tensor<U>;
 
+    /// Create an **empty** sparse tensor with a given shape.
+    ///
+    /// # Panics
+    /// Panics if `shape` is empty (rank 0) or contains a zero dimension.
+    #[inline]
+    fn empty(shape: &[usize]) -> Self {
+        assert!(!shape.is_empty(), "Tensor rank must be >= 1");
+        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
+        Self {
+            shape: shape.to_vec(),
+            data: AHashMap::default(),
+        }
+    }
+
     /// Shape vector.
     #[inline]
     fn shape(&self) -> &[usize] {
@@ -543,10 +543,10 @@ where
         Tensor::<T>::get(self, indices)
     }
 
-    /// Sparse backend cannot safely yield `&mut T` via multi-index; return None.
+    /// Sparse backend cannot safely yield `&mut T` via multi-index; Panic.
     #[inline(always)]
-    fn get_mut(&mut self, _indices: &[isize]) -> Option<&mut T> {
-        None
+    fn get_mut(&mut self, _indices: &[isize]) -> &mut T {
+        panic!("TODO");
     }
 
     /// Set value at (wrapped) multi-index (zero removes the entry).

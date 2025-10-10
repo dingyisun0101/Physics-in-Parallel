@@ -40,7 +40,7 @@ Goals:
 */
 
 use std::fmt::Display;
-use std::ops::{Add, Sub, Mul, Div, BitAnd};
+use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::str::FromStr;
 
 use rayon::prelude::*;
@@ -72,23 +72,6 @@ pub struct Tensor<T: Scalar> {
 }
 
 impl<T: Scalar> Tensor<T> {
-    /// Create a new tensor with the given `shape`, filled with `T::default()`.
-    ///
-    /// # Panics
-    /// Panics if `shape` contains a zero dimension or if `product` overflows `usize`.
-    #[inline]
-    pub fn new(shape: Vec<usize>) -> Self {
-        assert!(
-            shape.iter().all(|&d| d > 0),
-            "All dimensions must be > 0; got {shape:?}"
-        );
-        let size = shape.iter().product::<usize>();
-        Self {
-            shape,
-            data: vec![T::default(); size],
-        }
-    }
-
     /// Number of elements (a.k.a. linear size).
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -162,6 +145,23 @@ where
 {
     type Repr<U: Scalar> = Tensor<U>;
 
+    /// Create a new tensor with the given `shape`, filled with `T::default()`.
+    ///
+    /// # Panics
+    /// Panics if `shape` contains a zero dimension or if `product` overflows `usize`.
+    #[inline]
+    fn empty(shape: &[usize]) -> Self {
+        assert!(
+            shape.iter().all(|&d| d > 0),
+            "All dimensions must be > 0; got {shape:?}"
+        );
+        let size = shape.iter().product::<usize>();
+        Self {
+            shape: shape.to_vec(),
+            data: vec![T::default(); size],
+        }
+    }
+
     /// Shape vector.
     #[inline]
     fn shape(&self) -> &[usize] {
@@ -200,10 +200,10 @@ where
     /// Get mutable reference by (wrapped) multi-index.
     /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
-    fn get_mut(&mut self, indices: &[isize]) -> Option<&mut T> {
+    fn get_mut(&mut self, indices: &[isize]) -> &mut T {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
-        Some(unsafe { self.data.get_unchecked_mut(k) })
+        unsafe { self.data.get_unchecked_mut(k) }
     }
 
     /// Set value at (wrapped) multi-index.
@@ -280,41 +280,99 @@ where
 //===================================================================
 // ------------------------- Arithmetic Ops -------------------------
 //===================================================================
+// ------------------------ &Tensor ⊕ &Tensor -> Tensor ------------------------
 
-macro_rules! impl_tensor_op {
+macro_rules! impl_tensor_ref_binop {
     ($trait:ident, $method:ident, $op:tt) => {
-        impl<T> $trait for Tensor<T>
+        impl<'a, T> $trait<&'a Tensor<T>> for &'a Tensor<T>
         where
-            T: Scalar + $trait<Output = T> + Send + Sync + Copy,
+            T: Scalar + Copy + Send + Sync + core::ops::$trait<Output = T>,
         {
-            type Output = Self;
-
-            /// Parallel elementwise binary op with shape check.
+            type Output = Tensor<T>;
             #[inline]
-            fn $method(self, rhs: Self) -> Self::Output {
+            fn $method(self, rhs: &'a Tensor<T>) -> Self::Output {
                 assert_eq!(self.shape, rhs.shape, "Tensor shape mismatch");
-                let shape = self.shape;
-                let a = self.data;
-                let b = rhs.data;
-
-                // NOTE: into_par_iter() consumes; map is parallel and lock-free.
-                let data = a
-                    .into_par_iter()
-                    .zip(b.into_par_iter())
-                    .map(|(x, y)| x $op y)
-                    .collect();
-
-                Self { shape, data }
+                let mut out = self.clone(); // reuses lhs allocation
+                out.data
+                    .par_iter_mut()
+                    .zip(rhs.data.par_iter())
+                    .for_each(|(a, &b)| { *a = *a $op b; });
+                out
             }
         }
     };
 }
+impl_tensor_ref_binop!(Add, add, +);
+impl_tensor_ref_binop!(Sub, sub, -);
+impl_tensor_ref_binop!(Mul, mul, *);
+impl_tensor_ref_binop!(Div, div, /);
 
-impl_tensor_op!(Add, add, +);
-impl_tensor_op!(Sub, sub, -);
-impl_tensor_op!(Mul, mul, *);
-impl_tensor_op!(Div, div, /);
-impl_tensor_op!(BitAnd, bitand, &);
+// ------------------------ Tensor ⊕= &Tensor (in-place) -----------------------
+
+macro_rules! impl_tensor_ref_assign {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<'a, T> $trait<&'a Tensor<T>> for Tensor<T>
+        where
+            T: Scalar + Copy + Send + Sync + core::ops::$trait<T>,
+        {
+            #[inline]
+            fn $method(&mut self, rhs: &'a Tensor<T>) {
+                assert_eq!(self.shape, rhs.shape, "Tensor shape mismatch");
+                self.data
+                    .par_iter_mut()
+                    .zip(rhs.data.par_iter())
+                    .for_each(|(a, &b)| { *a = (*a) $op b; });
+            }
+        }
+    };
+}
+impl_tensor_ref_assign!(AddAssign, add_assign, +);
+impl_tensor_ref_assign!(SubAssign, sub_assign, -);
+impl_tensor_ref_assign!(MulAssign, mul_assign, *);
+impl_tensor_ref_assign!(DivAssign, div_assign, /);
+
+// ------------------------ &Tensor ⊕ scalar -> Tensor -------------------------
+
+macro_rules! impl_tensor_ref_scalar_binop {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<'a, T> $trait<T> for &'a Tensor<T>
+        where
+            T: Scalar + Copy + Send + Sync + core::ops::$trait<Output = T>,
+        {
+            type Output = Tensor<T>;
+            #[inline]
+            fn $method(self, rhs: T) -> Self::Output {
+                let mut out = self.clone();
+                out.data.par_iter_mut().for_each(|a| *a = *a $op rhs);
+                out
+            }
+        }
+    };
+}
+impl_tensor_ref_scalar_binop!(Add, add, +);
+impl_tensor_ref_scalar_binop!(Sub, sub, -);
+impl_tensor_ref_scalar_binop!(Mul, mul, *);
+impl_tensor_ref_scalar_binop!(Div, div, /);
+
+// ------------------------ Tensor ⊕= scalar (in-place) ------------------------
+
+macro_rules! impl_tensor_scalar_assign {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<T> $trait<T> for Tensor<T>
+        where
+            T: Scalar + Copy + Send + Sync + core::ops::$trait<T>,
+        {
+            #[inline]
+            fn $method(&mut self, rhs: T) {
+                self.data.par_iter_mut().for_each(|a| *a = *a $op rhs);
+            }
+        }
+    };
+}
+impl_tensor_scalar_assign!(AddAssign, add_assign, +);
+impl_tensor_scalar_assign!(SubAssign, sub_assign, -);
+impl_tensor_scalar_assign!(MulAssign, mul_assign, *);
+impl_tensor_scalar_assign!(DivAssign, div_assign, /);
 
 // ===================================================================
 // ---------------------------- Type Casting -------------------------

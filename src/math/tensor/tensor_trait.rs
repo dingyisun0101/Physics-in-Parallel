@@ -32,6 +32,8 @@ pub trait TensorTrait<T: Scalar>: Send + Sync {
     /// - Sparse implementation should set `Repr<U> = sparse::Tensor<U>`.
     type Repr<U: Scalar>: TensorTrait<U>;
 
+    fn empty(shape: &[usize]) -> Self;
+
     /// Shape vector.
     fn shape(&self) -> &[usize];
 
@@ -46,10 +48,7 @@ pub trait TensorTrait<T: Scalar>: Send + Sync {
         T: Copy;
 
     /// Mutable reference to the element at `idx` **if it exists**.
-    ///
-    /// - Dense: always `Some(&mut T)`.
-    /// - Sparse: `Some(&mut T)` only for stored nonzeros; `None` for implicit zeros.
-    fn get_mut(&mut self, idx: &[isize]) -> Option<&mut T>;
+    fn get_mut(&mut self, idx: &[isize]) -> &mut T;
 
     /// Set the value at `idx`. Writing zero may prune storage in sparse backends.
     fn set(&mut self, idx: &[isize], val: T);
