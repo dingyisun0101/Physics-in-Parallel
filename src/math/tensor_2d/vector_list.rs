@@ -47,7 +47,7 @@ impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
     // ----------------------- shape helpers -----------------------
     #[inline] pub fn dim(&self) -> usize { self.matrix.rows() }
     #[inline] pub fn num_vectors(&self) -> usize { self.matrix.cols() }
-    #[inline] pub fn shape(&self) -> (usize, usize) { (self.dim(), self.num_vectors()) }
+    #[inline] pub fn shape(&self) -> [usize; 2] { [self.dim(), self.num_vectors()] }
 
     // ------------------------ Type helpers ------------------------
     #[inline]

@@ -42,7 +42,6 @@ pub struct TensorRandFiller {
     kind: RandType,
     num_rngs: usize,
     rngs: Vec<SmallRng>, // prebuilt pool; we slice to the active count per refresh
-    seed: Option<u64>,
 }
 
 impl TensorRandFiller {
@@ -58,7 +57,7 @@ impl TensorRandFiller {
             .map(|_| SmallRng::try_from_rng(&mut master).expect("Failed to seed RNG"))
             .collect();
         rngs.shrink_to_fit();
-        Self { kind, num_rngs: req, rngs, seed: None }
+        Self { kind, num_rngs: req, rngs }
     }
 
     #[inline]
@@ -73,7 +72,7 @@ impl TensorRandFiller {
             .map(|_| SmallRng::try_from_rng(&mut master).expect("Failed to seed RNG"))
             .collect();
         rngs.shrink_to_fit();
-        Self { kind, num_rngs: req, rngs, seed: Some(seed) }
+        Self { kind, num_rngs: req, rngs }
     }
 
     #[inline]
