@@ -1,10 +1,26 @@
+// src/math_foundations/tensor_2d/vector_list.rs
+/*!
+A **SoA (structure-of-arrays)** container for many fixed-length vectors,
+backed by a generic 2D `Matrix<T, B>` with shape `[dim, n]`.
+
+- **Rows**   = coordinates / axes (dimension `dim`)
+- **Columns**= vectors (count `n`)
+- **Invariant**: each **column is a vector** of length `dim`.
+
+This wrapper provides ergonomic row/column views, bulk set/fill, scaling,
+and simple arithmetic forwarding to the `Matrix` backend.
+*/
 use core::marker::PhantomData;
-use core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign};
 use rayon::prelude::*;
 
-use crate::math::scalar::Scalar;
-use crate::math::tensor::{dense::Tensor, tensor_trait::TensorTrait};
-use crate::math::tensor_2d::matrix::{Matrix, RowRef, RowRefMut, ColRef, ColRefMut};
+use crate::math::{
+    scalar::Scalar,
+    tensor::{
+        dense::Tensor,
+        tensor_trait::TensorTrait,
+    },
+    tensor_2d::matrix::{Matrix, RowRef, RowRefMut, ColRef, ColRefMut}
+};
 
 // ============================================================================
 // ------------------------------- Core Structs -------------------------------
@@ -14,9 +30,6 @@ pub struct VectorList<T: Scalar, B: TensorTrait<T> = Tensor<T>> {
     pub matrix: Matrix<T, B>, // rows = dim (D), cols = n
     _pd: PhantomData<T>,
 }
-
-
-
 
 // ============================================================================
 // --------------------------------- Basic I/O --------------------------------
@@ -45,27 +58,28 @@ impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
     pub fn into_matrix(self) -> Matrix<T, B> { self.matrix }
 
     // ----------------------- shape helpers -----------------------
-    #[inline] pub fn dim(&self) -> usize { self.matrix.rows() }
-    #[inline] pub fn num_vectors(&self) -> usize { self.matrix.cols() }
-    #[inline] pub fn shape(&self) -> [usize; 2] { [self.dim(), self.num_vectors()] }
+    #[inline] pub fn dim(&self) -> usize { self.matrix.shape()[0] }
+    #[inline] pub fn num_vectors(&self) -> usize { self.matrix.shape()[1] }
+    #[inline] pub fn shape(&self) -> &[usize] { self.matrix.shape() }
 
     // ------------------------ Type helpers ------------------------
     #[inline]
     pub fn cast_to<U>(&self) -> VectorList<U, B::Repr<U>>
     where
-        T: Copy + Send + Sync,
         U: Scalar + Send + Sync,
     {
         let data_u: Matrix<U, B::Repr<U>> = self.matrix.cast_to::<U>();
         VectorList { matrix: data_u, _pd: PhantomData }
     }
+
+    #[inline]
+    pub fn print(&self) {
+        self.matrix.print();
+    }
 }
 
-
-
-
 // ============================================================================
-// --------------------------------- Accesors ---------------------------------
+// --------------------------------- Accessors --------------------------------
 // ============================================================================
 
 impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
@@ -98,67 +112,47 @@ impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
     #[inline] pub fn get_vector_mut(&mut self, i: isize) -> ColRefMut<'_, T, B> { self.matrix.col_mut(i) }
 }
 
-
-
-
-
-
 // ============================================================================
 // ---------------------------- Bulk Operations -------------------------------
 // ============================================================================
+
 /// Scaling
 impl<T, B> VectorList<T, B>
 where
-    T: Scalar + Copy + Send + Sync + Mul<Output = T>,
-    B: TensorTrait<T> + Send + Sync,
+    T: Scalar,
+    B: TensorTrait<T>,
 {
     /// Scale each **vector (column)** by the corresponding factor in `scales`.
     ///
     /// - `scales.len()` must equal `self.num_vectors()`.
-    /// - Parallelized across **rows** to compute the scaled values, then
-    ///   committed back in a single pass. (No auxiliary `VectorList` is created.)
+    /// - Parallelized across **columns** to build scaled values, then committed.
     #[inline]
     pub fn scale_vectors_by_list(&mut self, scales: &[T]) {
         let d = self.dim();
         let n = self.num_vectors();
-        assert!(
-            scales.len() == n,
-            "scale_vectors_by_list: len mismatch (got {}, expected {})",
-            scales.len(),
-            n
-        );
+        assert!(scales.len() == n, "scale_vectors_by_list: len mismatch");
 
-        // Phase 1 (parallel): compute scaled rows
-        // Each worker reads from &self (immutable) and writes to its own buffer.
-        let scaled_rows: Vec<Vec<T>> = (0..d)
+        // Phase 1 (parallel): compute scaled columns (each of length d)
+        let scaled_cols: Vec<Vec<T>> = (0..n)
             .into_par_iter()
             .map(|k| {
-                // build scaled row k: v_kj * scales[j]
-                let mut out = Vec::with_capacity(n);
-                for j in 0..n {
-                    let x = self.matrix.get(k as isize, j as isize);
-                    out.push(x * scales[j]);
+                let s = scales[k];
+                let mut out = Vec::with_capacity(d);
+                for row in 0..d {
+                    let x = self.matrix.get(row as isize, k as isize);
+                    out.push(x * s); // scale column k by scales[k]
                 }
                 out
             })
             .collect();
 
-        // Phase 2 (sequential): commit back in-place, row by row.
-        for (k, row_vals) in scaled_rows.into_iter().enumerate() {
-            self.matrix.row_mut(k as isize).set_from_slice(&row_vals);
+        // Phase 2 (sequential): commit back column by column.
+        for (k, col_vals) in scaled_cols.into_iter().enumerate() {
+            // len(col_vals) == d, matches Matrix::col_mut(k).set_from_slice
+            self.matrix.col_mut(k as isize).set_from_slice(&col_vals);
         }
     }
 
-    /// Parallel scale: v[:, j] <- s * v[:, j] for all j
-    #[inline]
-    pub fn scale_vectors_by_scalar(&mut self, s: T) {
-        self.matrix.as_tensor_mut().par_map_in_place(|x| x * s);
-    }
-}
-
-
-/// Bulk set operations
-impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
     /// Set an entire **vector** (column) `i` from slice `vals` of length `dim()`.
     #[inline]
     pub fn set_vector_from_slice(&mut self, i: isize, vals: &[T])
@@ -180,13 +174,11 @@ impl<T: Scalar, B: TensorTrait<T>> VectorList<T, B> {
     }
 }
 
-
-
 // ============================================================================
 // ------------------------------ Math Utils ----------------------------------
 // ============================================================================
 
-/// Norms
+/// Norms + normalization
 impl<T, B> VectorList<T, B>
 where
     T: Scalar,
@@ -200,10 +192,10 @@ where
         let n = self.num_vectors();
 
         (0..n).into_par_iter()
-            .map(|j| {
+            .map(|col| {
                 let mut s = T::zero();
-                for k in 0..d {
-                    let x = self.matrix.get(k as isize, j as isize);
+                for row in 0..d {
+                    let x = self.matrix.get(row as isize, col as isize);
                     s = s + x * x;
                 }
                 <T>::sqrt(s)
@@ -211,9 +203,33 @@ where
             .collect()
     }
 
+    /// In-place column-wise normalization to unit L2 norm.
+    #[inline]
     pub fn normalize(&mut self) {
         let norms = self.get_norms();
-        self.scale_vectors_by_list(&norms.iter().map(|&x| T::one() / x).collect::<Vec<T>>());
+        let scales: Vec<T> = norms.par_iter()
+            .map(|&n| if n == T::zero() { T::one() } else { T::one() / n })
+            .collect();
+        self.scale_vectors_by_list(&scales);
+    }
+
+    /// Return `(norms, unit_vectors)` where `unit_vectors[:, j] = v[:, j] / ||v_j||`.
+    #[inline]
+    pub fn to_polar(&self) -> (Vec<T>, VectorList<T, B>)
+    where
+        T: Scalar,
+        B: TensorTrait<T>,
+    {
+        let norms = self.get_norms();
+        let mut units = self.clone();
+
+        // scale each column by 1 / ||v_j|| (safe when norm == 0)
+        let scales: Vec<T> = norms.iter()
+            .map(|&n| if n == T::zero() { T::zero() } else { T::one() / n })
+            .collect();
+
+        units.scale_vectors_by_list(&scales);
+        (norms, units)
     }
 }
 
@@ -223,202 +239,106 @@ where
 // --------------------------- Arithmetic Ops ---------------------------------
 // ============================================================================
 
-// -------------------- &VectorList ⊕ &VectorList -> VectorList --------------------
+// ---------------------------- Macro helpers ---------------------------------
 
-impl<'a, T, B> Add<&'a VectorList<T, B>> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Add<&'b B, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn add(self, rhs: &'a VectorList<T, B>) -> Self::Output {
-        VectorList { matrix: &self.matrix + &rhs.matrix, _pd: PhantomData }
-    }
+// &VectorList ⊕ &VectorList -> VectorList  (directly on backend tensors)
+macro_rules! impl_vl_ref_binop_backend {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<'a, T, B> core::ops::$trait<&'a VectorList<T, B>> for &'a VectorList<T, B>
+        where
+            T: Scalar,
+            B: TensorTrait<T>,
+            for<'b> &'b B: core::ops::$trait<&'b B, Output = B>,
+        {
+            type Output = VectorList<T, B>;
+            #[inline]
+            fn $method(self, rhs: &'a VectorList<T, B>) -> Self::Output {
+                let tensor: B = &self.matrix.tensor $op &rhs.matrix.tensor;
+                let matrix = Matrix::from_tensor(tensor);
+                VectorList { matrix, _pd: core::marker::PhantomData }
+            }
+        }
+    };
 }
 
-impl<'a, T, B> Sub<&'a VectorList<T, B>> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Sub<&'b B, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn sub(self, rhs: &'a VectorList<T, B>) -> Self::Output {
-        VectorList { matrix: &self.matrix - &rhs.matrix, _pd: PhantomData }
-    }
+// VectorList op= VectorList (compute via backend zip)
+macro_rules! impl_vl_ref_assign_backend {
+    ($assign_trait:ident, $assign_method:ident, $elem_trait:ident, $op:tt) => {
+        impl<T, B> core::ops::$assign_trait<&VectorList<T, B>> for VectorList<T, B>
+        where
+            T: Scalar + Copy + Send + Sync + core::ops::$elem_trait<Output = T>,
+            B: TensorTrait<T>,
+        {
+            #[inline]
+            fn $assign_method(&mut self, rhs: &VectorList<T, B>) {
+                self.matrix.tensor
+                    .par_zip_with_inplace(&rhs.matrix.tensor, |x, y| x $op y);
+            }
+        }
+    };
 }
 
-impl<'a, T, B> Mul<&'a VectorList<T, B>> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Mul<&'b B, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn mul(self, rhs: &'a VectorList<T, B>) -> Self::Output {
-        VectorList { matrix: &self.matrix * &rhs.matrix, _pd: PhantomData }
-    }
+// &VectorList ⊕ scalar -> VectorList (directly on backend tensors)
+macro_rules! impl_vl_ref_scalar_binop_backend {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<'a, T, B> core::ops::$trait<T> for &'a VectorList<T, B>
+        where
+            T: Scalar,
+            B: TensorTrait<T>,
+            for<'b> &'b B: core::ops::$trait<T, Output = B>,
+        {
+            type Output = VectorList<T, B>;
+            #[inline]
+            fn $method(self, rhs: T) -> Self::Output {
+                let tensor: B = &self.matrix.tensor $op rhs;
+                let matrix = Matrix::from_tensor(tensor);
+                VectorList { matrix, _pd: core::marker::PhantomData }
+            }
+        }
+    };
 }
 
-impl<'a, T, B> Div<&'a VectorList<T, B>> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Div<&'b B, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn div(self, rhs: &'a VectorList<T, B>) -> Self::Output {
-        VectorList { matrix: &self.matrix / &rhs.matrix, _pd: PhantomData }
-    }
+// VectorList scalar-op= (delegate to backend scalar-assign)
+macro_rules! impl_vl_scalar_assign_backend {
+    ($assign_trait:ident, $assign_method:ident) => {
+        impl<T, B> core::ops::$assign_trait<T> for VectorList<T, B>
+        where
+            T: Scalar,
+            B: TensorTrait<T> + core::ops::$assign_trait<T>,
+        {
+            #[inline]
+            fn $assign_method(&mut self, rhs: T) {
+                self.matrix.tensor.$assign_method(rhs);
+            }
+        }
+    };
 }
 
-// -------------------- VectorList op= VectorList --------------------
+// ------------------------------- Invocations --------------------------------
 
-impl<T, B> AddAssign<&VectorList<T, B>> for VectorList<T, B>
-where
-    T: Scalar + Copy + Send + Sync + core::ops::Add<Output = T>,
-    B: TensorTrait<T>,
-{
-    #[inline]
-    fn add_assign(&mut self, rhs: &VectorList<T, B>) {
-        self.matrix += &rhs.matrix;
-    }
-}
+// &A ⊕ &B
+impl_vl_ref_binop_backend!(Add, add, +);
+impl_vl_ref_binop_backend!(Sub, sub, -);
+impl_vl_ref_binop_backend!(Mul, mul, *);
+impl_vl_ref_binop_backend!(Div, div, /);
 
-impl<T, B> SubAssign<&VectorList<T, B>> for VectorList<T, B>
-where
-    T: Scalar + Copy + Send + Sync + core::ops::Sub<Output = T>,
-    B: TensorTrait<T>,
-{
-    #[inline]
-    fn sub_assign(&mut self, rhs: &VectorList<T, B>) {
-        self.matrix -= &rhs.matrix;
-    }
-}
+// A op= B   (uses elementwise trait bound for the closure type)
+impl_vl_ref_assign_backend!(AddAssign, add_assign, Add, +);
+impl_vl_ref_assign_backend!(SubAssign, sub_assign, Sub, -);
+impl_vl_ref_assign_backend!(MulAssign, mul_assign, Mul, *);
+impl_vl_ref_assign_backend!(DivAssign, div_assign, Div, /);
 
-impl<T, B> MulAssign<&VectorList<T, B>> for VectorList<T, B>
-where
-    T: Scalar + Copy + Send + Sync + core::ops::Mul<Output = T>,
-    B: TensorTrait<T>,
-{
-    #[inline]
-    fn mul_assign(&mut self, rhs: &VectorList<T, B>) {
-        self.matrix *= &rhs.matrix;
-    }
-}
+// &A ⊕ scalar
+impl_vl_ref_scalar_binop_backend!(Add, add, +);
+impl_vl_ref_scalar_binop_backend!(Sub, sub, -);
+impl_vl_ref_scalar_binop_backend!(Mul, mul, *);
+impl_vl_ref_scalar_binop_backend!(Div, div, /);
 
-impl<T, B> DivAssign<&VectorList<T, B>> for VectorList<T, B>
-where
-    T: Scalar + Copy + Send + Sync + core::ops::Div<Output = T>,
-    B: TensorTrait<T>,
-{
-    #[inline]
-    fn div_assign(&mut self, rhs: &VectorList<T, B>) {
-        self.matrix /= &rhs.matrix;
-    }
-}
+// A scalar-op=
+impl_vl_scalar_assign_backend!(AddAssign, add_assign);
+impl_vl_scalar_assign_backend!(SubAssign, sub_assign);
+impl_vl_scalar_assign_backend!(MulAssign, mul_assign);
+impl_vl_scalar_assign_backend!(DivAssign, div_assign);
 
-// -------------------- &VectorList ⊕ scalar -> VectorList --------------------
 
-impl<'a, T, B> Add<T> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Add<T, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn add(self, rhs: T) -> Self::Output {
-        VectorList { matrix: &self.matrix + rhs, _pd: PhantomData }
-    }
-}
 
-impl<'a, T, B> Sub<T> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Sub<T, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn sub(self, rhs: T) -> Self::Output {
-        VectorList { matrix: &self.matrix - rhs, _pd: PhantomData }
-    }
-}
-
-impl<'a, T, B> Mul<T> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Mul<T, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn mul(self, rhs: T) -> Self::Output {
-        VectorList { matrix: &self.matrix * rhs, _pd: PhantomData }
-    }
-}
-
-impl<'a, T, B> Div<T> for &'a VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T>,
-    for<'b> &'b B: Div<T, Output = B>,
-{
-    type Output = VectorList<T, B>;
-    #[inline]
-    fn div(self, rhs: T) -> Self::Output {
-        VectorList { matrix: &self.matrix / rhs, _pd: PhantomData }
-    }
-}
-
-// -------------------- VectorList scalar-op --------------------
-
-impl<T, B> AddAssign<T> for VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T> + AddAssign<T>,
-{
-    #[inline]
-    fn add_assign(&mut self, rhs: T) {
-        self.matrix += rhs;
-    }
-}
-
-impl<T, B> SubAssign<T> for VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T> + SubAssign<T>,
-{
-    #[inline]
-    fn sub_assign(&mut self, rhs: T) {
-        self.matrix -= rhs;
-    }
-}
-
-impl<T, B> MulAssign<T> for VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T> + MulAssign<T>,
-{
-    #[inline]
-    fn mul_assign(&mut self, rhs: T) {
-        self.matrix *= rhs;
-    }
-}
-
-impl<T, B> DivAssign<T> for VectorList<T, B>
-where
-    T: Scalar,
-    B: TensorTrait<T> + DivAssign<T>,
-{
-    #[inline]
-    fn div_assign(&mut self, rhs: T) {
-        self.matrix /= rhs;
-    }
-}

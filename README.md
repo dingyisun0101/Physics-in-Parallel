@@ -1,65 +1,61 @@
 # Physics-in-Parallel
 
-**Physics in Parallel** is a scientific computing package written in Rust, designed to provide a high-performance, modular, and parallelized infrastructure for computational physics and applied mathematics. The project emphasizes both **generality** (supporting a wide range of scalar types, tensor structures, and stochastic models) and **efficiency** (fine-grained memory layouts, data-parallelism, and numerical stability).
+**Physics in Parallel** is a scientific computing package in Rust for **massive, memory-bound simulations** where *full vectorization isn’t feasible*. It targets workloads that exceed cache and RAM budgets, need irregular access patterns, or are best served by a **hybrid SoA/AoS** approach with **block-wise/streaming** execution.
 
 ---
 
 ## Core Goals
 1. **Unified Scalar Abstraction**  
-   - A single `Scalar` trait unifies integers, floating-point numbers, and complex types.  
-   - Provides a consistent API for fundamental operations (conjugation, norm, square root, finiteness checks) without fragmenting the ecosystem into separate traits.
+   A single `Scalar` trait unifies integers, floats, and complex types with a consistent API (conjugation, norms, sqrt, finiteness).
 
-2. **Tensor Infrastructure**  
-   - Dense tensor structures with flat-memory layouts for cache efficiency.  
-   - Parallelized elementwise operations (`+`, `-`, `*`, `/`) using Rayon.  
-   - Planned support for sparse tensors and symmetry-aware storage (symmetric, antisymmetric, triangular).  
-   - Serialization and deserialization into human-readable formats (e.g., JSON, string DSL).
+2. **Tensor Infrastructure (Hybrid-layout Friendly)**  
+   - Parallel elementwise ops (`+`, `-`, `*`, `/`) via Rayon.
+   - **Tile/block iterators** and **zero-copy views** designed to cooperate with SoA and AoS neighbors.
+   - Human-readable serialization (JSON, DSL strings).
+   - Multiple backends availible:
+      - Dense:
+         - flat-memory tensors for cache efficiency.  
+      - Sparse: 
+         - Sparse and symmetry-aware storage backed by hashset.
 
-3. **Randomized Structures**  
-   - Efficient generators for ensembles of random vectors under different distributions (uniform, Gaussian, etc.).  
-   - Supports elementwise and vectorwise sampling, crucial for Monte Carlo simulations, stochastic dynamics, and statistical physics models.
+2. **2D Tensor Infrastructure (Matrix + VectorList)**
+   - Matrix: 
+      - A wrapper for tensor that adds linalg methods support.
+      - Allow slicing and viewing by row or col.
+   - VectorList:
+      - A wrapper for Matrix.
+      - Each col represents a vector.
+      - Allow bulk operations on vectors (normalization, ...)
+      
 
-4. **Vector Collections (SoA Layout)**  
-   - `VectorList<T, D>` implements a **Structure-of-Arrays (SoA)** design: each dimension stored contiguously for SIMD- and cache-friendly operations.  
-   - Provides raw and high-level accessors, normalization utilities, and batch linear algebra operations.  
-   - Full set of arithmetic operator overloads with parallel execution.
+3. **Random Tensor Generation**  
+   Efficient, **chunked** generators for random vectors (uniform, Gaussian, etc.), supporting **streamed/partial fills** for Monte Carlo and stochastic dynamics on large states.
 
-5. **Parallelism by Default**  
-   - Leverages Rayon to parallelize across vectors, tensor slices, and stochastic sampling automatically.  
-   - Ensures scaling from laptops to HPC environments with minimal user intervention.
+4. **Space**
+   Provide abstraction for space representations.
+   - Dense:
+      - A wrapper for dense tensor. The tensor represents a square lattice with periodic boundary.
+      - Each site is accessible through a cartesion coordinate.
+   - Sparse:
+      - A wrapper for sparse tensor. It is best for describing continuous space containing finite elements.
+
+5. **Parallelism by Default (Under Memory Constraints)**  
+   - Rayon-powered **tile-level** parallelism to respect cache lines and NUMA.  
+   - **Block-wise** maps/zips, fused passes, and streaming pipelines to reduce materialization.  
+   - Scales from laptops to HPC nodes **without requiring full in-RAM tensors**.
+
+---
+
+## Why Hybrid SoA/AoS?
+Some physics tasks (e.g., lattice kernels with long tails, neighbor lists, event-driven updates, or out-of-core grids) don’t map cleanly to a single layout or to global vectorization. **Physics in Parallel** embraces:
+- **SoA** for bandwidth-bound sweeps (norms, reductions, scalar transforms).  
+- **AoS** (or AoS-like views) where locality across coordinates simplifies kernels or boundary logic.  
+- **Block/tiling** to operate on windows that fit in cache, enabling halos/ghost cells and sliding updates.  
+- **Streaming/randomized passes** to amortize RNG and avoid full materialization.
 
 ---
 
 ## Use Cases
-- **Stochastic field dynamics:** simulation of Gaussian/random fields, Langevin noise terms, and diffusion processes.  
-- **Ecological and population dynamics:** lattice-based simulations requiring structured random dispersal kernels.  
-- **General numerical physics:** tensor operations, linear algebra utilities, and custom kernels for PDE/ODE solvers.  
-- **Research reproducibility:** portable serialization and string-based tensor construction for tests and validation.
-
----
-
-## Design Philosophy
-- **Minimal but expressive traits**: one `Scalar` trait, extensible tensor backends.  
-- **Separation of concerns**: tensors, random vectors, and physics models live in modular sub-crates.  
-- **High-performance defaults**: SoA layouts, flat indexing, cache-aligned data, and parallelism without explicit boilerplate.  
-- **Bridging ecosystems**: Rust core for speed, JSON/Serde for portability, and Python bindings (planned) for analysis and visualization.
-
----
-
-## Current Status
-The package currently provides:
-- A unified `Scalar` trait for real and complex numbers.  
-- Dense tensor structures with parallelized arithmetic.  
-- Random vector generators with uniform/normal sampling.  
-- VectorList utilities for parallel linear algebra in SoA format.  
-- Serialization and deserialization utilities for testing and interchange.  
-
-Planned extensions include:
-- Sparse tensor formats.  
-- Advanced symmetry handling in tensors.  
-- Physics model modules (diffusion–Langevin systems, lattice ecological dynamics).  
-- Python bindings for seamless workflow integration.
-
----
-
-**Physics in Parallel** aims to be a research-grade platform that combines the performance of low-level Rust with the clarity and modularity needed for exploratory and large-scale physics simulations.
+- **Stochastic field dynamics:** diffusion + Langevin noise on very large grids using streaming tiles.  
+- **Ecology & population dynamics:** lattice models with structured, possibly long-range dispersal kernels on domains too large for global vectorization.  
+- **General numerical physics:** PDE/ODE solvers, interacting-particle systems, and kernels mixing SoA scans with AoS-style neighbor ops.  

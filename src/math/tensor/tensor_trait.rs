@@ -25,7 +25,7 @@ use super::super::scalar::Scalar;
 
 
 /// Unified tensor behavior (to be implemented by dense and sparse tensors).
-pub trait TensorTrait<T: Scalar>: Send + Sync {
+pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     /// Backend-specific representation returned when casting to `U`.
     ///
     /// - Dense implementation should set `Repr<U> = dense::Tensor<U>`.
@@ -33,6 +33,8 @@ pub trait TensorTrait<T: Scalar>: Send + Sync {
     type Repr<U: Scalar>: TensorTrait<U>;
 
     fn empty(shape: &[usize]) -> Self;
+
+    fn get_sum(&self) -> T;
 
     /// Shape vector.
     fn shape(&self) -> &[usize];
@@ -88,4 +90,8 @@ pub trait TensorTrait<T: Scalar>: Send + Sync {
     fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
     where
         T: Copy + Send + Sync;
+
+
+    // ---------------------------- IO ------------------------------
+    fn print(&self);
 }

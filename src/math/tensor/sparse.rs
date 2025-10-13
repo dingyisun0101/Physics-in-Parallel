@@ -525,6 +525,11 @@ where
         }
     }
 
+    fn get_sum(&self) -> T {
+        let result = self.data.values().copied().fold(T::zero(), |acc, x| acc + x);
+        result
+    }
+
     /// Shape vector.
     #[inline]
     fn shape(&self) -> &[usize] {
@@ -644,6 +649,8 @@ where
         self.try_cast_to::<U>()
             .expect("sparse tensor cast failed: component out of range for target type")
     }
+
+    fn print(&self) {}
 }
 
 // ===================================================================

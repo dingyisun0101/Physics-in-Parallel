@@ -133,22 +133,26 @@ impl VectorListRand for NNVectors {
     /// Randomize codes and decode into one-hot ±1 vectors.
     #[inline]
     fn refresh(&mut self) {
-        // Sample codes uniformly in [0, 2*dim)
+        // 1) sample codes in [0, 2*dim)
         self.code_filler.refresh(&mut self.code_buf);
 
-        // Zero the entire [dim, n] matrix first (parallel).
+        let n   = self.n;
+        let codes: &[usize] = &self.code_buf.data;
+
+        // 2) rewrite the whole [dim, n] matrix in parallel, row by row
+        // row-major: each row is a contiguous chunk of length n
         self.vl.matrix.tensor
             .data
-            .par_iter_mut()
-            .for_each(|x| *x = 0isize);
-
-        // Decode codes into one-hot ±1 per column.
-        // axis = code / 2; sign = +1 if even else -1.
-        for (i, &code) in self.code_buf.data.iter().enumerate() {
-            let axis = code / 2;
-            debug_assert!(axis < self.dim, "decoded axis out of range");
-            let sign: isize = if code % 2 == 0 { 1 } else { -1 };
-            self.vl.set(i as isize, axis as isize, sign);
-        }
+            .par_chunks_mut(n)
+            .enumerate()
+            .for_each(|(axis, row)| {
+                let axis = axis as usize;
+                for (i, x) in row.iter_mut().enumerate() {
+                    let code = codes[i];
+                    let a    = code / 2;
+                    let sign = if code % 2 == 0 { 1isize } else { -1isize };
+                    *x = if a == axis { sign } else { 0 };
+                }
+            });
     }
 }

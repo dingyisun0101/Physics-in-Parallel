@@ -162,6 +162,14 @@ where
         }
     }
 
+    fn get_sum(&self) -> T {
+        let result = self
+            .data.par_iter()
+            .cloned().
+            reduce(|| T::zero(), |a, b| a + b);
+        result
+    }
+
     /// Shape vector.
     #[inline]
     fn shape(&self) -> &[usize] {
@@ -274,6 +282,10 @@ where
         // Call the inherent `try_cast_to` to avoid trait recursion.
         self.try_cast_to::<U>()
             .expect("tensor cast failed: component out of range for target type")
+    }
+
+    fn print(&self) {
+        self.print_2d();
     }
 }
 
@@ -553,10 +565,7 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
     }
 }
 
-// ------------------------------------------------------------------
-// Back-compat convenience: keep the old spelling around if you call
-// `par_map_inplace` directly on dense tensors outside the trait.
-// ------------------------------------------------------------------
+
 impl<T> Tensor<T>
 where
     T: Scalar + Copy + Send + Sync,
@@ -569,30 +578,3 @@ where
         <Self as TensorTrait<T>>::par_map_in_place(self, f);
     }
 }
-
-//===================================================================
-// --------------------------- Extra Notes --------------------------
-//===================================================================
-//
-// • Complexity:
-//   - `index()`: O(rank), very small constant factors.
-//   - `get/set`: O(1) after index computation; use raw accessors if you pre-linearize.
-//   - All parallel ops are data-parallel with rayon; choose chunk sizes via rayon global config.
-//
-// • Safety:
-//   - All internal reads/writes use `get_unchecked` after **wrapping** the index; thus safe.
-//   - The only potential panic is a **debug assertion** on index rank mismatch.
-//
-// • Determinism:
-//   - Wrapping semantics are deterministic for any `isize` index (including extreme negatives).
-//   - Linear wrapping is `idx % len` which matches typical circular buffer behavior.
-//
-// • Interop:
-//   - If you need **clamped** or **panic-on-OOB** behavior for certain algorithms,
-//     consider adding alternate accessors (`get_clamped`, `get_strict`) alongside these.
-//
-// • Testing tips:
-//   - Ensure `get([-1, -1]) == get([shape[0]-1, shape[1]-1])`.
-//   - Ensure `get([shape[0] as isize, 0]) == get([0, 0])`.
-//   - For linear: `get_by_idx(len) == get_by_idx(0)`; `get_by_idx(usize::MAX)` is valid and wraps.
-//

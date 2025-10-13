@@ -1,7 +1,3 @@
-fn main() {
-}
-
-
 #[test]
 fn vector_list() {
         use physics_in_parallel::math::{
@@ -48,22 +44,21 @@ fn vector_list() {
 
 #[test]
 fn vector_list_rand() {
-    use physics_in_parallel::math::{
-        tensor::tensor_trait::TensorTrait,
+        use physics_in_parallel::math::{
         tensor_2d::{ 
             vector_list_rand::{HaarVectors, NNVectors, VectorListRand},
         },
     };
     
-    let mut haar_vectors = HaarVectors::new(3, 4);
-    assert_eq!(haar_vectors.vl.shape(), [3, 4]);
+    let n = 10;
+    
+    let mut haar_vectors = HaarVectors::new(2, n);
+    assert_eq!(haar_vectors.vl.shape(), [2, n]);
     haar_vectors.refresh();
     haar_vectors.vl.print();
 
-    let mut nn_vectors = NNVectors::new(1, 100);
-    assert_eq!(nn_vectors.vl.shape(), [1, 100]);
+    let mut nn_vectors = NNVectors::new(1, n);
+    assert_eq!(nn_vectors.vl.shape(), [1, n]);
     nn_vectors.refresh();
-    let tot = nn_vectors.vl.matrix.tensor.get_sum();
-    println!("Sum of all elements in nn_vectors: {}", tot);
+    nn_vectors.vl.print();
 }
-
