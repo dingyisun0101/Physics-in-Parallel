@@ -33,9 +33,9 @@ enum DispCache {
 #[derive(Clone)]
 pub struct RandPairGenerator {
     kernel: Box<dyn Kernel>,
-    source_coords_cache: VectorList<isize>,
     source_coords_filler: Option<TensorRandFiller>,
-    target_coords_cache: VectorList<isize>,
+    pub source_coords_cache: VectorList<isize>,
+    pub target_coords_cache: VectorList<isize>,
     displacement_cache: DispCache,
 }
 
