@@ -7,8 +7,6 @@ Pipeline:
 3) compose: targets = sources + displacements
 */
 
-use core::num;
-
 use crate::math::tensor::dense_rand::{TensorRandFiller};
 use crate::math::tensor_2d::vector_list::VectorList;
 use crate::math::tensor_2d::vector_list_rand::{VectorListRand, HaarVectors, NNVectors};
