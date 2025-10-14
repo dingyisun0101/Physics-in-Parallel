@@ -39,7 +39,7 @@ pub trait VectorListRand {
     type Elem;
 
     /// Allocate an empty `[dim, n]` `VectorList` and any internal buffers.
-    fn new(dim: usize, n: usize) -> Self where Self: Sized;
+    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self where Self: Sized;
 
     /// Refill the internal `VectorList` in-place, keeping shape `[dim, n]`.
     fn refresh(&mut self);
@@ -52,9 +52,6 @@ pub trait VectorListRand {
 // ============================================================================
 // -------------------------- Haar-random unit vectors ------------------------
 // ============================================================================
-
-const CHUNK_SIZE: usize = 4096; // used to pick a default RNG count
-
 #[derive(Debug, Clone)]
 pub struct HaarVectors {
     pub vl: VectorList<f64>,
@@ -66,18 +63,15 @@ pub struct HaarVectors {
 impl VectorListRand for HaarVectors {
     type Elem = f64;
 
-    fn new(dim: usize, n: usize) -> Self {
+    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
 
         let vl = VectorList::<f64>::empty(dim, n);
-        let num_rngs = (dim * n) / CHUNK_SIZE + 1;
-
         let filler = TensorRandFiller::new(
             RandType::Normal { mean: 0.0, std: 1.0 },
-            Some(num_rngs),
+            num_rngs,
         );
-
         Self { vl, dim, n, filler }
     }
 
@@ -110,7 +104,7 @@ pub struct NNVectors {
 impl VectorListRand for NNVectors {
     type Elem = isize;
 
-    fn new(dim: usize, n: usize) -> Self {
+    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "NNVectors::new: dim must be > 0");
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
@@ -119,12 +113,10 @@ impl VectorListRand for NNVectors {
 
         // codes in [0, 2*dim)
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
-        // choose RNG count roughly proportional to n (these are 1D buffers)
-        let num_rngs = (n / CHUNK_SIZE).max(1);
 
         let code_filler = TensorRandFiller::new(
             RandType::UniformInt { low: 0, high: (2 * dim) as i64 - 1 },
-            Some(num_rngs),
+            num_rngs,
         );
 
         Self { vl, dim, n, code_buf, code_filler }

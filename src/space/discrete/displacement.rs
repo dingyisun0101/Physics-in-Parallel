@@ -7,6 +7,8 @@ Pipeline:
 3) compose: targets = sources + displacements
 */
 
+use core::num;
+
 use crate::math::tensor::dense_rand::{TensorRandFiller};
 use crate::math::tensor_2d::vector_list::VectorList;
 use crate::math::tensor_2d::vector_list_rand::{VectorListRand, HaarVectors, NNVectors};
@@ -47,6 +49,7 @@ impl RandPairGenerator {
         dim: usize,
         num_pairs: usize,
         source_coords_filler: Option<TensorRandFiller>,
+        num_rngs: Option<usize>,
     ) -> Self {
         let kernel = create_kernel(kernel_type);
         let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs);
@@ -54,8 +57,8 @@ impl RandPairGenerator {
 
         // Choose displacement cache based on kernel type
         let displacement_cache = match kernel_type {
-            KernelType::NearestNeighbor { .. } => DispCache::NN(NNVectors::new(dim, num_pairs)),
-            _ => DispCache::Haar(HaarVectors::new(dim, num_pairs)),
+            KernelType::NearestNeighbor { .. } => DispCache::NN(NNVectors::new(dim, num_pairs, num_rngs)),
+            _ => DispCache::Haar(HaarVectors::new(dim, num_pairs, num_rngs)),
         };
 
         Self {
