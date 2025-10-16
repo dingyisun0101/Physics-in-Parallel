@@ -92,46 +92,31 @@ impl<T: Scalar> VectorList<T> {
 
     /// Zero-copy **vector** (column) view (length = `dim()`).
     #[inline]
-    pub fn get_vector(&self, i: isize) -> MatrixSlice<'_, T>
+    pub fn get_vector<'a>(&'a self, i: isize) -> &'a [T]
     where
         T: Copy,
     {
-        self.matrix.get_col_ref(i)
+        self.matrix.col_view(i)
     }
 
     /// Mutable **vector** (column) view. Zero-copy in column-major,
     /// or guarded (commit-on-drop) if ever used with row-major.
     #[inline]
-    pub fn get_vector_mut(&mut self, i: isize) -> MatrixSliceMut<'_, T>
+    pub fn get_vector_mut<'a>(&'a mut self, i: isize) -> &'a mut [T]
     where
         T: Copy,
     {
-        self.matrix.get_col_ref_mut(i)
+        self.matrix.col_view_mut(i)
     }
 
     /// Copy **axis** (row) `k` into a new `Vec<T>` (length = `num_vectors()`).
     #[inline]
-    pub fn axis_to_vec(&self, k: isize) -> Vec<T>
+    pub fn get_axis<'a>(&'a self, k: isize) -> &'a [T]
     where
         T: Copy,
     {
         // Use the immutable row view; it may be cached when col-major.
-        let r = self.matrix.get_row_ref(k);
-        let mut v = vec![T::zero(); r.len()];
-        v.copy_from_slice(&r);
-        v
-    }
-
-    /// Copy **vector** (column) `i` into a new `Vec<T>` (length = `dim()`).
-    #[inline]
-    pub fn vector_to_vec(&self, i: isize) -> Vec<T>
-    where
-        T: Copy,
-    {
-        let c = self.get_vector(i);
-        let mut v = vec![T::zero(); c.len()];
-        v.copy_from_slice(&c);
-        v
+        self.matrix.row_view(k)
     }
 }
 
@@ -139,10 +124,7 @@ impl<T: Scalar> VectorList<T> {
 // ---------------------------- Bulk Operations -------------------------------
 // ============================================================================
 
-impl<T> VectorList<T>
-where
-    T: Scalar + Copy + Send + Sync,
-{
+impl<T: Scalar> VectorList<T> {
     /// Scale each **vector (column)** by the corresponding factor in `scales`.
     ///
     /// In column-major, each column is contiguous so this mostly writes linearly.
