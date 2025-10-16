@@ -1,25 +1,26 @@
 // src/math_foundations/vector_list_rand.rs
 /*!
-Random fillers & utilities that work **in-place** on `VectorList<T>`.
+    Random fillers & utilities that work **in-place** on `VectorList<T>`.
 
-This file defines a small trait `VectorListRand` (requires `new` and `refresh`)
-and two implementers:
-- `HaarVectors`: unit vectors sampled uniformly on `S^{D-1}` (Haar).
-- `NNVectors`: nearest-neighbor one-hot ±1 direction vectors.
+    This file defines a small trait `VectorListRand` (requires `new` and `refresh`)
+    and two implementers:
+        - `HaarVectors`: unit vectors sampled uniformly on `S^{D-1}` (Haar).
+        - `NNVectors`: nearest-neighbor one-hot ±1 direction vectors.
 
-Notes
------
-- `HaarVectors::refresh` draws i.i.d. Normal(0,1) and L2-normalizes each vector.
-- `NNVectors::refresh` samples integer **codes** in `[0, 2D)` and decodes them:
-    axis = code / 2, sign = +1 if even else -1. It first zeroes all entries,
-    then sets the one-hot signed axis per column.
+    Notes
+    -----
+        - It uses a DENSE backend by default!
+        - `HaarVectors::refresh` draws i.i.d. Normal(0,1) and L2-normalizes each vector.
+        - `NNVectors::refresh` samples integer **codes** in `[0, 2D)` and decodes them:
+            axis = code / 2, sign = +1 if even else -1. It first zeroes all entries,
+            then sets the one-hot signed axis per column.
 
-Both implement `VectorListRand`:
-    let mut hv = HaarVectors::new(dim, n);
-    hv.refresh();
+    Both implement `VectorListRand`:
+        let mut hv = HaarVectors::new(dim, n);
+        hv.refresh();
 
-    let mut nn = NNVectors::new(dim, n);
-    nn.refresh();
+        let mut nn = NNVectors::new(dim, n);
+        nn.refresh();
 */
 use rayon::prelude::*;
 
@@ -28,7 +29,9 @@ use crate::math::tensor::{
     dense_rand::{RandType, TensorRandFiller},
     tensor_trait::TensorTrait,
 };
-use crate::math::tensor_2d::vector_list::VectorList;
+
+use crate::math::tensor_2d::vector_list::prelude::*;
+
 
 // ============================================================================
 // ------------------------------- Common Trait -------------------------------
@@ -67,7 +70,7 @@ impl VectorListRand for HaarVectors {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
 
-        let vl = VectorList::<f64>::empty(dim, n);
+        let vl = VectorList::<f64>::empty(dim, n, BackendKind::Dense);
         let filler = TensorRandFiller::new(
             RandType::Normal { mean: 0.0, std: 1.0 },
             num_rngs,
@@ -78,7 +81,7 @@ impl VectorListRand for HaarVectors {
     #[inline]
     fn refresh(&mut self) {
         // 1) i.i.d. Gaussian entries on internal flat storage
-        self.filler.refresh(&mut self.vl.matrix.tensor);
+        self.filler.refresh(&mut self.vl.as_tensor_mut());
 
         // 2) in-place L2 normalization per vector
         self.vl.normalize();
@@ -109,7 +112,7 @@ impl VectorListRand for NNVectors {
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
         // vector list storage
-        let vl = VectorList::<isize>::empty(dim, n);
+        let vl = VectorList::<isize>::empty(dim, n, BackendKind::Dense);
 
         // codes in [0, 2*dim)
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
@@ -133,7 +136,7 @@ impl VectorListRand for NNVectors {
 
         // 2) rewrite the whole [dim, n] matrix in parallel, row by row
         // row-major: each row is a contiguous chunk of length n
-        self.vl.matrix.tensor
+        self.vl.as_tensor_mut()
             .data
             .par_chunks_mut(n)
             .enumerate()

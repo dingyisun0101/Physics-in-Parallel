@@ -151,6 +151,20 @@ impl<T: Scalar> Tensor<T> {
         self.get_opt(idx).copied().unwrap_or_else(T::zero)
     }
 
+    #[inline]
+    pub fn get_mut_or_insert_zero(&mut self, idx: &[isize]) -> &mut T {
+        let k = self.index(idx);
+        // Insert zero on miss, then return &mut to the stored value.
+        self.data.entry(k).or_insert_with(T::zero)
+    }
+
+    /// Remove any explicit zeros currently stored.
+    /// Useful after a series of `get_mut` calls where the value may have been left as zero.
+    #[inline]
+    pub fn prune_zeros(&mut self) {
+        self.data.retain(|_, v| *v != T::zero());
+    }
+
     /// Set value at multi-index. Inserting `0` **removes** the entry.
     ///
     /// This keeps the sparse invariant (no explicit zeros).
@@ -550,8 +564,8 @@ where
 
     /// Sparse backend cannot safely yield `&mut T` via multi-index; Panic.
     #[inline(always)]
-    fn get_mut(&mut self, _indices: &[isize]) -> &mut T {
-        panic!("TODO");
+    fn get_mut(&mut self, indices: &[isize]) -> &mut T {
+        self.get_mut_or_insert_zero(indices)
     }
 
     /// Set value at (wrapped) multi-index (zero removes the entry).

@@ -1,18 +1,17 @@
 /*!
-Random **source–target** pair generation for lattice-based simulations.
+    Random **source–target** pair generation for lattice-based simulations.
+    Note that a DENSE backend is used.
 
-Pipeline:
-1) (optional) randomize sources
-2) sample displacements from `kernel`
-3) compose: targets = sources + displacements
+    Pipeline:
+        1) (optional) randomize sources
+        2) sample displacements from `kernel`
+        3) compose: targets = sources + displacements
 */
 
 use crate::math::tensor::dense_rand::{TensorRandFiller};
-use crate::math::tensor_2d::vector_list::VectorList;
+use crate::math::tensor_2d::vector_list::prelude::*;
 use crate::math::tensor_2d::vector_list_rand::{VectorListRand, HaarVectors, NNVectors};
-
-use super::super::kernel::*; // Kernel, KernelType, create_kernel
-
+use crate::space::kernel::*;
 
 
 
@@ -50,7 +49,7 @@ impl RandPairGenerator {
         num_rngs: Option<usize>,
     ) -> Self {
         let kernel = create_kernel(kernel_type);
-        let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs);
+        let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs, BackendKind::Dense);
         let target_coords_cache = source_coords_cache.clone();
 
         // Choose displacement cache based on kernel type
@@ -122,7 +121,7 @@ fn gen_random_idx_pairs_by_kernel(
     if source_coords_filler.is_some() {
         if let Some(filler) = source_coords_filler.as_mut() {
             // Fills the **flat** SoA buffer.
-            filler.refresh(&mut source_coords.matrix.tensor);
+            filler.refresh(&mut source_coords.as_tensor_mut());
         }
     }
 
