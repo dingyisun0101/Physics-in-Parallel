@@ -30,7 +30,7 @@ use crate::math::tensor::{
     tensor_trait::TensorTrait,
 };
 
-use crate::math::tensor_2d::vector_list::prelude::*;
+use crate::math::tensor_2d::vector_list::VectorList;
 
 
 // ============================================================================
@@ -70,7 +70,7 @@ impl VectorListRand for HaarVectors {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
 
-        let vl = VectorList::<f64>::empty(dim, n, BackendKind::Dense);
+        let vl = VectorList::<f64>::empty(dim, n);
         let filler = TensorRandFiller::new(
             RandType::Normal { mean: 0.0, std: 1.0 },
             num_rngs,
@@ -112,7 +112,7 @@ impl VectorListRand for NNVectors {
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
         // vector list storage
-        let vl = VectorList::<isize>::empty(dim, n, BackendKind::Dense);
+        let vl = VectorList::<isize>::empty(dim, n);
 
         // codes in [0, 2*dim)
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());

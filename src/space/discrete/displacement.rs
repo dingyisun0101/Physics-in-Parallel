@@ -9,7 +9,7 @@
 */
 
 use crate::math::tensor::dense_rand::{TensorRandFiller};
-use crate::math::tensor_2d::vector_list::prelude::*;
+use crate::math::tensor_2d::vector_list::VectorList;
 use crate::math::tensor_2d::vector_list_rand::{VectorListRand, HaarVectors, NNVectors};
 use crate::space::kernel::*;
 
@@ -49,7 +49,7 @@ impl RandPairGenerator {
         num_rngs: Option<usize>,
     ) -> Self {
         let kernel = create_kernel(kernel_type);
-        let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs, BackendKind::Dense);
+        let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs);
         let target_coords_cache = source_coords_cache.clone();
 
         // Choose displacement cache based on kernel type
