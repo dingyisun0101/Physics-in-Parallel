@@ -18,7 +18,7 @@ use crate::math::{
     },
     tensor_2d::matrix::{
         matrix_trait::MatrixTrait,
-        dense::{Matrix, Major, MatrixSlice, MatrixSliceMut},
+        dense::{Matrix, Major, MatrixSliceMut},
     }
 };
 
