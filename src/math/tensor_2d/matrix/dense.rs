@@ -436,16 +436,11 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     }
 
     // ---------------------------------- I/O ---------------------------------
-    #[inline]
-    fn print(&self) {
-        for i in 0..self.rows {
-            for j in 0..self.cols {
-                let v = self.get(i as isize, j as isize);
-                print!("{:<8} ", v);
-            }
-            println!();
-        }
-    }
+    #[inline] fn print(&self) { self.tensor.print(); }
+
+    #[inline] fn to_string(&self) { self.tensor.to_string(); }
+
+
 
     // ------------------------------- Basic Linalg ----------------------------
     /// Logical transpose: `self <- self^T`. Preserves current `major`.

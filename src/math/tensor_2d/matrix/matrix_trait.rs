@@ -61,6 +61,8 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     // ---------------------------------- I/O --------------------------------
     fn print(&self);
 
+    fn to_string(&self);
+
     // ------------------------------- Basic Linalg ------------------------------
     fn transpose(&mut self);
 
