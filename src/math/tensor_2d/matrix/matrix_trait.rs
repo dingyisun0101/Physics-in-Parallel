@@ -66,9 +66,9 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     // ------------------------------- Basic Linalg ------------------------------
     fn transpose(&mut self);
 
-    fn clamp(&mut self, min_val: T, max_val: T) where T: PartialOrd;
+    fn clamp(&mut self, min_val: T, max_val: T) where T: Ord;
 
     fn normalize(&mut self);
 
-    fn normalize_by_max(&mut self) where T: PartialOrd;
+    fn normalize_by_max(&mut self) where T: Ord;
 }

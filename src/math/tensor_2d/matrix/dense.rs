@@ -478,7 +478,7 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     #[inline]
     fn clamp(&mut self, min_val: T, max_val: T)
     where
-        T: Scalar + PartialOrd,
+        T: Scalar + Ord,
     {
         debug_assert!(min_val <= max_val, "clip: min_val must be <= max_val");
         self.tensor.par_map_in_place(|x| {
@@ -514,7 +514,7 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     #[inline]
     fn normalize_by_max(&mut self)
     where
-        T: Scalar + PartialOrd
+        T: Scalar + Ord
           + core::ops::Mul<Output = T>
           + core::ops::Div<Output = T>,
     {
