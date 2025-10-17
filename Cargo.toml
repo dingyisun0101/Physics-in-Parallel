@@ -1,6 +1,6 @@
 [package]
 name = "physics_in_parallel"
-version = "1.0.61"
+version = "1.0.7"
 edition = "2024"
 
 description = "High-performance infrastructure for numerical simulations in physics"
