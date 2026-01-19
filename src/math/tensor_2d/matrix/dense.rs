@@ -17,6 +17,8 @@ This file provides:
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
+use ndarray::Array2;
+
 use crate::math::{
     scalar::Scalar,
     tensor::{
@@ -224,6 +226,55 @@ impl<T: Scalar> Matrix<T> {
     pub fn cast_to<U: Scalar>(&self) -> Matrix<U> {
         let t_u: Tensor<U> = self.backend().cast_to::<U>();
         Matrix::<U>::from_backend_with_layout(t_u, self.major, self.rows, self.cols)
+    }
+
+    #[inline]
+    pub fn from_ndarry(array: &Array2<T>, major: Major) -> Self {
+        let shape = array.shape();
+        let (rows, cols) = (shape[0], shape[1]);
+        match major {
+            Major::Row => {
+                let owned = array.to_owned();
+                let (data, _) = owned.into_raw_vec_and_offset();
+                let tensor = Tensor {
+                    shape: vec![rows, cols],
+                    data,
+                };
+                Matrix::from_backend_with_layout(tensor, Major::Row, rows, cols)
+            }
+            Major::Col => {
+                let mut data = Vec::with_capacity(rows * cols);
+                for j in 0..cols {
+                    for i in 0..rows {
+                        data.push(array[(i, j)]);
+                    }
+                }
+                let tensor = Tensor {
+                    shape: vec![cols, rows],
+                    data,
+                };
+                Matrix::from_backend_with_layout(tensor, Major::Col, rows, cols)
+            }
+        }
+    }
+
+    #[inline]
+    pub fn to_ndarray(&self) -> Array2<T> {
+        let (rows, cols) = (self.rows, self.cols);
+        match self.major {
+            Major::Row => Array2::from_shape_vec((rows, cols), self.tensor.data.clone())
+                .expect("Matrix::to_ndarray: shape/data length mismatch"),
+            Major::Col => {
+                let mut data = Vec::with_capacity(rows * cols);
+                for i in 0..rows {
+                    for j in 0..cols {
+                        data.push(self.get(i as isize, j as isize));
+                    }
+                }
+                Array2::from_shape_vec((rows, cols), data)
+                    .expect("Matrix::to_ndarray: shape/data length mismatch")
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

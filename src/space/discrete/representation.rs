@@ -40,6 +40,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use rayon::prelude::*;
 use rand::random_range;
+use ndarray::{ArrayD, IxDyn};
 
 use crate::math::scalar::Scalar;
 use crate::space::space_trait::Space;
@@ -168,6 +169,33 @@ pub struct Grid<T: Scalar> {
     pub cfg: GridConfig,
     /// Row-major storage for all sites (length = `l^d`).
     pub data: Vec<T>,
+}
+
+impl<T: Scalar> Grid<T> {
+    #[inline]
+    pub fn from_ndarry(array: &ArrayD<T>, periodic: bool) -> Self {
+        let owned = array.to_owned();
+        let shape = owned.shape().to_vec();
+        assert!(!shape.is_empty(), "Grid::from_ndarry: shape must be non-empty");
+        let l = shape[0];
+        assert!(
+            shape.iter().all(|&dim| dim == l),
+            "Grid::from_ndarry: expected cubic shape, got {shape:?}"
+        );
+        let cfg = GridConfig::new(shape.len(), l, periodic);
+        let (data, _) = owned.into_raw_vec_and_offset();
+        Self {
+            cfg,
+            data,
+        }
+    }
+
+    #[inline]
+    pub fn to_ndarray(&self) -> ArrayD<T> {
+        let shape = vec![self.cfg.l; self.cfg.d];
+        ArrayD::from_shape_vec(IxDyn(&shape), self.data.clone())
+            .expect("Grid::to_ndarray: shape/data length mismatch")
+    }
 }
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "physics_in_parallel"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2024"
 
 description = "High-performance infrastructure for numerical simulations in physics"
@@ -31,15 +31,15 @@ rayon = { version = "1.11"}
 
 # Fast hash maps
 ahash = "0.8"
-hashbrown = "0.16"
+hashbrown = "0.16.1"
 
 # IO
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
+ndarray = "0.16"
 
 
 [profile.release]
 opt-level = 3  # Maximum optimization
 lto = true     # Enable link-time optimization (slower compile, faster runtime)
 codegen-units = 1  # Better optimization at the cost of compile time
-
