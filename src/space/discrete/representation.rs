@@ -53,8 +53,8 @@ use crate::space::space_trait::Space;
 /**
 `VacancyValue` provides a **type-specific sentinel** representing a vacant/empty cell.
 
-- Unsigned/signed integers: `*::MAX`
-- Floats: `f32::MAX` / `f64::MAX` (swap to `NaN` if that better fits your pipeline)
+- Unsigned/signed integers: `0`
+- Floats: `0.0`
 
 The exact sentinel is **your contract**: downstream code should treat `VacancyValue::vacancy()`
 as “no occupant / no data.”
@@ -69,22 +69,22 @@ pub trait VacancyValue: Sized + Clone {
 }
 
 // Unsigned integers
-impl VacancyValue for usize { const VACANCY: usize = usize::MAX; }
-impl VacancyValue for u64  { const VACANCY: u64  = u64::MAX; }
-impl VacancyValue for u32  { const VACANCY: u32  = u32::MAX; }
-impl VacancyValue for u16  { const VACANCY: u16  = u16::MAX; }
-impl VacancyValue for u8   { const VACANCY: u8   = u8::MAX;  }
+impl VacancyValue for usize { const VACANCY: usize = 0; }
+impl VacancyValue for u64  { const VACANCY: u64  = 0; }
+impl VacancyValue for u32  { const VACANCY: u32  = 0; }
+impl VacancyValue for u16  { const VACANCY: u16  = 0; }
+impl VacancyValue for u8   { const VACANCY: u8   = 0; }
 
 // Signed integers
-impl VacancyValue for isize { const VACANCY: isize = isize::MAX; }
-impl VacancyValue for i64   { const VACANCY: i64   = i64::MAX; }
-impl VacancyValue for i32   { const VACANCY: i32   = i32::MAX; }
-impl VacancyValue for i16   { const VACANCY: i16   = i16::MAX; }
-impl VacancyValue for i8    { const VACANCY: i8    = i8::MAX;  }
+impl VacancyValue for isize { const VACANCY: isize = 0; }
+impl VacancyValue for i64   { const VACANCY: i64   = 0; }
+impl VacancyValue for i32   { const VACANCY: i32   = 0; }
+impl VacancyValue for i16   { const VACANCY: i16   = 0; }
+impl VacancyValue for i8    { const VACANCY: i8    = 0; }
 
-// Floats (keep as MAX; switch to NAN/INFINITY if your math prefers)
-impl VacancyValue for f64 { const VACANCY: f64 = f64::MAX; }
-impl VacancyValue for f32 { const VACANCY: f32 = f32::MAX; }
+// Floats
+impl VacancyValue for f64 { const VACANCY: f64 = 0.0; }
+impl VacancyValue for f32 { const VACANCY: f32 = 0.0; }
 
 
 // ======================================================================================
@@ -220,7 +220,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
     /// Check whether the cell at `coord` is **vacant** (equal to the sentinel).
     ///
-    /// > If your `VacancyValue` is a floating sentinel (e.g., `f64::MAX`),
+    /// > If your `VacancyValue` is a floating sentinel (e.g., `0.0`),
     /// > this uses **exact equality** to the sentinel.
     #[inline]
     pub fn is_vacant(&self, coord: &[isize]) -> bool {
