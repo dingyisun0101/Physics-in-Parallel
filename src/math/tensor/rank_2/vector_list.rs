@@ -7,11 +7,15 @@ Internal storage
 - Physical shape is `[n, dim]` so each vector is contiguous in memory.
 */
 
+use std::any::Any;
+
 pub mod rand;
 pub use rand::{HaarVectors, NNVectors, VectorListRand};
 
 use ndarray::Array2;
 use rayon::prelude::*;
+use serde::Serialize;
+use serde_json::{json, Value};
 
 use crate::math::{
     ndarray_convert::NdarrayConvert,
@@ -27,6 +31,84 @@ use crate::math::{
 pub struct VectorList<T: Scalar> {
     /// Backing tensor with physical shape `[n, dim]` (row-major).
     pub tensor: Tensor2D<T>,
+}
+
+/// Annotation:
+/// - Purpose: Runtime-erased vector-list interface for heterogeneous attribute stores.
+/// - Notes:
+///   - Implemented directly by `VectorList<T>`.
+pub trait DynVectorList: std::fmt::Debug + Send + Sync {
+    /// Annotation:
+    /// - Purpose: Type-erased immutable downcast entry point.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn as_any(&self) -> &dyn Any;
+    /// Annotation:
+    /// - Purpose: Type-erased mutable downcast entry point.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// Annotation:
+    /// - Purpose: Returns per-vector dimension for this column.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn dim(&self) -> usize;
+    /// Annotation:
+    /// - Purpose: Returns scalar storage type name.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn type_name(&self) -> &'static str;
+    /// Annotation:
+    /// - Purpose: Clone helper for trait-object storage.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn clone_box(&self) -> Box<dyn DynVectorList>;
+
+    /// - Purpose: Serializes this dynamic vector-list into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn serialize_value(&self) -> Result<Value, serde_json::Error>;
+
+    /// - Purpose: Serializes this dynamic vector-list into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function takes no explicit parameters.
+    fn serialize(&self) -> Result<String, serde_json::Error>;
+}
+
+impl Clone for Box<dyn DynVectorList> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+impl<T: Scalar + Serialize + Copy + 'static> DynVectorList for VectorList<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn dim(&self) -> usize {
+        self.dim()
+    }
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
+    }
+
+    fn clone_box(&self) -> Box<dyn DynVectorList> {
+        Box::new(self.clone())
+    }
+
+    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        VectorList::<T>::serialize_value(self)
+    }
+
+    fn serialize(&self) -> Result<String, serde_json::Error> {
+        VectorList::<T>::serialize(self)
+    }
 }
 
 impl<T: Scalar> VectorList<T> {
@@ -201,6 +283,46 @@ impl<T: Scalar> VectorList<T> {
         T: Copy,
     {
         self.tensor.col_to_vec(k)
+    }
+}
+
+impl<T> VectorList<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    #[inline]
+    /// - Purpose: Converts this typed vector-list into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        let n = self.num_vectors();
+        let dim = self.dim();
+        let mut vectors: Vec<Value> = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let row = self.get_vector(i as isize);
+            let mut row_values: Vec<Value> = Vec::with_capacity(dim);
+            for &x in row {
+                row_values.push(serde_json::to_value(x)?);
+            }
+            vectors.push(Value::Array(row_values));
+        }
+
+        Ok(json!({
+            "kind": "vector_list",
+            "scalar_type": std::any::type_name::<T>(),
+            "shape": [dim, n],
+            "storage": "dense",
+            "data": vectors,
+        }))
+    }
+
+    #[inline]
+    /// - Purpose: Converts this typed vector-list into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.serialize_value()?)
     }
 }
 

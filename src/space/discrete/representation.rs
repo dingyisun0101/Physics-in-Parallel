@@ -543,6 +543,23 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     }
 }
 
+impl<T: ScalarSerde + VacancyValue> Grid<T> {
+    #[inline]
+    /// - Purpose: Serializes this grid into pretty JSON text with compact shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        let payload = serde_json::json!({
+            "kind": "grid",
+            "scalar_type": std::any::type_name::<T>(),
+            "shape": self.shape(),
+            "storage": "dense",
+            "data": self.data,
+        });
+        serde_json::to_string_pretty(&payload)
+    }
+}
+
 /// Save a grid to a JSON file after optional **downscaling** to side `l_target`.
 ///
 /// - `grid`: source grid

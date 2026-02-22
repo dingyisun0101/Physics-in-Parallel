@@ -3,6 +3,8 @@ Core dense 2D tensor with fixed row-major physical layout.
 */
 
 use ndarray::Array2;
+use serde::Serialize;
+use serde_json::{json, Value};
 
 use crate::math::{
     ndarray_convert::NdarrayConvert,
@@ -233,5 +235,42 @@ impl<T: Scalar> NdarrayConvert for Tensor2D<T> {
     ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         Tensor2D::<T>::to_ndarray(self)
+    }
+}
+
+impl<T> Tensor2D<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    #[inline]
+    /// - Purpose: Converts this 2D tensor into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        let mut rows_json: Vec<Value> = Vec::with_capacity(self.rows);
+        for i in 0..self.rows {
+            let row = self.row_view(i as isize);
+            let mut row_values: Vec<Value> = Vec::with_capacity(self.cols);
+            for &x in row {
+                row_values.push(serde_json::to_value(x)?);
+            }
+            rows_json.push(Value::Array(row_values));
+        }
+
+        Ok(json!({
+            "kind": "tensor_2d",
+            "scalar_type": std::any::type_name::<T>(),
+            "shape": [self.rows, self.cols],
+            "storage": "dense",
+            "data": rows_json,
+        }))
+    }
+
+    #[inline]
+    /// - Purpose: Converts this 2D tensor into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.serialize_value()?)
     }
 }

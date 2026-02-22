@@ -45,6 +45,7 @@ use std::str::FromStr;
 
 use rayon::prelude::*;
 use serde::Serialize;
+use serde_json::{json, Value};
 use num_traits::NumCast;
 use ndarray::{ArrayD, IxDyn};
 
@@ -670,6 +671,38 @@ impl<T: Scalar> NdarrayConvert for Tensor<T> {
     ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         Tensor::<T>::to_ndarray(self)
+    }
+}
+
+impl<T> Tensor<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    #[inline]
+    /// - Purpose: Converts this dense tensor into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        let mut data_json: Vec<Value> = Vec::with_capacity(self.data.len());
+        for &x in &self.data {
+            data_json.push(serde_json::to_value(x)?);
+        }
+
+        Ok(json!({
+            "kind": "tensor",
+            "scalar_type": std::any::type_name::<T>(),
+            "shape": self.shape,
+            "storage": "dense",
+            "data": data_json,
+        }))
+    }
+
+    #[inline]
+    /// - Purpose: Converts this dense tensor into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.serialize_value()?)
     }
 }
 

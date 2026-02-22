@@ -24,6 +24,7 @@
 */
 use rayon::prelude::*;
 use ndarray::Array2;
+use serde_json::Value;
 
 use crate::math::tensor::core::{
     dense::Tensor,
@@ -139,6 +140,22 @@ impl HaarVectors {
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<f64> {
         self.vl.to_ndarray()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this Haar vector batch into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        self.vl.serialize_value()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this Haar vector batch into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        self.vl.serialize()
     }
 }
 
@@ -265,6 +282,22 @@ impl NNVectors {
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<isize> {
         self.vl.to_ndarray()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this nearest-neighbor vector batch into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        self.vl.serialize_value()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this nearest-neighbor vector batch into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        self.vl.serialize()
     }
 }
 

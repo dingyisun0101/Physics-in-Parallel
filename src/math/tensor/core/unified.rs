@@ -12,6 +12,8 @@ This facade delegates to existing backend implementations in `core::dense` and
 use core::marker::PhantomData;
 
 use ndarray::ArrayD;
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::math::{
     ndarray_convert::NdarrayConvert,
@@ -233,6 +235,27 @@ impl<T: Scalar> Tensor<T, Dense> {
     }
 }
 
+impl<T> Tensor<T, Dense>
+where
+    T: Scalar + Serialize + Copy,
+{
+    #[inline]
+    /// - Purpose: Converts this unified dense tensor into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        self.inner.serialize_value()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this unified dense tensor into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        self.inner.serialize()
+    }
+}
+
 impl<T: Scalar> Tensor<T, Sparse> {
     #[inline]
     pub fn cast_to<U: Scalar + Send + Sync>(&self) -> Tensor<U, Sparse> {
@@ -301,6 +324,27 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 }
 
+impl<T> Tensor<T, Sparse>
+where
+    T: Scalar + Serialize + Copy,
+{
+    #[inline]
+    /// - Purpose: Converts this unified sparse tensor into a structured JSON value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        self.inner.serialize_value()
+    }
+
+    #[inline]
+    /// - Purpose: Converts this unified sparse tensor into pretty JSON text.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        self.inner.serialize()
+    }
+}
+
 impl<T: Scalar> NdarrayConvert for Tensor<T, Dense> {
     type NdArray = ArrayD<T>;
 
@@ -344,4 +388,3 @@ impl<T: Scalar> NdarrayConvert for Tensor<T, Sparse> {
         Tensor::<T, Sparse>::to_ndarray(self)
     }
 }
-

@@ -1,369 +1,534 @@
 /*!
-`interaction` defines general pair-interaction primitives for `engines::soa`.
+Core n-point interaction backend for `engines::soa`.
 
-Scope of this module
---------------------
-1. `PairTopology`: undirected pair-graph over object IDs with fast membership checks.
-2. `Interaction` trait: generic stepping contract for force/acceleration accumulation.
-
-Design notes
-------------
-- Pair storage is canonicalized as `(min(i,j), max(i,j))`.
-- A hash table stores live-edge membership for O(1) lookup.
-- An explicit `active_edges` list avoids hash iteration in physics loops.
-- `to_adj_matrix()` exports a standard adjacency matrix for debugging/analysis.
+This module provides:
+- `Topology`: key-to-slot mapping for mixed-arity interactions.
+- `PayloadStore<T>`: slot-indexed payload storage with hole reuse.
+- `Interaction<T>`: synchronized topology + payload container.
 */
 
 use ahash::AHashMap;
+use rayon::prelude::*;
 
-use crate::math::tensor::rank_2::matrix::dense::Matrix;
+use super::phys_obj::AttrsError;
 
-use super::phys_obj::{ObjId, PhysObj, PhysObjError};
-
-// ======================================================================================
-// ---------------------------------- Type aliases --------------------------------------
-// ======================================================================================
-
-/// Stable edge index in topology-owned arrays.
+/// Stable object index in `PhysObj` columns.
+pub type ObjId = usize;
+/// Stable interaction slot index.
 pub type EdgeId = usize;
 
-// ======================================================================================
-// ------------------------------------- Errors -----------------------------------------
-// ======================================================================================
-
-/// Errors for interaction/topology operations.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InteractionError {
-    /// Object ID is outside topology bounds.
-    InvalidObjId { obj: ObjId, n_objects: usize },
-    /// A pair `(i, i)` is not a valid edge in this undirected topology.
-    SelfEdge { obj: ObjId },
-    /// Edge index does not exist.
-    InvalidEdgeId { edge: EdgeId, n_edges: usize },
-    /// Lifted error from `PhysObj` accessors.
-    PhysObj(PhysObjError),
+/// Key ordering mode used by topology validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectionMode {
+    /// Preserve caller-provided node order exactly.
+    Directed,
+    /// Require nondecreasing node order (`nodes[k-1] <= nodes[k]`).
+    Undirected,
 }
 
-impl From<PhysObjError> for InteractionError {
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `from` logic for this module.
-    /// - Parameters:
-    ///   - `value` (`PhysObjError`): Value provided by caller for write/update behavior.
-    fn from(value: PhysObjError) -> Self {
-        Self::PhysObj(value)
+/// Hashable mixed-arity interaction key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InteractionKey {
+    /// Object indices identifying one interaction term; arity is `nodes.len()`.
+    pub nodes: Box<[ObjId]>,
+}
+
+impl InteractionKey {
+    /// Builds an owned interaction key from node indices.
+    pub fn from_slice(nodes: &[ObjId]) -> Self {
+        Self { nodes: nodes.into() }
+    }
+
+    /// Returns interaction arity (`nodes.len()`).
+    pub fn arity(&self) -> usize {
+        self.nodes.len()
     }
 }
 
-// ======================================================================================
-// --------------------------------- Pair Topology --------------------------------------
-// ======================================================================================
-
-/// Pack canonicalized `(i, j)` into one `u64` key for hash membership.
-#[inline]
-/// Annotation:
-/// - Purpose: Executes `pack` logic for this module.
-/// - Parameters:
-///   - `i` (`ObjId`): Primary index argument.
-///   - `j` (`ObjId`): Secondary index argument.
-fn pack(i: ObjId, j: ObjId) -> u64 {
-    let (a, b) = if i < j { (i, j) } else { (j, i) };
-    ((a as u64) << 32) | (b as u64)
+/// Errors returned by interaction backend operations.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InteractionError {
+    /// Object index is outside topology bounds.
+    InvalidObjId {
+        /// Invalid object index value.
+        obj: ObjId,
+        /// Current exclusive upper bound (`0..n_objects`).
+        n_objects: usize,
+    },
+    /// Undirected mode received a non-canonical node ordering.
+    InvalidUndirectedOrder {
+        /// Position where ordering check failed.
+        at: usize,
+        /// Previous node at `at - 1`.
+        prev: ObjId,
+        /// Current node at `at`.
+        curr: ObjId,
+    },
+    /// Slot id does not exist or is inactive.
+    InvalidEdgeId {
+        /// Requested slot id.
+        edge: EdgeId,
+        /// Total slot capacity at time of check.
+        n_slots: usize,
+    },
+    /// Wrapped attribute/core error from `PhysObj` operations.
+    Attrs(
+        /// Lower-level attribute/core error details.
+        AttrsError,
+    ),
 }
 
-/// Canonicalize `(i, j)` as `(min(i,j), max(i,j))`.
-#[inline]
-/// Annotation:
-/// - Purpose: Executes `canonical_pair` logic for this module.
-/// - Parameters:
-///   - `i` (`ObjId`): Primary index argument.
-///   - `j` (`ObjId`): Secondary index argument.
-fn canonical_pair(i: ObjId, j: ObjId) -> (ObjId, ObjId) {
-    if i < j { (i, j) } else { (j, i) }
+impl From<AttrsError> for InteractionError {
+    fn from(value: AttrsError) -> Self {
+        Self::Attrs(value)
+    }
 }
 
-/**
-Undirected pair topology for object interactions.
-
-Storage
--------
-- `edges[e] = (i, j)` stores canonical endpoint pair for edge `e`.
-- `table[pack(i,j)] = e` stores membership of active edges.
-- `active_edges` stores live edge IDs for hot-loop iteration.
-- `pos_in_active[e]` stores `active_edges` position or `None` if inactive.
-*/
+/// Mixed-arity key index mapping interaction keys to stable slot ids.
 #[derive(Debug, Clone)]
-pub struct PairTopology {
+pub struct Topology {
+    /// Exclusive upper bound for valid object indices (`0..n_objects`).
     n_objects: usize,
-    edges: Vec<(ObjId, ObjId)>,
-    table: AHashMap<u64, EdgeId>,
-    active_edges: Vec<EdgeId>,
-    pos_in_active: Vec<Option<usize>>,
+    /// Key-ordering mode used by validation.
+    mode: DirectionMode,
+    /// Forward mapping from interaction key to stable slot id.
+    slot_of_key: AHashMap<InteractionKey, EdgeId>,
+    /// Reverse mapping from slot id to key; `None` means slot is currently free.
+    key_of_slot: Vec<Option<InteractionKey>>,
+    /// Reusable free slot ids used for O(1)-average insert/delete churn.
+    free_slots: Vec<EdgeId>,
 }
 
-impl PairTopology {
-    /// Create an empty topology over object IDs `[0, n_objects)`.
-    /// Annotation:
-    /// - Purpose: Constructs and returns a new instance.
-    /// - Parameters:
-    ///   - `n_objects` (`usize`): Object-state container used by this operation.
+impl Topology {
+    /// Constructs an empty topology in undirected mode.
     pub fn new(n_objects: usize) -> Self {
-        assert!(n_objects > 0, "PairTopology::new: n_objects must be > 0");
+        Self::with_mode(n_objects, DirectionMode::Undirected)
+    }
+
+    /// Constructs an empty topology with explicit direction mode.
+    pub fn with_mode(n_objects: usize, mode: DirectionMode) -> Self {
         Self {
             n_objects,
-            edges: Vec::new(),
-            table: AHashMap::new(),
-            active_edges: Vec::new(),
-            pos_in_active: Vec::new(),
+            mode,
+            slot_of_key: AHashMap::new(),
+            key_of_slot: Vec::new(),
+            free_slots: Vec::new(),
         }
     }
 
-    /// Number of objects addressable by this topology.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `n_objects` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Returns object-index bound.
     pub fn n_objects(&self) -> usize {
         self.n_objects
     }
 
-    /// Update object-bound metadata for future inserts/lookups.
-    ///
-    /// Existing edge IDs remain unchanged. Caller should guarantee any existing edges are
-    /// still valid under the new bound.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Sets the `n_objects` value.
-    /// - Parameters:
-    ///   - `n_objects` (`usize`): Object-state container used by this operation.
+    /// Returns current direction mode.
+    pub fn mode(&self) -> DirectionMode {
+        self.mode
+    }
+
+    /// Sets direction mode for future operations.
+    pub fn set_mode(&mut self, mode: DirectionMode) {
+        self.mode = mode;
+    }
+
+    /// Sets object-index bound for future validation.
     pub fn set_n_objects(&mut self, n_objects: usize) {
-        assert!(n_objects > 0, "PairTopology::set_n_objects: n_objects must be > 0");
         self.n_objects = n_objects;
     }
 
-    /// Total number of edge slots ever created (active + inactive).
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Returns the current length/size.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn len_edges(&self) -> usize {
-        self.edges.len()
+    /// Returns total slot capacity (active + free).
+    pub fn len_slots(&self) -> usize {
+        self.key_of_slot.len()
     }
 
-    /// Number of active edges.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `active_count` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Returns number of active mapped interaction keys.
     pub fn active_count(&self) -> usize {
-        self.active_edges.len()
+        self.slot_of_key.len()
     }
 
-    /// Borrow active edge list.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `active_edges` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn active_edges(&self) -> &[EdgeId] {
-        &self.active_edges
+    /// Returns number of currently free slots.
+    pub fn free_count(&self) -> usize {
+        self.free_slots.len()
     }
 
-    /// Get endpoints for edge `e`.
-    /// Annotation:
-    /// - Purpose: Executes `edge_pair` logic for this module.
-    /// - Parameters:
-    ///   - `e` (`EdgeId`): Parameter of type `EdgeId` used by `edge_pair`.
-    pub fn edge_pair(&self, e: EdgeId) -> Result<(ObjId, ObjId), InteractionError> {
-        self.edges
-            .get(e)
-            .copied()
+    /// Returns key for active slot id.
+    pub fn edge_key(&self, edge: EdgeId) -> Result<&InteractionKey, InteractionError> {
+        self.key_of_slot
+            .get(edge)
+            .and_then(|k| k.as_ref())
             .ok_or(InteractionError::InvalidEdgeId {
-                edge: e,
-                n_edges: self.edges.len(),
+                edge,
+                n_slots: self.key_of_slot.len(),
             })
     }
 
-    /// Get active edge ID for pair `(i,j)`, if present.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Computes an index mapping for input coordinates.
-    /// - Parameters:
-    ///   - `i` (`ObjId`): Primary index argument.
-    ///   - `j` (`ObjId`): Secondary index argument.
-    pub fn index_of(&self, i: ObjId, j: ObjId) -> Option<EdgeId> {
-        self.table.get(&pack(i, j)).copied()
+    /// Looks up active slot id for interaction key.
+    pub fn index_of(&self, nodes: &[ObjId]) -> Result<Option<EdgeId>, InteractionError> {
+        let key = self.key_from_nodes(nodes)?;
+        Ok(self.slot_of_key.get(&key).copied())
     }
 
-    /// Fast membership check for active pair.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `contains_pair` logic for this module.
-    /// - Parameters:
-    ///   - `i` (`ObjId`): Primary index argument.
-    ///   - `j` (`ObjId`): Secondary index argument.
-    pub fn contains_pair(&self, i: ObjId, j: ObjId) -> bool {
-        self.table.contains_key(&pack(i, j))
+    /// Returns whether key exists in active mapping.
+    pub fn contains_key(&self, nodes: &[ObjId]) -> Result<bool, InteractionError> {
+        Ok(self.index_of(nodes)?.is_some())
     }
 
-    /// True iff edge index exists and is active.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Checks whether `active_index` condition is true.
-    /// - Parameters:
-    ///   - `e` (`EdgeId`): Parameter of type `EdgeId` used by `is_active_index`.
-    pub fn is_active_index(&self, e: EdgeId) -> bool {
-        self.pos_in_active.get(e).and_then(|x| *x).is_some()
-    }
-
-    /// Insert pair `(i, j)` if absent, otherwise return existing edge ID.
-    /// Annotation:
-    /// - Purpose: Inserts data into the underlying structure.
-    /// - Parameters:
-    ///   - `i` (`ObjId`): Primary index argument.
-    ///   - `j` (`ObjId`): Secondary index argument.
-    pub fn insert(&mut self, i: ObjId, j: ObjId) -> Result<EdgeId, InteractionError> {
-        self.validate_pair(i, j)?;
-
-        let key = pack(i, j);
-        if let Some(&e) = self.table.get(&key) {
-            return Ok(e);
+    /// Inserts key if absent and returns slot id.
+    pub fn insert(&mut self, nodes: &[ObjId]) -> Result<EdgeId, InteractionError> {
+        let key = self.key_from_nodes(nodes)?;
+        if let Some(&edge) = self.slot_of_key.get(&key) {
+            return Ok(edge);
         }
 
-        let (a, b) = canonical_pair(i, j);
-        let e = self.edges.len();
-        self.edges.push((a, b));
-        self.table.insert(key, e);
-
-        let pos = self.active_edges.len();
-        self.active_edges.push(e);
-        self.pos_in_active.push(Some(pos));
-
-        Ok(e)
-    }
-
-    /// Delete pair `(i, j)` if active.
-    /// Annotation:
-    /// - Purpose: Removes data from the underlying structure.
-    /// - Parameters:
-    ///   - `i` (`ObjId`): Primary index argument.
-    ///   - `j` (`ObjId`): Secondary index argument.
-    pub fn delete(&mut self, i: ObjId, j: ObjId) -> Result<(), InteractionError> {
-        self.validate_pair(i, j)?;
-
-        let key = pack(i, j);
-        let Some(&e) = self.table.get(&key) else {
-            return Ok(());
+        let edge = if let Some(slot) = self.free_slots.pop() {
+            self.key_of_slot[slot] = Some(key.clone());
+            slot
+        } else {
+            let slot = self.key_of_slot.len();
+            self.key_of_slot.push(Some(key.clone()));
+            slot
         };
-        self.table.remove(&key);
 
-        if let Some(pos) = self.pos_in_active[e] {
-            let last_pos = self.active_edges.len() - 1;
-            self.active_edges.swap(pos, last_pos);
-            let moved_e = self.active_edges[pos];
-            self.pos_in_active[moved_e] = Some(pos);
-            self.active_edges.pop();
-            self.pos_in_active[e] = None;
-        }
+        self.slot_of_key.insert(key, edge);
+        Ok(edge)
+    }
 
+    /// Removes key if active and returns released slot id.
+    pub fn remove(&mut self, nodes: &[ObjId]) -> Result<Option<EdgeId>, InteractionError> {
+        let key = self.key_from_nodes(nodes)?;
+        let Some(edge) = self.slot_of_key.remove(&key) else {
+            return Ok(None);
+        };
+        let n_slots = self.key_of_slot.len();
+
+        let slot = self
+            .key_of_slot
+            .get_mut(edge)
+            .ok_or(InteractionError::InvalidEdgeId { edge, n_slots })?;
+        *slot = None;
+        self.free_slots.push(edge);
+        Ok(Some(edge))
+    }
+
+    /// Deletes key if active.
+    pub fn delete(&mut self, nodes: &[ObjId]) -> Result<(), InteractionError> {
+        let _ = self.remove(nodes)?;
         Ok(())
     }
 
-    /**
-    Build adjacency matrix `A` of shape `[n_objects, n_objects]`.
-
-    Semantics
-    ---------
-    - `A[i, j] = 1` iff edge `(i, j)` is active, else `0`.
-    - Matrix is symmetric by construction.
-    - Diagonal is always `0`.
-    */
-    /// Annotation:
-    /// - Purpose: Converts this value into `adj_matrix` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_adj_matrix(&self) -> Matrix<usize> {
-        let mut a = Matrix::<usize>::empty(self.n_objects, self.n_objects);
-        for &e in &self.active_edges {
-            let (i, j) = self.edges[e];
-            a.set(i as isize, j as isize, 1usize);
-            a.set(j as isize, i as isize, 1usize);
+    /// Clears all active mappings while preserving capacity.
+    pub fn clear(&mut self) {
+        self.slot_of_key.clear();
+        self.free_slots.clear();
+        self.free_slots.extend((0..self.key_of_slot.len()).rev());
+        for slot in self.key_of_slot.iter_mut() {
+            *slot = None;
         }
-        a
     }
 
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `validate_pair` logic for this module.
-    /// - Parameters:
-    ///   - `i` (`ObjId`): Primary index argument.
-    ///   - `j` (`ObjId`): Secondary index argument.
-    fn validate_pair(&self, i: ObjId, j: ObjId) -> Result<(), InteractionError> {
-        if i >= self.n_objects {
-            return Err(InteractionError::InvalidObjId {
-                obj: i,
-                n_objects: self.n_objects,
-            });
+    /// Iterates active `(slot, key)` entries.
+    pub fn iter_active(&self) -> impl Iterator<Item = (EdgeId, &InteractionKey)> + '_ {
+        self.key_of_slot
+            .iter()
+            .enumerate()
+            .filter_map(|(edge, key)| key.as_ref().map(|k| (edge, k)))
+    }
+
+    /// Convenience pair lookup helper.
+    pub fn index_of_pair(&self, i: ObjId, j: ObjId) -> Result<Option<EdgeId>, InteractionError> {
+        self.index_of(&[i, j])
+    }
+
+    /// Convenience pair insert helper.
+    pub fn insert_pair(&mut self, i: ObjId, j: ObjId) -> Result<EdgeId, InteractionError> {
+        self.insert(&[i, j])
+    }
+
+    /// Convenience pair remove helper.
+    pub fn remove_pair(&mut self, i: ObjId, j: ObjId) -> Result<Option<EdgeId>, InteractionError> {
+        self.remove(&[i, j])
+    }
+
+    fn key_from_nodes(&self, nodes: &[ObjId]) -> Result<InteractionKey, InteractionError> {
+        self.validate_nodes(nodes)?;
+        Ok(InteractionKey::from_slice(nodes))
+    }
+
+    fn validate_nodes(&self, nodes: &[ObjId]) -> Result<(), InteractionError> {
+        for &obj in nodes {
+            if obj >= self.n_objects {
+                return Err(InteractionError::InvalidObjId {
+                    obj,
+                    n_objects: self.n_objects,
+                });
+            }
         }
-        if j >= self.n_objects {
-            return Err(InteractionError::InvalidObjId {
-                obj: j,
-                n_objects: self.n_objects,
-            });
+
+        if self.mode == DirectionMode::Undirected {
+            for k in 1..nodes.len() {
+                if nodes[k - 1] > nodes[k] {
+                    return Err(InteractionError::InvalidUndirectedOrder {
+                        at: k,
+                        prev: nodes[k - 1],
+                        curr: nodes[k],
+                    });
+                }
+            }
         }
-        if i == j {
-            return Err(InteractionError::SelfEdge { obj: i });
-        }
+
         Ok(())
     }
 }
 
-// ======================================================================================
-// -------------------------------- Interaction trait -----------------------------------
-// ======================================================================================
+/// Slot-indexed payload container with hole reuse.
+#[derive(Debug, Clone)]
+struct PayloadStore<T> {
+    /// Slot payloads; `None` means this slot is currently free (hole).
+    slots: Vec<Option<T>>,
+    /// Reusable free slot ids for O(1)-average insert/delete churn.
+    free_slots: Vec<EdgeId>,
+    /// Number of active payload entries (`Some`) currently stored.
+    active_count: usize,
+}
 
-/// Minimal behavior for a pair interaction module that operates on `PhysObj`.
-pub trait Interaction<const D: usize> {
-    /// Immutable topology view.
-    /// Annotation:
-    /// - Purpose: Executes `topology` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn topology(&self) -> &PairTopology;
+impl<T> Default for PayloadStore<T> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            free_slots: Vec::new(),
+            active_count: 0,
+        }
+    }
+}
 
-    /// Mutable topology view.
-    /// Annotation:
-    /// - Purpose: Executes `topology_mut` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn topology_mut(&mut self) -> &mut PairTopology;
-
-    /// Optional topology update hook (default: no-op).
-    /// Annotation:
-    /// - Purpose: Updates `topology` state.
-    /// - Parameters:
-    ///   - `_objects` (`&PhysObj<D>`): Object-state container used by this operation.
-    fn update_topology(&mut self, _objects: &PhysObj<D>) -> Result<(), InteractionError> {
-        Ok(())
+impl<T> PayloadStore<T> {
+    /// Constructs an empty payload store.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Accumulate acceleration contributions into `objects.acc`.
-    /// Annotation:
-    /// - Purpose: Executes `accumulate_acc` logic for this module.
-    /// - Parameters:
-    ///   - `objects` (`&mut PhysObj<D>`): Object-state container used by this operation.
-    fn accumulate_acc(&self, objects: &mut PhysObj<D>) -> Result<(), InteractionError>;
+    /// Returns number of allocated slots (active + free).
+    pub fn len_slots(&self) -> usize {
+        self.slots.len()
+    }
 
-    /// One interaction step = topology update + acceleration accumulation.
-    /// Annotation:
-    /// - Purpose: Executes `step` logic for this module.
-    /// - Parameters:
-    ///   - `objects` (`&mut PhysObj<D>`): Object-state container used by this operation.
-    fn step(&mut self, objects: &mut PhysObj<D>) -> Result<(), InteractionError> {
-        self.update_topology(objects)?;
-        self.accumulate_acc(objects)
+    /// Returns number of active payload entries.
+    pub fn active_count(&self) -> usize {
+        self.active_count
+    }
+
+    /// Returns number of currently free reusable slots.
+    pub fn free_count(&self) -> usize {
+        self.free_slots.len()
+    }
+
+    /// Returns whether slot is currently active.
+    pub fn contains_slot(&self, edge: EdgeId) -> bool {
+        self.slots.get(edge).is_some_and(|x| x.is_some())
+    }
+
+    /// Inserts or overwrites payload at slot id.
+    pub fn insert_or_assign(&mut self, edge: EdgeId, payload: T) {
+        if edge >= self.slots.len() {
+            let old_len = self.slots.len();
+            self.slots.resize_with(edge + 1, || None);
+            self.free_slots.extend((old_len..edge).rev());
+        }
+
+        if self.slots[edge].is_none() {
+            self.active_count += 1;
+            self.retain_free_slot(edge);
+        }
+        self.slots[edge] = Some(payload);
+    }
+
+    /// Removes payload at slot id and returns removed payload when present.
+    pub fn remove(&mut self, edge: EdgeId) -> Option<T> {
+        let slot = self.slots.get_mut(edge)?;
+        let removed = slot.take();
+        if removed.is_some() {
+            self.active_count -= 1;
+            self.free_slots.push(edge);
+        }
+        removed
+    }
+
+    /// Returns immutable payload reference for active slot id.
+    pub fn get(&self, edge: EdgeId) -> Option<&T> {
+        self.slots.get(edge).and_then(|x| x.as_ref())
+    }
+
+    /// Returns mutable payload reference for active slot id.
+    pub fn get_mut(&mut self, edge: EdgeId) -> Option<&mut T> {
+        self.slots.get_mut(edge).and_then(|x| x.as_mut())
+    }
+
+    /// Clears all payload slots and marks everything reusable.
+    pub fn clear(&mut self) {
+        self.active_count = 0;
+        self.free_slots.clear();
+        self.free_slots.extend((0..self.slots.len()).rev());
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+    }
+
+    /// Iterates active `(slot, payload)` entries.
+    pub fn iter_active(&self) -> impl Iterator<Item = (EdgeId, &T)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(edge, slot)| slot.as_ref().map(|payload| (edge, payload)))
+    }
+
+    /// Iterates active `(slot, payload)` entries mutably.
+    pub fn iter_active_mut(&mut self) -> impl Iterator<Item = (EdgeId, &mut T)> {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(edge, slot)| slot.as_mut().map(|payload| (edge, payload)))
+    }
+
+    /// Parallel read-only visit over active slot payloads.
+    pub fn par_for_each_active<F>(&self, f: F)
+    where
+        T: Sync,
+        F: Fn(EdgeId, &T) + Send + Sync,
+    {
+        self.slots
+            .par_iter()
+            .enumerate()
+            .for_each(|(edge, slot)| {
+                if let Some(payload) = slot.as_ref() {
+                    f(edge, payload);
+                }
+            });
+    }
+
+    /// Parallel mutable visit over active slot payloads.
+    pub fn par_for_each_active_mut<F>(&mut self, f: F)
+    where
+        T: Send,
+        F: Fn(EdgeId, &mut T) + Send + Sync,
+    {
+        self.slots
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(edge, slot)| {
+                if let Some(payload) = slot.as_mut() {
+                    f(edge, payload);
+                }
+            });
+    }
+
+    fn retain_free_slot(&mut self, edge: EdgeId) {
+        if let Some(pos) = self.free_slots.iter().position(|&x| x == edge) {
+            self.free_slots.swap_remove(pos);
+        }
+    }
+}
+
+/// Synchronized topology + payload backend for one uniform payload type.
+#[derive(Debug, Clone)]
+pub struct Interaction<T> {
+    /// Key-to-slot index and slot lifecycle state.
+    topology: Topology,
+    /// Slot-indexed payload storage synchronized with topology slots.
+    payloads: PayloadStore<T>,
+}
+
+impl<T> Interaction<T> {
+    /// Constructs table from an existing topology.
+    pub fn with_topology(topology: Topology) -> Self {
+        Self {
+            topology,
+            payloads: PayloadStore::new(),
+        }
+    }
+
+    /// Constructs table from object bound and direction mode.
+    pub fn new(n_objects: usize, mode: DirectionMode) -> Self {
+        Self::with_topology(Topology::with_mode(n_objects, mode))
+    }
+
+    /// Returns immutable topology view.
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    /// Returns mutable topology view.
+    pub fn topology_mut(&mut self) -> &mut Topology {
+        &mut self.topology
+    }
+
+    /// Returns whether key exists.
+    pub fn contains_key(&self, nodes: &[ObjId]) -> Result<bool, InteractionError> {
+        self.topology.contains_key(nodes)
+    }
+
+    /// Inserts key and payload, returning slot id.
+    pub fn insert(&mut self, nodes: &[ObjId], payload: T) -> Result<EdgeId, InteractionError> {
+        let edge = self.topology.insert(nodes)?;
+        self.payloads.insert_or_assign(edge, payload);
+        Ok(edge)
+    }
+
+    /// Removes key and payload, returning `(slot, payload)` when found.
+    pub fn remove(&mut self, nodes: &[ObjId]) -> Result<Option<(EdgeId, T)>, InteractionError> {
+        let Some(edge) = self.topology.remove(nodes)? else {
+            return Ok(None);
+        };
+        let payload = self.payloads.remove(edge).ok_or(InteractionError::InvalidEdgeId {
+            edge,
+            n_slots: self.payloads.len_slots(),
+        })?;
+        Ok(Some((edge, payload)))
+    }
+
+    /// Returns immutable payload reference by key.
+    pub fn get(&self, nodes: &[ObjId]) -> Result<Option<&T>, InteractionError> {
+        let Some(edge) = self.topology.index_of(nodes)? else {
+            return Ok(None);
+        };
+        Ok(self.payloads.get(edge))
+    }
+
+    /// Returns mutable payload reference by key.
+    pub fn get_mut(&mut self, nodes: &[ObjId]) -> Result<Option<&mut T>, InteractionError> {
+        let Some(edge) = self.topology.index_of(nodes)? else {
+            return Ok(None);
+        };
+        Ok(self.payloads.get_mut(edge))
+    }
+
+    /// Clears both topology and payload storage.
+    pub fn clear(&mut self) {
+        self.topology.clear();
+        self.payloads.clear();
+    }
+
+    /// Iterates active `(slot, key, payload)` entries.
+    pub fn iter_active(&self) -> impl Iterator<Item = (EdgeId, &InteractionKey, &T)> {
+        self.topology
+            .iter_active()
+            .filter_map(|(edge, key)| self.payloads.get(edge).map(|payload| (edge, key, payload)))
+    }
+
+    /// Parallel mutable payload visit over active slots.
+    pub fn par_for_each_active_payload_mut<F>(&mut self, f: F)
+    where
+        T: Send,
+        F: Fn(EdgeId, &mut T) + Send + Sync,
+    {
+        self.payloads.par_for_each_active_mut(f);
+    }
+
+    /// Parallel read-only payload visit over active slots.
+    pub fn par_for_each_active_payload<F>(&self, f: F)
+    where
+        T: Sync,
+        F: Fn(EdgeId, &T) + Send + Sync,
+    {
+        self.payloads.par_for_each_active(f);
     }
 }
