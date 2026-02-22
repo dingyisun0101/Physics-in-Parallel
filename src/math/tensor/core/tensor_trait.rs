@@ -21,7 +21,7 @@ Key points
   representation via the associated type `Repr<U>` (dense→dense, sparse→sparse).
 */
 
-use super::super::scalar::Scalar;
+use crate::math::scalar::Scalar;
 
 
 /// Unified tensor behavior (to be implemented by dense and sparse tensors).

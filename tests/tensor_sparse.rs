@@ -7,8 +7,8 @@ Run as a doc-test after adapting the paths to your crate:
 */
 
 use physics_in_parallel::math_fundations::{
-    tensor::dense::Tensor as TensorDense, 
-    tensor::sparse::Tensor as TensorSparse
+    tensor::core::dense::Tensor as TensorDense, 
+    tensor::core::sparse::Tensor as TensorSparse
 };
 
 #[test]

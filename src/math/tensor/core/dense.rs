@@ -48,7 +48,8 @@ use serde::Serialize;
 use num_traits::NumCast;
 use ndarray::{ArrayD, IxDyn};
 
-use super::super::scalar::Scalar;
+use crate::math::ndarray_convert::NdarrayConvert;
+use crate::math::scalar::Scalar;
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
 
@@ -534,17 +535,37 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline]
-    pub fn from_ndarry(array: &ArrayD<T>) -> Self {
+    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
         let owned = array.to_owned();
         let shape = owned.shape().to_vec();
         let (data, _) = owned.into_raw_vec_and_offset();
         Self { shape, data }
     }
 
+    #[deprecated(note = "use from_ndarray")]
+    #[inline]
+    pub fn from_ndarry(array: &ArrayD<T>) -> Self {
+        Self::from_ndarray(array)
+    }
+
     #[inline]
     pub fn to_ndarray(&self) -> ArrayD<T> {
         ArrayD::from_shape_vec(IxDyn(&self.shape), self.data.clone())
             .expect("Tensor::to_ndarray: shape/data length mismatch")
+    }
+}
+
+impl<T: Scalar> NdarrayConvert for Tensor<T> {
+    type NdArray = ArrayD<T>;
+
+    #[inline]
+    fn from_ndarray(array: &Self::NdArray) -> Self {
+        Tensor::<T>::from_ndarray(array)
+    }
+
+    #[inline]
+    fn to_ndarray(&self) -> Self::NdArray {
+        Tensor::<T>::to_ndarray(self)
     }
 }
 

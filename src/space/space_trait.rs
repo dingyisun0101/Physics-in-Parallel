@@ -1,6 +1,6 @@
 
 use std::path::PathBuf;
-use crate::math::scalar::Scalar;
+use crate::math::prelude::ScalarSerde;
 
 
 // ======================================================================================
@@ -13,7 +13,7 @@ Coordinates are `isize`; negatives are handled by **wrap** (periodic) or **clamp
 - `dims()` returns `[d, l]` (rank and per-axis length). The total site count is `l^d`.
 - `linear_size()` equals `cfg.num_sites()`.
 */
-pub trait Space<T: Scalar> {
+pub trait Space<T: ScalarSerde> {
     /// Borrow the backing slice.
     fn data(&self) -> &[T];
     /// Return `[d, l]`. (Total sites is **not** stored here; it’s `l^d`.)
@@ -36,5 +36,4 @@ pub trait Space<T: Scalar> {
     /// Fill the entire grid with a single value (parallel).
     fn set_all(&mut self, val: T);
 }
-
 

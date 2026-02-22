@@ -8,9 +8,13 @@
         3) compose: targets = sources + displacements
 */
 
-use crate::math::tensor::dense_rand::{TensorRandFiller};
-use crate::math::tensor_2d::vector_list::VectorList;
-use crate::math::tensor_2d::vector_list_rand::{VectorListRand, HaarVectors, NNVectors};
+use crate::math::prelude::{
+    HaarVectors,
+    NNVectors,
+    TensorRandFiller,
+    VectorList,
+    VectorListRand,
+};
 use crate::space::kernel::*;
 
 

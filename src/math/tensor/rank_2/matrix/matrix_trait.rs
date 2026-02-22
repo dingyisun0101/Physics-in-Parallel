@@ -1,4 +1,4 @@
-// src/math/tensor_2d/matrix/matrix_trait.rs
+// src/math/tensor/rank_2/matrix/matrix_trait.rs
 /*!
     Common **2D matrix interface** for dense/sparse backends.
 

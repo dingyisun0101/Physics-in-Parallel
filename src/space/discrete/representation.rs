@@ -42,7 +42,7 @@ use rayon::prelude::*;
 use rand::random_range;
 use ndarray::{ArrayD, IxDyn};
 
-use crate::math::scalar::Scalar;
+use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::space_trait::Space;
 
 
@@ -331,7 +331,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 // -------------------------- Space impl (core ops) -------------------------------------
 // ======================================================================================
 
-impl<T: Scalar + VacancyValue + Serialize> Space<T> for Grid<T> {
+impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     /// Borrow backing data.
     #[inline] fn data(&self) -> &[T] { &self.data }
 
@@ -435,7 +435,8 @@ impl<T: Scalar + VacancyValue> Grid<T> {
                     .map(|&x| (x as f64 * scale).floor() as isize)
                     .collect();
 
-                *slot = self.get(&coord_old).clone();
+                let i_old = self.coord_to_index(&coord_old);
+                *slot = self.data[i_old].clone();
             });
 
         new
@@ -447,9 +448,13 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 /// - `grid`: source grid
 /// - `l_target`: side length of the saved grid (use same value as `grid.cfg.l` to avoid scaling)
 /// - `output_file`: **file path** to write to (not a directory)
-pub fn save_grid<T>(grid: &Grid<T>, l_target: usize, output_file: &PathBuf) -> std::io::Result<()>
+pub fn save_grid<T>(
+    grid: &Grid<T>,
+    l_target: usize,
+    output_file: &PathBuf,
+) -> std::io::Result<()>
 where
-    T: Scalar + Serialize + VacancyValue,
+    T: ScalarSerde + VacancyValue,
 {
     let grid_to_save = grid.rescale(l_target);
 

@@ -4,7 +4,7 @@ fn main() {}
 #[test]
 fn vector_list_rand() {
         use physics_in_parallel::math::{
-        tensor_2d::{ 
+        tensor::rank_2::{ 
             vector_list_rand::{HaarVectors, NNVectors, VectorListRand},
         },
     };

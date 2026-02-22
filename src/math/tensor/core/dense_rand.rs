@@ -16,7 +16,7 @@ use rand::SeedableRng;
 use rand_distr::{Bernoulli, Distribution, Normal, Uniform};
 use rayon::prelude::*;
 
-use crate::math::tensor::dense::Tensor;
+use crate::math::tensor::core::dense::Tensor;
 use crate::math::scalar::Scalar;
 
 //===================================================================

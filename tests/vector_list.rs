@@ -1,7 +1,7 @@
 #[test]
 fn vector_list() {
         use physics_in_parallel::math::{
-        tensor_2d::vector_list::VectorList,
+        tensor::rank_2::vector_list::VectorList,
     };
     
     // Make 3 vectors in R^3, all zeros initially.
@@ -21,9 +21,9 @@ fn vector_list() {
 
     // Mutable view over a single vector:
     {
-        let mut v1 = vl.get_vector_mut(1);
+        let v1 = vl.get_vector_mut(1);
         // scale v1.y by 10
-        *v1.get_mut(1) *= 10.0;
+        *v1.get_mut(1).expect("index 1 must exist") *= 10.0;
     }
     assert_eq!(vl.get_vector(1).to_vec().as_ref(), [4.0, 50.0, 6.0]);
 
@@ -46,7 +46,7 @@ fn vector_list() {
 #[test]
 fn vector_list_rand() {
         use physics_in_parallel::math::{
-        tensor_2d::{ 
+        tensor::rank_2::{ 
             vector_list_rand::{HaarVectors, NNVectors, VectorListRand},
         },
     };

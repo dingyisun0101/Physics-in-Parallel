@@ -1,4 +1,4 @@
-// src/math_foundations/vector_list_rand.rs
+// src/math/tensor/rank_2/vector_list/rand.rs
 /*!
     Random fillers & utilities that work **in-place** on `VectorList<T>`.
 
@@ -23,14 +23,16 @@
         nn.refresh();
 */
 use rayon::prelude::*;
+use ndarray::Array2;
 
-use crate::math::tensor::{
+use crate::math::tensor::core::{
     dense::Tensor,
     dense_rand::{RandType, TensorRandFiller},
     tensor_trait::TensorTrait,
 };
 
-use crate::math::tensor_2d::vector_list::VectorList;
+use crate::math::ndarray_convert::NdarrayConvert;
+use super::VectorList;
 
 
 // ============================================================================
@@ -88,6 +90,44 @@ impl VectorListRand for HaarVectors {
     }
 }
 
+impl HaarVectors {
+    /// Build a HaarVectors container from existing ndarray data (`[dim, n]`).
+    ///
+    /// The random filler is initialized to the standard Haar refresh distribution
+    /// (`Normal { mean: 0, std: 1 }`), so a subsequent `refresh()` remains valid.
+    #[inline]
+    pub fn from_ndarray(array: &Array2<f64>) -> Self {
+        let vl = VectorList::<f64>::from_ndarray(array);
+        let dim = vl.dim();
+        let n = vl.num_vectors();
+        let filler = TensorRandFiller::new(
+            RandType::Normal { mean: 0.0, std: 1.0 },
+            None,
+        );
+        Self { vl, dim, n, filler }
+    }
+
+    /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
+    #[inline]
+    pub fn to_ndarray(&self) -> Array2<f64> {
+        self.vl.to_ndarray()
+    }
+}
+
+impl NdarrayConvert for HaarVectors {
+    type NdArray = Array2<f64>;
+
+    #[inline]
+    fn from_ndarray(array: &Self::NdArray) -> Self {
+        HaarVectors::from_ndarray(array)
+    }
+
+    #[inline]
+    fn to_ndarray(&self) -> Self::NdArray {
+        HaarVectors::to_ndarray(self)
+    }
+}
+
 
 
 
@@ -131,23 +171,59 @@ impl VectorListRand for NNVectors {
         // 1) sample codes in [0, 2*dim)
         self.code_filler.refresh(&mut self.code_buf);
 
-        let n   = self.n;
         let codes: &[usize] = &self.code_buf.data;
 
-        // 2) rewrite the whole [dim, n] matrix in parallel, row by row
-        // row-major: each row is a contiguous chunk of length n
+        // 2) rewrite all vectors in parallel.
+        // VectorList stores physical shape [n, dim], so each vector is one contiguous row.
         self.vl.as_tensor_mut()
             .data
-            .par_chunks_mut(n)
+            .par_chunks_mut(self.dim)
             .enumerate()
-            .for_each(|(axis, row)| {
-                let axis = axis as usize;
-                for (i, x) in row.iter_mut().enumerate() {
-                    let code = codes[i];
+            .for_each(|(i, row)| {
+                let code = codes[i];
+                for (axis, x) in row.iter_mut().enumerate() {
                     let a    = code / 2;
                     let sign = if code % 2 == 0 { 1isize } else { -1isize };
                     *x = if a == axis { sign } else { 0 };
                 }
             });
+    }
+}
+
+impl NNVectors {
+    /// Build an NNVectors container from existing ndarray data (`[dim, n]`).
+    ///
+    /// The random code buffer/filler are initialized with defaults so `refresh()` remains valid.
+    #[inline]
+    pub fn from_ndarray(array: &Array2<isize>) -> Self {
+        let vl = VectorList::<isize>::from_ndarray(array);
+        let dim = vl.dim();
+        let n = vl.num_vectors();
+        let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
+        let code_filler = TensorRandFiller::new(
+            RandType::UniformInt { low: 0, high: (2 * dim) as i64 - 1 },
+            None,
+        );
+        Self { vl, dim, n, code_buf, code_filler }
+    }
+
+    /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
+    #[inline]
+    pub fn to_ndarray(&self) -> Array2<isize> {
+        self.vl.to_ndarray()
+    }
+}
+
+impl NdarrayConvert for NNVectors {
+    type NdArray = Array2<isize>;
+
+    #[inline]
+    fn from_ndarray(array: &Self::NdArray) -> Self {
+        NNVectors::from_ndarray(array)
+    }
+
+    #[inline]
+    fn to_ndarray(&self) -> Self::NdArray {
+        NNVectors::to_ndarray(self)
     }
 }

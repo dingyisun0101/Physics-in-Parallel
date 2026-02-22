@@ -28,13 +28,15 @@ Thus every accessor deterministically targets a valid location; implicit zeros r
 */
 
 use ahash::AHashMap;
+use ndarray::ArrayD;
 use num_traits::NumCast;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
 use std::ops::{Add, Sub, Mul, Div, BitAnd};
 
-use super::super::scalar::Scalar;
+use crate::math::ndarray_convert::NdarrayConvert;
+use crate::math::scalar::Scalar;
 use super::dense::Tensor as TensorDense;
 use super::tensor_trait::TensorTrait; // unified trait alias
 
@@ -512,6 +514,33 @@ impl<T: Scalar> Tensor<T> {
             .collect();
 
         Self::from_flat_pairs(shape, pairs)
+    }
+
+    /// Build a sparse tensor from an ndarray by skipping zeros.
+    #[inline]
+    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
+        let dense = TensorDense::<T>::from_ndarray(array);
+        Self::from_dense(&dense)
+    }
+
+    /// Convert sparse tensor to ndarray by densifying missing entries to zero.
+    #[inline]
+    pub fn to_ndarray(&self) -> ArrayD<T> {
+        self.to_dense().to_ndarray()
+    }
+}
+
+impl<T: Scalar> NdarrayConvert for Tensor<T> {
+    type NdArray = ArrayD<T>;
+
+    #[inline]
+    fn from_ndarray(array: &Self::NdArray) -> Self {
+        Tensor::<T>::from_ndarray(array)
+    }
+
+    #[inline]
+    fn to_ndarray(&self) -> Self::NdArray {
+        Tensor::<T>::to_ndarray(self)
     }
 }
 
