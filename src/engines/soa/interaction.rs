@@ -36,7 +36,9 @@ pub struct InteractionKey {
 impl InteractionKey {
     /// Builds an owned interaction key from node indices.
     pub fn from_slice(nodes: &[ObjId]) -> Self {
-        Self { nodes: nodes.into() }
+        Self {
+            nodes: nodes.into(),
+        }
     }
 
     /// Returns interaction arity (`nodes.len()`).
@@ -312,21 +314,6 @@ impl<T> PayloadStore<T> {
         self.slots.len()
     }
 
-    /// Returns number of active payload entries.
-    pub fn active_count(&self) -> usize {
-        self.active_count
-    }
-
-    /// Returns number of currently free reusable slots.
-    pub fn free_count(&self) -> usize {
-        self.free_slots.len()
-    }
-
-    /// Returns whether slot is currently active.
-    pub fn contains_slot(&self, edge: EdgeId) -> bool {
-        self.slots.get(edge).is_some_and(|x| x.is_some())
-    }
-
     /// Inserts or overwrites payload at slot id.
     pub fn insert_or_assign(&mut self, edge: EdgeId, payload: T) {
         if edge >= self.slots.len() {
@@ -373,36 +360,17 @@ impl<T> PayloadStore<T> {
         }
     }
 
-    /// Iterates active `(slot, payload)` entries.
-    pub fn iter_active(&self) -> impl Iterator<Item = (EdgeId, &T)> {
-        self.slots
-            .iter()
-            .enumerate()
-            .filter_map(|(edge, slot)| slot.as_ref().map(|payload| (edge, payload)))
-    }
-
-    /// Iterates active `(slot, payload)` entries mutably.
-    pub fn iter_active_mut(&mut self) -> impl Iterator<Item = (EdgeId, &mut T)> {
-        self.slots
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(edge, slot)| slot.as_mut().map(|payload| (edge, payload)))
-    }
-
     /// Parallel read-only visit over active slot payloads.
     pub fn par_for_each_active<F>(&self, f: F)
     where
         T: Sync,
         F: Fn(EdgeId, &T) + Send + Sync,
     {
-        self.slots
-            .par_iter()
-            .enumerate()
-            .for_each(|(edge, slot)| {
-                if let Some(payload) = slot.as_ref() {
-                    f(edge, payload);
-                }
-            });
+        self.slots.par_iter().enumerate().for_each(|(edge, slot)| {
+            if let Some(payload) = slot.as_ref() {
+                f(edge, payload);
+            }
+        });
     }
 
     /// Parallel mutable visit over active slot payloads.
@@ -478,10 +446,13 @@ impl<T> Interaction<T> {
         let Some(edge) = self.topology.remove(nodes)? else {
             return Ok(None);
         };
-        let payload = self.payloads.remove(edge).ok_or(InteractionError::InvalidEdgeId {
-            edge,
-            n_slots: self.payloads.len_slots(),
-        })?;
+        let payload = self
+            .payloads
+            .remove(edge)
+            .ok_or(InteractionError::InvalidEdgeId {
+                edge,
+                n_slots: self.payloads.len_slots(),
+            })?;
         Ok(Some((edge, payload)))
     }
 

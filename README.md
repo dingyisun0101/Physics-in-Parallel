@@ -1,61 +1,190 @@
 # Physics-in-Parallel
 
-**Physics in Parallel** is a scientific computing package in Rust for **massive, memory-bound simulations** where *full vectorization isn’t feasible*. It targets workloads that exceed cache and RAM budgets, need irregular access patterns, or are best served by a **hybrid SoA/AoS** approach with **block-wise/streaming** execution.
+Physics-in-Parallel is a Rust package for high-performance numerical simulation with an explicit layered architecture:
+
+`math -> space -> engines -> models`
+
+The main design goal is to keep low-level numeric infrastructure generic and reusable, then build domain-specific simulation tools on top of it.
 
 ---
 
-## Core Goals
-1. **Unified Scalar Abstraction**  
-   A single `Scalar` trait unifies integers, floats, and complex types with a consistent API (conjugation, norms, sqrt, finiteness).
+## Architecture at a glance
 
-2. **Tensor Infrastructure (Hybrid-layout Friendly)**  
-   - Parallel elementwise ops (`+`, `-`, `*`, `/`) via Rayon.
-   - **Tile/block iterators** and **zero-copy views** designed to cooperate with SoA and AoS neighbors.
-   - Human-readable serialization (JSON, DSL strings).
-   - Multiple backends availible:
-      - Dense:
-         - flat-memory tensors for cache efficiency.  
-      - Sparse: 
-         - Sparse and symmetry-aware storage backed by hashset.
+### Layer order
+1. `math`: scalar + tensor foundations.
+2. `space`: domain and kernel abstractions built on `math`.
+3. `engines`: generic simulation runtime primitives (currently SoA-focused) built on `math` and usable with `space`.
+4. `models`: ready-to-use physical model packages built on `engines`.
 
-2. **2D Tensor Infrastructure (Matrix + VectorList)**
-   - Matrix: 
-      - A wrapper for tensor that adds linalg methods support.
-      - Allow slicing and viewing by row or col.
-   - VectorList:
-      - A wrapper for Matrix.
-      - Each col represents a vector.
-      - Allow bulk operations on vectors (normalization, ...)
-      
+### Top-level user-facing modules
 
-3. **Random Tensor Generation**  
-   Efficient, **chunked** generators for random vectors (uniform, Gaussian, etc.), supporting **streamed/partial fills** for Monte Carlo and stochastic dynamics on large states.
+These are exposed from `src/lib.rs`:
 
-4. **Space**
-   Provide abstraction for space representations.
-   - Dense:
-      - A wrapper for dense tensor. The tensor represents a square lattice with periodic boundary.
-      - Each site is accessible through a cartesion coordinate.
-   - Sparse:
-      - A wrapper for sparse tensor. It is best for describing continuous space containing finite elements.
+- `physics_in_parallel::math`
+- `physics_in_parallel::space`
+- `physics_in_parallel::engines`
+- `physics_in_parallel::models`
+- `physics_in_parallel::prelude`
 
-5. **Parallelism by Default (Under Memory Constraints)**  
-   - Rayon-powered **tile-level** parallelism to respect cache lines and NUMA.  
-   - **Block-wise** maps/zips, fused passes, and streaming pipelines to reduce materialization.  
-   - Scales from laptops to HPC nodes **without requiring full in-RAM tensors**.
+`prelude` currently re-exports the crate-level math/space/engines preludes.
 
 ---
 
-## Why Hybrid SoA/AoS?
-Some physics tasks (e.g., lattice kernels with long tails, neighbor lists, event-driven updates, or out-of-core grids) don’t map cleanly to a single layout or to global vectorization. **Physics in Parallel** embraces:
-- **SoA** for bandwidth-bound sweeps (norms, reductions, scalar transforms).  
-- **AoS** (or AoS-like views) where locality across coordinates simplifies kernels or boundary logic.  
-- **Block/tiling** to operate on windows that fit in cache, enabling halos/ghost cells and sliding updates.  
-- **Streaming/randomized passes** to amortize RNG and avoid full materialization.
+## Module details
+
+## 1) `math`
+
+### Purpose
+`math` is the numeric foundation layer. It provides the scalar and tensor machinery used by all higher layers.
+
+### How it is implemented
+
+- Scalar abstraction:
+  - A unified `Scalar` trait supports integers, real floats, and complex numbers behind one API.
+  - Common scalar operations (conversion, norms, conjugation-style behavior, finiteness checks) are centralized here.
+
+- Tensor core:
+  - Dense backend: contiguous flat storage for cache-friendly bulk operations.
+  - Sparse backend: sparse representation optimized for low occupancy patterns.
+  - Unified front type: `Tensor<T, Backend>` with backend-specialized behavior under one interface.
+  - Core operations are parallelized where appropriate using Rayon.
+
+- Rank-2 math:
+  - `Tensor2D` for 2D tensor views/operations.
+  - `Matrix` for matrix-centric workflows and matrix traits.
+  - `VectorList` for "many vectors with fixed dimension" storage and operations.
+
+- Random fillers:
+  - `TensorRandFiller` and `RandType` support random initialization patterns reused by model code.
+  - Vector-list random generators (`HaarVectors`, `NNVectors`) build on the same tensor infrastructure.
+
+### User entry points
+
+- `physics_in_parallel::math::*` for module-level APIs.
+- `physics_in_parallel::math::prelude::*` for common math imports.
 
 ---
 
-## Use Cases
-- **Stochastic field dynamics:** diffusion + Langevin noise on very large grids using streaming tiles.  
-- **Ecology & population dynamics:** lattice models with structured, possibly long-range dispersal kernels on domains too large for global vectorization.  
-- **General numerical physics:** PDE/ODE solvers, interacting-particle systems, and kernels mixing SoA scans with AoS-style neighbor ops.  
+## 2) `space`
+
+### Purpose
+`space` adds geometric and domain semantics on top of `math` tensors. It represents simulation domains and spatial kernels without tying to a particular physical model.
+
+### How it is implemented
+
+- `Space` trait:
+  - Shared abstraction for space/domain backends.
+
+- Kernel module:
+  - Common kernel types (`NearestNeighbor`, `PowerLaw`, `Uniform`) via `KernelType`.
+  - Concrete kernel implementations and kernel factory function (`create_kernel`).
+
+- Discrete representations:
+  - Grid configuration (`GridConfig`) and initialization (`GridInitMethod`).
+  - `Grid<T>` storage representation for lattice-like spaces.
+  - Serialization helpers (`save_grid`) and vacancy conventions.
+  - Random pair generation utilities (`RandPairGenerator`) for stochastic displacement/workflows.
+
+### How it builds on `math`
+
+All concrete space data structures are implemented using math-layer tensor/scalar facilities. `space` does not duplicate numeric kernels; it composes them.
+
+### User entry points
+
+- `physics_in_parallel::space::*` for module-level APIs.
+- `physics_in_parallel::space::prelude::*` for common space imports.
+
+---
+
+## 3) `engines`
+
+### Purpose
+`engines` provides model-agnostic runtime infrastructure for simulation state and interaction management.
+
+Current primary implementation is `engines::soa`.
+
+### How it is implemented
+
+- `PhysObj` data container:
+  - Built from `AttrsMeta` + `AttrsCore`.
+  - `AttrsCore` stores heterogeneous typed columns keyed by attribute label.
+  - Each attribute column is a typed `VectorList<T>` stored behind runtime-erased trait objects (`DynVectorList`), allowing mixed scalar types.
+  - Enforces shape consistency (`n_objects`, per-attribute dimension checks) through `AttrsError`.
+
+- Interaction backend:
+  - `Topology`: maps mixed-arity interaction keys (e.g., `(i,j)` or `(i,j,k,...)`) to stable slot IDs.
+  - Supports directed or undirected validation policy.
+  - Uses hole reuse for cheap insert/delete churn.
+  - `Interaction<T>` combines topology with hidden payload storage for uniform payload type `T`.
+  - Exposes key-based insert/get/remove APIs and parallel payload iteration.
+
+### How it builds on previous layers
+
+- Builds directly on `math` data structures (`VectorList`) for SoA storage.
+- Designed to work with `space` outputs (neighbor structures, kernels) but remains generic and model-independent.
+
+### User entry points
+
+- `physics_in_parallel::engines::soa::*`
+- `physics_in_parallel::engines::prelude::*`
+
+---
+
+## 4) `models`
+
+### Purpose
+`models` is the domain package layer: concrete simulation model modules built from the reusable engine + math stack.
+
+Current package: `models::particles`.
+
+### How `models::particles` is implemented
+
+- `attrs`:
+  - Canonical attribute labels (`r`, `v`, `a`, `m`, `m_inv`, `alive`) for consistent model code.
+
+- `create_state`:
+  - `create_template(dim, num_particles)` builds a particle `PhysObj` with canonical fields.
+  - `randomize_r(...)` and `randomize_v(...)` provide state initialization methods.
+  - Uses math random fillers + Rayon parallel transforms for bulk initialization.
+
+- `integrator`:
+  - Integrator trait and Euler-family implementations for time stepping.
+  - Operates directly on `PhysObj` attributes.
+  - Uses parallel chunk-wise updates over vector-list storage.
+
+- `boundary`:
+  - Boundary trait and concrete boundary conditions (periodic, clamp, reflect).
+  - Works directly on `PhysObj` canonical fields (`r`, `v`, optional `alive`).
+  - Reflect boundary uses a dual-pass strategy to preserve mutable alias safety while remaining parallel.
+
+- `thermostat`:
+  - Thermostat trait and Langevin implementation.
+  - Updates velocity fields from target temperature/friction parameters.
+  - Validates state shape/physics constraints and applies stochastic updates.
+
+### How it builds on previous layers
+
+- `models` is where engine-generic containers (`PhysObj`, `Interaction`) become concrete physics workflows.
+- Random initialization, vector math, and parallelism are inherited from `math`.
+- State and interaction organization is inherited from `engines`.
+- Optional domain logic can be composed with `space`.
+
+### User entry points
+
+- `physics_in_parallel::models::particles::...`
+  - `attrs`
+  - `create_state`
+  - `integrator`
+  - `boundary`
+  - `thermostat`
+
+---
+
+## Typical usage flow
+
+1. Use `math` to define numeric types, tensor operations, and random generators.
+2. Use `space` to describe domain/kernels when your model needs geometric structure.
+3. Use `engines` to hold simulation state (`PhysObj`) and interaction topology/payloads (`Interaction<T>`).
+4. Use `models` packages to run concrete workflows (create state, integrate, apply boundaries/thermostats, observe).
+
+This layering keeps the low-level infrastructure reusable while letting models stay concise and domain-focused.

@@ -1,8 +1,6 @@
 use ndarray::{ArrayD, IxDyn};
 
-use physics_in_parallel::math::{
-    tensor::core::{Dense, Sparse, Tensor},
-};
+use physics_in_parallel::math::tensor::core::{Dense, Sparse, Tensor};
 
 #[test]
 /// Annotation:

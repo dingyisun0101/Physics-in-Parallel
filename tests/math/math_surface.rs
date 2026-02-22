@@ -177,13 +177,23 @@ fn dense_rand_public_surface() {
     let mut t_u = <DenseTensorStorage<usize> as TensorTrait<usize>>::empty(&[4]);
     let mut t_s = <DenseTensorStorage<isize> as TensorTrait<isize>>::empty(&[4]);
 
-    let mut rf = TensorRandFiller::new(RandType::Uniform { low: -1.0, high: 1.0 }, Some(2));
+    let mut rf = TensorRandFiller::new(
+        RandType::Uniform {
+            low: -1.0,
+            high: 1.0,
+        },
+        Some(2),
+    );
     rf.refresh(&mut t_f);
     assert!(matches!(rf.kind(), RandType::Uniform { .. }));
-    rf.set_kind(RandType::Normal { mean: 0.0, std: 1.0 });
+    rf.set_kind(RandType::Normal {
+        mean: 0.0,
+        std: 1.0,
+    });
     rf.refresh(&mut t_f);
 
-    let mut ri = TensorRandFiller::new_with_seed(RandType::UniformInt { low: 1, high: 3 }, Some(2), 7);
+    let mut ri =
+        TensorRandFiller::new_with_seed(RandType::UniformInt { low: 1, high: 3 }, Some(2), 7);
     ri.refresh(&mut t_i);
     ri.set_kind(RandType::Bernoulli { p: 0.5 });
     ri.refresh(&mut t_i);

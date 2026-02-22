@@ -1,7 +1,5 @@
 use physics_in_parallel::math::tensor::core::{
-    dense::Tensor as DenseTensor,
-    sparse::Tensor as SparseTensor,
-    tensor_trait::TensorTrait,
+    dense::Tensor as DenseTensor, sparse::Tensor as SparseTensor, tensor_trait::TensorTrait,
 };
 
 #[test]
@@ -11,10 +9,8 @@ use physics_in_parallel::math::tensor::core::{
 ///   - (none): This function has no documented non-receiver parameters.
 ///   - (none): This function takes no explicit parameters.
 fn sparse_public_surface_basics() {
-    let mut s = SparseTensor::<f64>::from_triplets(
-        vec![2, 3],
-        vec![(vec![0, 1], 2.0), (vec![1, 2], 3.0)],
-    );
+    let mut s =
+        SparseTensor::<f64>::from_triplets(vec![2, 3], vec![(vec![0, 1], 2.0), (vec![1, 2], 3.0)]);
 
     assert_eq!(s.rank(), 2);
     assert_eq!(s.shape(), &[2, 3]);
@@ -42,7 +38,9 @@ fn sparse_public_surface_basics() {
 
     let cast_i = s.cast_to::<i64>();
     assert_eq!(cast_i.get(&[0, 1]), 3);
-    let try_cast_f32 = s.try_cast_to::<f32>().expect("f64->f32 cast should succeed");
+    let try_cast_f32 = s
+        .try_cast_to::<f32>()
+        .expect("f64->f32 cast should succeed");
     assert_eq!(try_cast_f32.shape(), s.shape());
 
     let mut t = <SparseTensor<f64> as TensorTrait<f64>>::empty(&[2, 2]);

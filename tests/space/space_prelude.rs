@@ -12,13 +12,7 @@ fn space_prelude_compiles_for_common_types() {
     g.set_vacant(&[1]);
     assert!(g.is_vacant(&[1]));
 
-    let mut rpg = RandPairGenerator::new(
-        KernelType::NearestNeighbor { d: 1 },
-        1,
-        8,
-        None,
-        Some(1),
-    );
+    let mut rpg = RandPairGenerator::new(KernelType::NearestNeighbor { d: 1 }, 1, 8, None, Some(1));
     rpg.refresh();
     assert_eq!(rpg.sources().shape(), [1, 8]);
 }

@@ -19,4 +19,3 @@ fn prelude_compiles_for_common_types() {
     vl.set(1, 2, 5.0);
     assert_eq!(vl.get(1, 2), 5.0);
 }
-

@@ -1,10 +1,8 @@
 // tests/tensor_ops.rs
 
 use physics_in_parallel::math::{
-    tensor::core::tensor_trait::TensorTrait,
-    tensor::core::dense::Tensor,
+    tensor::core::dense::Tensor, tensor::core::tensor_trait::TensorTrait,
 };
-
 
 #[test]
 /// Annotation:

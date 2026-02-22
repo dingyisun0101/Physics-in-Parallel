@@ -12,12 +12,7 @@ use physics_in_parallel::space::{
         representation::{save_grid, Grid, GridConfig, GridInitMethod},
     },
     kernel::{
-        create_kernel,
-        Kernel,
-        KernelType,
-        NearestNeighborKernel,
-        PowerLawKernel,
-        UniformKernel,
+        create_kernel, Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel,
     },
     space_trait::Space,
 };
@@ -219,12 +214,7 @@ fn rand_pair_generator_public_surface() {
     assert_eq!(pl_gen.sources().shape(), [3, 16]);
     assert_eq!(pl_gen.targets().shape(), [3, 16]);
     assert!(
-        pl_gen
-            .sources()
-            .as_tensor()
-            .data
-            .iter()
-            .all(|&x| x == 0),
+        pl_gen.sources().as_tensor().data.iter().all(|&x| x == 0),
         "with source filler = None, sources should remain at default zeros"
     );
 }
