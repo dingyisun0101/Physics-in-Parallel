@@ -1,7 +1,12 @@
 use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::engines::soa_engine::phys_obj::{PhysObj, PhysObjError};
+use physics_in_parallel::engines::soa::phys_obj::{PhysObj, PhysObjError};
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `phys_obj_empty_defaults_and_core_access` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn phys_obj_empty_defaults_and_core_access() {
     let mut obj = PhysObj::<3>::empty(2);
 
@@ -36,6 +41,11 @@ fn phys_obj_empty_defaults_and_core_access() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `phys_obj_attr_registration_lookup_and_errors` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn phys_obj_attr_registration_lookup_and_errors() {
     let mut obj = PhysObj::<2>::empty(3);
 
@@ -93,6 +103,11 @@ fn phys_obj_attr_registration_lookup_and_errors() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `phys_obj_push_object_propagates_attr_defaults_and_preserves_existing_data` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn phys_obj_push_object_propagates_attr_defaults_and_preserves_existing_data() {
     let mut obj = PhysObj::<2>::empty(1);
 
@@ -128,6 +143,11 @@ fn phys_obj_push_object_propagates_attr_defaults_and_preserves_existing_data() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `phys_obj_kill_object_and_invalid_id_paths` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn phys_obj_kill_object_and_invalid_id_paths() {
     let mut obj = PhysObj::<2>::empty(2);
 
@@ -150,6 +170,11 @@ fn phys_obj_kill_object_and_invalid_id_paths() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `phys_obj_from_core_accepts_valid_and_rejects_invalid_inputs` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn phys_obj_from_core_accepts_valid_and_rejects_invalid_inputs() {
     let mut pos = VectorList::<f64>::empty(2, 2);
     let mut vel = VectorList::<f64>::empty(2, 2);

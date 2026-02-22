@@ -8,6 +8,7 @@ Internal storage
 */
 
 pub mod rand;
+pub use rand::{HaarVectors, NNVectors, VectorListRand};
 
 use ndarray::Array2;
 use rayon::prelude::*;
@@ -30,37 +31,74 @@ pub struct VectorList<T: Scalar> {
 
 impl<T: Scalar> VectorList<T> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `empty` logic for this module.
+    /// - Parameters:
+    ///   - `dim` (`usize`): Parameter of type `usize` used by `empty`.
+    ///   - `n` (`usize`): Parameter of type `usize` used by `empty`.
     pub fn empty(dim: usize, n: usize) -> Self {
         assert!(dim > 0 && n > 0, "VectorList::empty: shape must be nonzero");
         Self { tensor: Tensor2D::<T>::empty(n, dim) }
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `tensor2d` input.
+    /// - Parameters:
+    ///   - `tensor` (`Tensor2D<T>`): Tensor input used by this operation.
     pub fn from_tensor2d(tensor: Tensor2D<T>) -> Self {
         Self { tensor }
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `into_tensor2d` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn into_tensor2d(self) -> Tensor2D<T> { self.tensor }
 
     /// Dense backend view (compat layer for fillers that operate on dense tensors).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `as_tensor` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn as_tensor(&self) -> &DenseTensor<T> { self.tensor.backend() }
 
     /// Dense backend mutable view (compat layer for fillers that operate on dense tensors).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `as_tensor_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn as_tensor_mut(&mut self) -> &mut DenseTensor<T> { self.tensor.backend_mut() }
 
     // ----------------------- shape helpers -----------------------
     /// Vector dimension `dim`.
+    /// Annotation:
+    /// - Purpose: Executes `dim` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn dim(&self) -> usize { self.tensor.cols() }
     /// Number of vectors `n`.
+    /// Annotation:
+    /// - Purpose: Executes `num_vectors` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn num_vectors(&self) -> usize { self.tensor.rows() }
     /// External logical shape `[dim, n]`.
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn shape(&self) -> [usize; 2] { [self.dim(), self.num_vectors()] }
 
     // ------------------------ I/O helpers ------------------------
     #[inline]
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn print(&self) { self.tensor.print(); }
 
     #[inline]
@@ -73,6 +111,10 @@ impl<T: Scalar> VectorList<T> {
 
     /// Build from ndarray with shape `[dim, n]`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Array2<T>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarray(array: &Array2<T>) -> Self {
         let shape = array.shape();
         assert!(shape[0] > 0 && shape[1] > 0, "VectorList::from_ndarray: shape must be nonzero");
@@ -90,6 +132,10 @@ impl<T: Scalar> VectorList<T> {
 
     /// Convert to ndarray with shape `[dim, n]`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<T> {
         let (dim, n) = (self.dim(), self.num_vectors());
         let mut data = Vec::with_capacity(dim * n);
@@ -104,11 +150,22 @@ impl<T: Scalar> VectorList<T> {
 
     // --------------------- element accessors ---------------------
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `k` (`isize`): Tertiary index/axis argument.
     pub fn get(&self, i: isize, k: isize) -> T where T: Copy {
         self.tensor.get(i, k)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `k` (`isize`): Tertiary index/axis argument.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     pub fn set(&mut self, i: isize, k: isize, val: T) {
         self.tensor.set(i, k, val);
     }
@@ -135,6 +192,10 @@ impl<T: Scalar> VectorList<T> {
 
     /// Copy one axis (component) across all vectors.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the `axis` value.
+    /// - Parameters:
+    ///   - `k` (`isize`): Tertiary index/axis argument.
     pub fn get_axis(&self, k: isize) -> Vec<T>
     where
         T: Copy,
@@ -145,6 +206,10 @@ impl<T: Scalar> VectorList<T> {
 
 impl<T: Scalar> VectorList<T> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `scale_vectors_by_list` logic for this module.
+    /// - Parameters:
+    ///   - `scales` (`&[T]`): Parameter of type `&[T]` used by `scale_vectors_by_list`.
     pub fn scale_vectors_by_list(&mut self, scales: &[T]) {
         let n = self.num_vectors();
         assert!(scales.len() == n, "scale_vectors_by_list: len mismatch");
@@ -157,23 +222,41 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `vector_from_slice` value.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_vector_from_slice`.
     pub fn set_vector_from_slice(&mut self, i: isize, vals: &[T]) {
         assert_eq!(vals.len(), self.dim(), "set_vector_from_slice: len mismatch");
         self.tensor.row_view_mut(i).copy_from_slice(vals);
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `axis_from_slice` value.
+    /// - Parameters:
+    ///   - `k` (`isize`): Tertiary index/axis argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_axis_from_slice`.
     pub fn set_axis_from_slice(&mut self, k: isize, vals: &[T]) {
         assert_eq!(vals.len(), self.num_vectors(), "set_axis_from_slice: len mismatch");
         self.tensor.set_col_from_slice(k, vals);
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     pub fn fill(&mut self, val: T) {
         self.tensor.backend_mut().par_fill(val);
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the `norms` value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn get_norms(&self) -> Vec<T> {
         (0..self.num_vectors())
             .into_par_iter()
@@ -188,6 +271,10 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `normalize` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn normalize(&mut self) {
         let norms = self.get_norms();
         let scales: Vec<T> = norms.par_iter()
@@ -197,6 +284,10 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `polar` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_polar(&self) -> (Vec<T>, VectorList<T>) {
         let norms = self.get_norms();
         let mut units = self.clone();
@@ -292,11 +383,19 @@ impl<T: Scalar> NdarrayConvert for VectorList<T> {
     type NdArray = Array2<T>;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         VectorList::<T>::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         VectorList::<T>::to_ndarray(self)
     }

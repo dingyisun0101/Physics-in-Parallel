@@ -46,6 +46,11 @@ pub struct TensorRandFiller {
 
 impl TensorRandFiller {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `kind` (`RandType`): Kind/tag input controlling strategy or variant selection.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     pub fn new(kind: RandType, num_rngs: Option<usize>) -> Self {
         let req = match num_rngs {
             Some(0) => panic!("num_rngs must be > 0"),
@@ -61,6 +66,12 @@ impl TensorRandFiller {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs a new value using `with_seed` configuration.
+    /// - Parameters:
+    ///   - `kind` (`RandType`): Kind/tag input controlling strategy or variant selection.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new_with_seed`.
+    ///   - `seed` (`u64`): Random seed controlling deterministic sampling.
     pub fn new_with_seed(kind: RandType, num_rngs: Option<usize>, seed: u64) -> Self {
         let req = match num_rngs {
             Some(0) => panic!("num_rngs must be > 0"),
@@ -76,11 +87,20 @@ impl TensorRandFiller {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `active_slices` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `active_slices`.
     fn active_slices(&self, n: usize) -> usize {
         if n == 0 { 0 } else { self.num_rngs.min(n) }
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `chunk_len` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `chunk_len`.
+    ///   - `slices` (`usize`): Parameter of type `usize` used by `chunk_len`.
     fn chunk_len(&self, n: usize, slices: usize) -> usize {
         if n == 0 || slices == 0 { 0 } else { (n + slices - 1) / slices } // ceil(n/slices)
     }
@@ -92,7 +112,15 @@ impl TensorRandFiller {
     }
 
     /// Access/modify the distribution kind if you want to reuse the filler.
+    /// Annotation:
+    /// - Purpose: Executes `kind` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn kind(&self) -> &RandType { &self.kind }
+    /// Annotation:
+    /// - Purpose: Sets the `kind` value.
+    /// - Parameters:
+    ///   - `k` (`RandType`): Tertiary index/axis argument.
     #[inline] pub fn set_kind(&mut self, k: RandType) { self.kind = k; }
 }
 
@@ -110,12 +138,22 @@ mod sealed {
 }
 
 pub trait TensorRandElement: sealed::Sealed + Sized + Scalar {
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `f` (`&mut TensorRandFiller`): Parameter of type `&mut TensorRandFiller` used by `fill`.
+    ///   - `tensor` (`&mut Tensor<Self>`): Tensor input used by this operation.
     fn fill(f: &mut TensorRandFiller, tensor: &mut Tensor<Self>);
 }
 
 // ---------------------------- f64 ---------------------------------
 impl TensorRandElement for f64 {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `f` (`&mut TensorRandFiller`): Parameter of type `&mut TensorRandFiller` used by `fill`.
+    ///   - `tensor` (`&mut Tensor<f64>`): Tensor input used by this operation.
     fn fill(f: &mut TensorRandFiller, tensor: &mut Tensor<f64>) {
         let n = tensor.data.len();
         if n == 0 { return; }
@@ -171,6 +209,11 @@ impl TensorRandElement for f64 {
 // ---------------------------- i64 ---------------------------------
 impl TensorRandElement for i64 {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `f` (`&mut TensorRandFiller`): Parameter of type `&mut TensorRandFiller` used by `fill`.
+    ///   - `tensor` (`&mut Tensor<i64>`): Tensor input used by this operation.
     fn fill(f: &mut TensorRandFiller, tensor: &mut Tensor<i64>) {
         let n = tensor.data.len();
         if n == 0 { return; }
@@ -213,6 +256,11 @@ impl TensorRandElement for i64 {
 // ---------------------------- usize -------------------------------
 impl TensorRandElement for usize {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `f` (`&mut TensorRandFiller`): Parameter of type `&mut TensorRandFiller` used by `fill`.
+    ///   - `tensor` (`&mut Tensor<usize>`): Tensor input used by this operation.
     fn fill(f: &mut TensorRandFiller, tensor: &mut Tensor<usize>) {
         let n = tensor.data.len();
         if n == 0 { return; }
@@ -249,6 +297,11 @@ impl TensorRandElement for usize {
 // Use i64 inclusive uniform and cast after validating bounds.
 impl TensorRandElement for isize {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill` logic for this module.
+    /// - Parameters:
+    ///   - `f` (`&mut TensorRandFiller`): Parameter of type `&mut TensorRandFiller` used by `fill`.
+    ///   - `tensor` (`&mut Tensor<isize>`): Tensor input used by this operation.
     fn fill(f: &mut TensorRandFiller, tensor: &mut Tensor<isize>) {
         let n = tensor.data.len();
         if n == 0 { return; }

@@ -1,9 +1,70 @@
-use physics_in_parallel::engines::soa_engine::interaction::{
-    Interaction, InteractionError, PairTopology, SpringInteraction,
+use physics_in_parallel::engines::soa::interaction::{
+    Interaction, InteractionError, PairTopology,
 };
-use physics_in_parallel::engines::soa_engine::phys_obj::PhysObj;
+use physics_in_parallel::engines::soa::phys_obj::PhysObj;
+
+#[derive(Debug, Clone)]
+struct ConstantPairPush {
+    topology: PairTopology,
+    gain: f64,
+}
+
+impl ConstantPairPush {
+    /// Annotation:
+    /// - Purpose: Executes `new` logic.
+    /// - Parameters:
+    ///   - `n_objects` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `gain` (`f64`): Parameter of type `f64` used by `new`.
+    fn new(n_objects: usize, gain: f64) -> Self {
+        Self {
+            topology: PairTopology::new(n_objects),
+            gain,
+        }
+    }
+}
+
+impl Interaction<1> for ConstantPairPush {
+    /// Annotation:
+    /// - Purpose: Executes `topology` logic.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    fn topology(&self) -> &PairTopology {
+        &self.topology
+    }
+
+    /// Annotation:
+    /// - Purpose: Executes `topology_mut` logic.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    fn topology_mut(&mut self) -> &mut PairTopology {
+        &mut self.topology
+    }
+
+    /// Annotation:
+    /// - Purpose: Executes `accumulate_acc` logic.
+    /// - Parameters:
+    ///   - `objects` (`&mut PhysObj<1>`): Parameter of type `&mut PhysObj<1>` used by `accumulate_acc`.
+    fn accumulate_acc(&self, objects: &mut PhysObj<1>) -> Result<(), InteractionError> {
+        for &e in self.topology.active_edges() {
+            let (i, j) = self.topology.edge_pair(e)?;
+
+            if !objects.is_alive(i)? || !objects.is_alive(j)? {
+                continue;
+            }
+
+            objects.acc_of_mut(i)?[0] += self.gain;
+            objects.acc_of_mut(j)?[0] -= self.gain;
+        }
+        Ok(())
+    }
+}
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `pair_topology_insert_delete_and_adj_matrix` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn pair_topology_insert_delete_and_adj_matrix() {
     let mut topo = PairTopology::new(4);
 
@@ -35,6 +96,11 @@ fn pair_topology_insert_delete_and_adj_matrix() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `pair_topology_rejects_invalid_edges` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn pair_topology_rejects_invalid_edges() {
     let mut topo = PairTopology::new(3);
 
@@ -53,35 +119,40 @@ fn pair_topology_rejects_invalid_edges() {
 }
 
 #[test]
-fn spring_interaction_accumulate_acc_1d_two_body() {
+/// Annotation:
+/// - Purpose: Executes `interaction_trait_step_accumulates_through_topology` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
+fn interaction_trait_step_accumulates_through_topology() {
     let mut obj = PhysObj::<1>::empty(2);
-    obj.set_pos(0, &[0.0]).unwrap();
-    obj.set_pos(1, &[2.0]).unwrap();
-    obj.set_inv_mass(0, 1.0).unwrap();
-    obj.set_inv_mass(1, 1.0).unwrap();
     obj.clear_acc();
 
-    let mut spring = SpringInteraction::new(2);
-    spring.add_edge(0, 1, 2.0, 1.0).unwrap();
+    let mut inter = ConstantPairPush::new(2, 2.5);
+    inter.topology_mut().insert(0, 1).unwrap();
 
-    spring.accumulate_acc(&mut obj).unwrap();
+    inter.step(&mut obj).unwrap();
 
-    // norm = 2, l0 = 1, k = 2 -> f_mag = -2
-    // u(0->1) = +1 => a0 += -2, a1 -= -2 = +2
-    assert_eq!(obj.acc_of(0).unwrap(), [-2.0].as_slice());
-    assert_eq!(obj.acc_of(1).unwrap(), [2.0].as_slice());
+    assert_eq!(obj.acc_of(0).unwrap(), [2.5].as_slice());
+    assert_eq!(obj.acc_of(1).unwrap(), [-2.5].as_slice());
 }
 
 #[test]
-fn spring_interaction_add_edge_updates_existing_params() {
-    let mut spring = SpringInteraction::new(3);
-    let e0 = spring.add_edge(0, 2, 3.0, 1.2).unwrap();
-    let e1 = spring.add_edge(2, 0, 4.0, 2.2).unwrap();
+/// Annotation:
+/// - Purpose: Executes `interaction_trait_skips_dead_objects_when_law_chooses_to` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
+fn interaction_trait_skips_dead_objects_when_law_chooses_to() {
+    let mut obj = PhysObj::<1>::empty(2);
+    obj.clear_acc();
+    obj.kill_object(1).unwrap();
 
-    assert_eq!(e0, e1);
-    assert_eq!(spring.active_count(), 1);
+    let mut inter = ConstantPairPush::new(2, 1.0);
+    inter.topology_mut().insert(0, 1).unwrap();
 
-    let (k, l0) = spring.edge_params(e0).unwrap();
-    assert_eq!(k, 4.0);
-    assert_eq!(l0, 2.2);
+    inter.step(&mut obj).unwrap();
+
+    assert_eq!(obj.acc_of(0).unwrap(), [0.0].as_slice());
+    assert_eq!(obj.acc_of(1).unwrap(), [0.0].as_slice());
 }

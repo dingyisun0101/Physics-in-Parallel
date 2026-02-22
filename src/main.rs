@@ -1,7 +1,17 @@
 
+/// Annotation:
+/// - Purpose: Executes `main` logic for this module.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn main() {}
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `vector_list_rand` logic for this module.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn vector_list_rand() {
         use physics_in_parallel::math::{
         tensor::rank_2::{ 

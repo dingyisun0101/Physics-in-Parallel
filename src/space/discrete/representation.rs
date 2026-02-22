@@ -65,6 +65,11 @@ pub trait VacancyValue: Sized + Clone {
 
     // Optional ergonomic non-const helper:
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `vacancy` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): This function takes no explicit parameters.
     fn vacancy() -> Self { Self::VACANCY }
 }
 
@@ -108,6 +113,12 @@ pub struct GridConfig {
 impl GridConfig {
     /// Create a new config. Panics if `d == 0` or `l == 0`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `d` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `l` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `periodic` (`bool`): Parameter of type `bool` used by `new`.
     pub fn new(d: usize, l: usize, periodic: bool) -> Self {
         assert!(d > 0 && l > 0, "GridConfig requires d>0 and l>0; got d={d}, l={l}");
         Self { d, l, periodic }
@@ -115,12 +126,20 @@ impl GridConfig {
 
     /// Total site count `l^d`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `num_sites` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn num_sites(&self) -> usize {
         self.l.pow(self.d as u32)
     }
 
     /// Return `[d, l]`. (Metadata shape; **not** the flattened length.)
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn shape(&self) -> [usize; 2] { [self.d, self.l] }
 }
 
@@ -173,6 +192,11 @@ pub struct Grid<T: Scalar> {
 
 impl<T: Scalar> Grid<T> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarry` input.
+    /// - Parameters:
+    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
+    ///   - `periodic` (`bool`): Parameter of type `bool` used by `from_ndarry`.
     pub fn from_ndarry(array: &ArrayD<T>, periodic: bool) -> Self {
         let owned = array.to_owned();
         let shape = owned.shape().to_vec();
@@ -191,6 +215,10 @@ impl<T: Scalar> Grid<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> ArrayD<T> {
         let shape = vec![self.cfg.l; self.cfg.d];
         ArrayD::from_shape_vec(IxDyn(&shape), self.data.clone())
@@ -207,12 +235,21 @@ impl<T: Scalar> Grid<T> {
 impl<T: Scalar + VacancyValue> Grid<T> {
     /// The **sentinel** for vacancy for `T`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `vacancy` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): This function takes no explicit parameters.
     pub fn vacancy() -> T { T::vacancy() }
 
     /// Mark a single coordinate as **vacant**.
     ///
     /// Negative coordinates are **wrapped** if periodic, or **clamped** otherwise.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `vacant` value.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     pub fn set_vacant(&mut self, coord: &[isize]) {
         let i = self.coord_to_index(coord);
         self.data[i] = Self::vacancy();
@@ -223,6 +260,10 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     /// > If your `VacancyValue` is a floating sentinel (e.g., `0.0`),
     /// > this uses **exact equality** to the sentinel.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Checks whether `vacant` condition is true.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     pub fn is_vacant(&self, coord: &[isize]) -> bool {
         let i = self.coord_to_index(coord);
         self.data[i] == Self::vacancy()
@@ -230,6 +271,10 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
     /// Fill the entire grid with the **vacancy** sentinel (parallel).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `fill_vacancy` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn fill_vacancy(&mut self) {
         let v = Self::vacancy();
         self.data.par_iter_mut().for_each(|x| *x = v.clone());
@@ -255,6 +300,11 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     - `Dispersal { val }`: set the **center** site to `val` (others remain default).
     */
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `cfg` (`GridConfig`): Parameter of type `GridConfig` used by `new`.
+    ///   - `init_method` (`GridInitMethod<T>`): Parameter of type `GridInitMethod<T>` used by `new`.
     pub fn new(cfg: GridConfig, init_method: GridInitMethod<T>) -> Self {
         let mut data = vec![T::default(); cfg.num_sites()];
 
@@ -293,10 +343,18 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
     /// Return a compact metadata “shape” as `[d, l]`.
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn shape(&self) -> [usize; 2] { [self.cfg.d, self.cfg.l] }
 
     /// **Wrap** (periodic) or **clamp** (non-periodic) a single coordinate into `[0, l-1]`.
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Executes `wrap_or_clamp` logic for this module.
+    /// - Parameters:
+    ///   - `c` (`isize`): Parameter of type `isize` used by `wrap_or_clamp`.
     fn wrap_or_clamp(&self, c: isize) -> usize {
         let l = self.cfg.l as isize;
         if self.cfg.periodic {
@@ -312,6 +370,10 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     /// # Panics
     /// - If rank mismatch.
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Executes `coord_to_index` logic for this module.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     fn coord_to_index(&self, coord: &[isize]) -> usize {
         debug_assert_eq!(coord.len(), self.cfg.d, "rank mismatch: coord={:?}, d={}", coord, self.cfg.d);
         let l = self.cfg.l;
@@ -333,16 +395,32 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
 impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     /// Borrow backing data.
+    /// Annotation:
+    /// - Purpose: Executes `data` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn data(&self) -> &[T] { &self.data }
 
     /// Return metadata dims `[d, l]` (total sites is `l^d`).
+    /// Annotation:
+    /// - Purpose: Executes `dims` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn dims(&self) -> Vec<usize> { vec![self.cfg.d, self.cfg.l] }
 
     /// Total site count `l^d`.
+    /// Annotation:
+    /// - Purpose: Executes `linear_size` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn linear_size(&self) -> usize { self.data.len() }
 
     /// Safe read at multi-index `coord`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     fn get(&self, coord: &[isize]) -> &T {
         let i = self.coord_to_index(coord);
         &self.data[i]
@@ -350,6 +428,10 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
 
     /// Safe mutable read at multi-index `coord`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the `mut` value.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     fn get_mut(&mut self, coord: &[isize]) -> &mut T {
         let i = self.coord_to_index(coord);
         &mut self.data[i]
@@ -357,6 +439,11 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
 
     /// Safe write at multi-index `coord`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set(&mut self, coord: &[isize], val: T) {
         let i = self.coord_to_index(coord);
         self.data[i] = val;
@@ -364,6 +451,10 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
 
     /// Parallel fill of all sites with `val`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `all` value.
+    /// - Parameters:
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set_all(&mut self, val: T) {
         self.data.par_iter_mut().for_each(|x| *x = val.clone());
     }
@@ -374,6 +465,11 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     /// ```json
     /// { "shape": [d, l_target], "data": [ ... length = l_target^d ... ] }
     /// ```
+    /// Annotation:
+    /// - Purpose: Executes `save` logic for this module.
+    /// - Parameters:
+    ///   - `output_file` (`&PathBuf`): Parameter of type `&PathBuf` used by `save`.
+    ///   - `l_target` (`usize`): Parameter of type `usize` used by `save`.
     fn save(&self, output_file: &PathBuf, l_target: usize) -> std::io::Result<()> {
         save_grid(self, l_target, output_file)
     }
@@ -397,6 +493,10 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     categorical grids (e.g., **occupancy** / **cell types**).
     */
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `rescale` logic for this module.
+    /// - Parameters:
+    ///   - `l_new` (`usize`): Parameter of type `usize` used by `rescale`.
     pub fn rescale(&self, l_new: usize) -> Self {
         if l_new >= self.cfg.l {
             return self.clone();

@@ -45,6 +45,14 @@ pub struct RandPairGenerator {
 impl RandPairGenerator {
     /// Build a generator by constructing the kernel and allocating caches.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `kernel_type` (`KernelType`): Parameter of type `KernelType` used by `new`.
+    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `num_pairs` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `source_coords_filler` (`Option<TensorRandFiller>`): Parameter of type `Option<TensorRandFiller>` used by `new`.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     pub fn new(
         kernel_type: KernelType,
         dim: usize,
@@ -73,6 +81,10 @@ impl RandPairGenerator {
 
     /// Populate the internal caches with a new random batch.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `refresh` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn refresh(&mut self) {
         gen_random_idx_pairs_by_kernel(
             self.kernel.as_ref(),
@@ -84,7 +96,15 @@ impl RandPairGenerator {
     }
 
     /// Accessors if needed downstream
+    /// Annotation:
+    /// - Purpose: Executes `sources` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn sources(&self) -> &VectorList<isize> { &self.source_coords_cache }
+    /// Annotation:
+    /// - Purpose: Executes `targets` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn targets(&self) -> &VectorList<isize> { &self.target_coords_cache }
 }
 
@@ -96,6 +116,14 @@ impl RandPairGenerator {
 
 /// Core routine: optional source randomization → displacement sampling → compose.
 #[inline]
+/// Annotation:
+/// - Purpose: Executes `gen_random_idx_pairs_by_kernel` logic for this module.
+/// - Parameters:
+///   - `kernel` (`&dyn Kernel`): Parameter of type `&dyn Kernel` used by `gen_random_idx_pairs_by_kernel`.
+///   - `source_coords` (`&mut VectorList<isize>`): Coordinate collection used for spatial addressing.
+///   - `source_coords_filler` (`&mut Option<TensorRandFiller>`): Parameter of type `&mut Option<TensorRandFiller>` used by `gen_random_idx_pairs_by_kernel`.
+///   - `target_coords` (`&mut VectorList<isize>`): Coordinate collection used for spatial addressing.
+///   - `displacement_cache` (`&mut DispCache`): Parameter of type `&mut DispCache` used by `gen_random_idx_pairs_by_kernel`.
 fn gen_random_idx_pairs_by_kernel(
     kernel: &dyn Kernel,
     source_coords: &mut VectorList<isize>,

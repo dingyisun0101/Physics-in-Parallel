@@ -34,6 +34,10 @@ pub struct SliceView<'a, T> {
 }
 impl<'a, T> Deref for SliceView<'a, T> {
     type Target = [T];
+    /// Annotation:
+    /// - Purpose: Executes `deref` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref(&self) -> &Self::Target { self.slice }
 }
 
@@ -43,6 +47,10 @@ pub struct SliceViewCached<T> {
 }
 impl<T> Deref for SliceViewCached<T> {
     type Target = [T];
+    /// Annotation:
+    /// - Purpose: Executes `deref` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref(&self) -> &Self::Target { &self.buf }
 }
 
@@ -53,6 +61,10 @@ pub enum MatrixSlice<'a, T> {
 }
 impl<'a, T> Deref for MatrixSlice<'a, T> {
     type Target = [T];
+    /// Annotation:
+    /// - Purpose: Executes `deref` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref(&self) -> &Self::Target {
         match self {
             MatrixSlice::Borrowed(v) => v,
@@ -70,12 +82,24 @@ pub struct ColMutGuard<'a, T: Scalar> {
 }
 impl<'a, T: Scalar> Deref for ColMutGuard<'a, T> {
     type Target = [T];
+    /// Annotation:
+    /// - Purpose: Executes `deref` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref(&self) -> &Self::Target { &self.buf }
 }
 impl<'a, T: Scalar> DerefMut for ColMutGuard<'a, T> {
+    /// Annotation:
+    /// - Purpose: Executes `deref_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref_mut(&mut self) -> &mut Self::Target { &mut self.buf }
 }
 impl<'a, T: Scalar> Drop for ColMutGuard<'a, T> {
+    /// Annotation:
+    /// - Purpose: Executes `drop` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn drop(&mut self) {
         // SAFETY: guard is created from `&mut Matrix<T>` and cannot outlive it.
         let m = unsafe { &mut *self.parent };
@@ -92,6 +116,10 @@ pub enum MatrixSliceMut<'a, T: Scalar> {
 }
 impl<'a, T: Scalar> Deref for MatrixSliceMut<'a, T> {
     type Target = [T];
+    /// Annotation:
+    /// - Purpose: Executes `deref` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref(&self) -> &Self::Target {
         match self {
             MatrixSliceMut::Borrowed(s) => s,
@@ -100,6 +128,10 @@ impl<'a, T: Scalar> Deref for MatrixSliceMut<'a, T> {
     }
 }
 impl<'a, T: Scalar> DerefMut for MatrixSliceMut<'a, T> {
+    /// Annotation:
+    /// - Purpose: Executes `deref_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             MatrixSliceMut::Borrowed(s) => s,
@@ -120,6 +152,11 @@ pub struct Matrix<T: Scalar> {
 }
 
 #[inline(always)]
+/// Annotation:
+/// - Purpose: Executes `wrap_axis_index` logic for this module.
+/// - Parameters:
+///   - `idx` (`isize`): Index argument selecting an element or slot.
+///   - `dim` (`usize`): Parameter of type `usize` used by `wrap_axis_index`.
 fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
@@ -130,6 +167,11 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
 
 impl<T: Scalar> Matrix<T> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `empty` logic for this module.
+    /// - Parameters:
+    ///   - `rows` (`usize`): Parameter of type `usize` used by `empty`.
+    ///   - `cols` (`usize`): Parameter of type `usize` used by `empty`.
     pub fn empty(rows: usize, cols: usize) -> Self {
         assert!(rows > 0 && cols > 0, "Matrix::empty: shape must be nonzero");
         let tensor = Tensor2D::<T>::empty(rows, cols);
@@ -137,6 +179,10 @@ impl<T: Scalar> Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `tensor` input.
+    /// - Parameters:
+    ///   - `src` (`impl TensorTrait<T>`): Parameter of type `impl TensorTrait<T>` used by `from_tensor`.
     pub fn from_tensor(src: impl TensorTrait<T>) -> Self {
         let shape = src.shape();
         assert!(shape.len() == 2, "Matrix::from_tensor: source must be rank-2");
@@ -151,23 +197,61 @@ impl<T: Scalar> Matrix<T> {
         m
     }
 
+    /// Annotation:
+    /// - Purpose: Executes `rows` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn rows(&self) -> usize { self.rows }
+    /// Annotation:
+    /// - Purpose: Executes `cols` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn cols(&self) -> usize { self.cols }
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn shape(&self) -> [usize; 2] { [self.rows, self.cols] }
+    /// Annotation:
+    /// - Purpose: Executes `backend` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn backend(&self) -> &Tensor2D<T> { &self.tensor }
+    /// Annotation:
+    /// - Purpose: Executes `backend_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn backend_mut(&mut self) -> &mut Tensor2D<T> { &mut self.tensor }
 
     /// Dense backend view (compat with older APIs that needed a dense tensor ref).
+    /// Annotation:
+    /// - Purpose: Executes `dense_backend` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn dense_backend(&self) -> &DenseTensor<T> { self.tensor.backend() }
+    /// Annotation:
+    /// - Purpose: Executes `dense_backend_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn dense_backend_mut(&mut self) -> &mut DenseTensor<T> { self.tensor.backend_mut() }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `assert_compat` logic for this module.
+    /// - Parameters:
+    ///   - `rhs` (`&Self`): Parameter of type `&Self` used by `assert_compat`.
     fn assert_compat(&self, rhs: &Self) {
         assert_eq!(self.rows, rhs.rows, "Matrix row mismatch: {} vs {}", self.rows, rhs.rows);
         assert_eq!(self.cols, rhs.cols, "Matrix col mismatch: {} vs {}", self.cols, rhs.cols);
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `backend` input.
+    /// - Parameters:
+    ///   - `tensor` (`Tensor2D<T>`): Tensor input used by this operation.
+    ///   - `rows` (`usize`): Parameter of type `usize` used by `from_backend`.
+    ///   - `cols` (`usize`): Parameter of type `usize` used by `from_backend`.
     pub fn from_backend(tensor: Tensor2D<T>, rows: usize, cols: usize) -> Self {
         assert_eq!(tensor.shape(), [rows, cols], "Matrix::from_backend: shape mismatch");
         Self { tensor, rows, cols }
@@ -180,6 +264,10 @@ impl<T: Scalar> Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Array2<T>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarray(array: &Array2<T>) -> Self {
         let tensor = Tensor2D::<T>::from_ndarray(array);
         let [rows, cols] = tensor.shape();
@@ -188,21 +276,40 @@ impl<T: Scalar> Matrix<T> {
 
     #[deprecated(note = "use from_ndarray")]
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarry` input.
+    /// - Parameters:
+    ///   - `array` (`&Array2<T>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarry(array: &Array2<T>) -> Self {
         Self::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<T> {
         self.tensor.to_ndarray()
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
     pub fn get(&self, i: isize, j: isize) -> T where T: Copy {
         self.tensor.get(i, j)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     pub fn set(&mut self, i: isize, j: isize, val: T) {
         self.tensor.set(i, j, val)
     }
@@ -248,15 +355,34 @@ impl<T: Scalar> Matrix<T> {
 
 impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `rows` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn rows(&self) -> usize { self.rows }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `cols` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn cols(&self) -> usize { self.cols }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
     fn get(&self, i: isize, j: isize) -> T { self.tensor.get(i, j) }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set(&mut self, i: isize, j: isize, val: T) { self.tensor.set(i, j, val) }
 
     #[inline]
@@ -276,21 +402,43 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `row_from_slice` value.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_row_from_slice`.
     fn set_row_from_slice(&mut self, i: isize, vals: &[T]) {
         assert_eq!(vals.len(), self.cols, "set_row_from_slice: len mismatch");
         self.row_view_mut(i).copy_from_slice(vals);
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `col_from_slice` value.
+    /// - Parameters:
+    ///   - `j` (`isize`): Secondary index argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_col_from_slice`.
     fn set_col_from_slice(&mut self, j: isize, vals: &[T]) {
         self.tensor.set_col_from_slice(j, vals)
     }
 
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn print(&self) { self.tensor.print(); }
 
+    /// Annotation:
+    /// - Purpose: Converts this value into `string` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     #[inline] fn to_string(&self) { self.tensor.to_string(); }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `transpose` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn transpose(&mut self)
     where
         T: Copy,
@@ -309,6 +457,11 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `clamp` logic for this module.
+    /// - Parameters:
+    ///   - `min_val` (`T`): Value provided by caller for write/update behavior.
+    ///   - `max_val` (`T`): Value provided by caller for write/update behavior.
     fn clamp(&mut self, min_val: T, max_val: T)
     where
         T: Scalar + PartialOrd,
@@ -323,6 +476,10 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `normalize` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn normalize(&mut self)
     where
         T: Copy + Send + Sync + PartialEq
@@ -338,6 +495,10 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `normalize_by_max` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn normalize_by_max(&mut self)
     where
         T: Scalar + PartialOrd
@@ -439,11 +600,19 @@ impl<T: Scalar> NdarrayConvert for Matrix<T> {
     type NdArray = Array2<T>;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         Matrix::<T>::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         Matrix::<T>::to_ndarray(self)
     }

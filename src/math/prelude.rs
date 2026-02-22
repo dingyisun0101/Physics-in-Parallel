@@ -6,31 +6,17 @@ Import with:
 */
 
 // Scalar traits
-pub use crate::math::scalar::{Scalar, ScalarSerde};
+pub use crate::math::{Scalar, ScalarSerde};
 
 // Common conversion trait
-pub use crate::math::ndarray_convert::NdarrayConvert;
+pub use crate::math::NdarrayConvert;
 
 // Unified tensor front API
-pub use crate::math::tensor::core::{
-    Backend,
-    Dense as DenseBackend,
-    Sparse as SparseBackend,
-    Tensor,
-};
+pub use crate::math::tensor::{Backend, Dense as DenseBackend, Sparse as SparseBackend, Tensor};
 
 // Tensor utility traits/types
 pub use crate::math::tensor::core::dense_rand::{RandType, TensorRandFiller};
 pub use crate::math::tensor::core::tensor_trait::TensorTrait;
 
 // Rank-2 tensor and matrix/vector abstractions
-pub use crate::math::tensor::rank_2::dense::Tensor2D;
-pub use crate::math::tensor::rank_2::matrix::dense::Matrix;
-pub use crate::math::tensor::rank_2::matrix::matrix_trait::MatrixTrait;
-pub use crate::math::tensor::rank_2::vector_list::VectorList;
-pub use crate::math::tensor::rank_2::vector_list::rand::{
-    HaarVectors,
-    NNVectors,
-    VectorListRand,
-};
-
+pub use crate::math::tensor::rank_2::{HaarVectors, Matrix, MatrixTrait, NNVectors, Tensor2D, VectorList, VectorListRand};

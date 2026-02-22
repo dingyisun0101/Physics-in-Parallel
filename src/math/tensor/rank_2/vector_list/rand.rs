@@ -44,9 +44,19 @@ pub trait VectorListRand {
     type Elem;
 
     /// Allocate an empty `[dim, n]` `VectorList` and any internal buffers.
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self where Self: Sized;
 
     /// Refill the internal `VectorList` in-place, keeping shape `[dim, n]`.
+    /// Annotation:
+    /// - Purpose: Executes `refresh` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn refresh(&mut self);
 }
 
@@ -68,6 +78,12 @@ pub struct HaarVectors {
 impl VectorListRand for HaarVectors {
     type Elem = f64;
 
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
@@ -81,6 +97,10 @@ impl VectorListRand for HaarVectors {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `refresh` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn refresh(&mut self) {
         // 1) i.i.d. Gaussian entries on internal flat storage
         self.filler.refresh(&mut self.vl.as_tensor_mut());
@@ -96,6 +116,10 @@ impl HaarVectors {
     /// The random filler is initialized to the standard Haar refresh distribution
     /// (`Normal { mean: 0, std: 1 }`), so a subsequent `refresh()` remains valid.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Array2<f64>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarray(array: &Array2<f64>) -> Self {
         let vl = VectorList::<f64>::from_ndarray(array);
         let dim = vl.dim();
@@ -109,6 +133,10 @@ impl HaarVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<f64> {
         self.vl.to_ndarray()
     }
@@ -118,11 +146,19 @@ impl NdarrayConvert for HaarVectors {
     type NdArray = Array2<f64>;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         HaarVectors::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         HaarVectors::to_ndarray(self)
     }
@@ -147,6 +183,12 @@ pub struct NNVectors {
 impl VectorListRand for NNVectors {
     type Elem = isize;
 
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
+    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "NNVectors::new: dim must be > 0");
         assert!(n > 0, "NNVectors::new: n must be > 0");
@@ -167,6 +209,10 @@ impl VectorListRand for NNVectors {
 
     /// Randomize codes and decode into one-hot ±1 vectors.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `refresh` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn refresh(&mut self) {
         // 1) sample codes in [0, 2*dim)
         self.code_filler.refresh(&mut self.code_buf);
@@ -195,6 +241,10 @@ impl NNVectors {
     ///
     /// The random code buffer/filler are initialized with defaults so `refresh()` remains valid.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Array2<isize>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarray(array: &Array2<isize>) -> Self {
         let vl = VectorList::<isize>::from_ndarray(array);
         let dim = vl.dim();
@@ -209,6 +259,10 @@ impl NNVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<isize> {
         self.vl.to_ndarray()
     }
@@ -218,11 +272,19 @@ impl NdarrayConvert for NNVectors {
     type NdArray = Array2<isize>;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         NNVectors::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         NNVectors::to_ndarray(self)
     }

@@ -39,17 +39,37 @@ pub enum KernelType {
 }
 
 pub trait Kernel: Send + Sync {
+    /// Annotation:
+    /// - Purpose: Executes `sample` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `sample`.
     fn sample(&self, n: usize) -> Vec<f64>;
+    /// Annotation:
+    /// - Purpose: Executes `kind` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn kind(&self) -> KernelType;
+    /// Annotation:
+    /// - Purpose: Executes `boxed_clone` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn boxed_clone(&self) -> Box<dyn Kernel>;
 }
 
 impl Clone for Box<dyn Kernel> {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `clone` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn clone(&self) -> Self { self.boxed_clone() }
 }
 
 #[inline]
+/// Annotation:
+/// - Purpose: Executes `create_kernel` logic for this module.
+/// - Parameters:
+///   - `kernel_type` (`KernelType`): Parameter of type `KernelType` used by `create_kernel`.
 pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
     match kernel_type {
         KernelType::PowerLaw { l, c, mu } => Box::new(PowerLawKernel::new(l, c, mu)),
@@ -73,6 +93,12 @@ pub struct PowerLawKernel {
 
 impl PowerLawKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `l` (`f64`): Parameter of type `f64` used by `new`.
+    ///   - `c` (`f64`): Parameter of type `f64` used by `new`.
+    ///   - `mu` (`f64`): Parameter of type `f64` used by `new`.
     pub fn new(l: f64, c: f64, mu: f64) -> Self {
         assert!(l > c && c > 0.0, "PowerLawKernel: require l > c > 0");
         assert!(mu > 0.0, "PowerLawKernel: require mu > 0");
@@ -85,6 +111,10 @@ impl PowerLawKernel {
 
 impl Kernel for PowerLawKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `sample` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `sample`.
     fn sample(&self, n: usize) -> Vec<f64> {
         // Read params from `self.kind` (no duplicates).
         let (mu, l_pow, c_pow, c) = match self.kind {
@@ -108,9 +138,17 @@ impl Kernel for PowerLawKernel {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `kind` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn kind(&self) -> KernelType { self.kind }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `boxed_clone` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
 }
 
@@ -122,6 +160,11 @@ pub struct UniformKernel {
 
 impl UniformKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `l` (`f64`): Parameter of type `f64` used by `new`.
+    ///   - `c` (`f64`): Parameter of type `f64` used by `new`.
     pub fn new(l: f64, c: f64) -> Self {
         assert!(l > c, "UniformKernel: require l > c");
         Self { kind: KernelType::Uniform { l, c } }
@@ -130,6 +173,10 @@ impl UniformKernel {
 
 impl Kernel for UniformKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `sample` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `sample`.
     fn sample(&self, n: usize) -> Vec<f64> {
         let (low, high) = match self.kind {
             KernelType::Uniform { l, c } => (c, l),
@@ -146,9 +193,17 @@ impl Kernel for UniformKernel {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `kind` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn kind(&self) -> KernelType { self.kind }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `boxed_clone` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
 }
 
@@ -162,6 +217,10 @@ pub struct NearestNeighborKernel {
 
 impl NearestNeighborKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `d` (`usize`): Parameter of type `usize` used by `new`.
     pub fn new(d: usize) -> Self {
         assert!(d > 0, "NearestNeighborKernel: require d >= 1");
         let kind = KernelType::NearestNeighbor { d };
@@ -172,6 +231,10 @@ impl NearestNeighborKernel {
 
 impl Kernel for NearestNeighborKernel {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `sample` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `sample`.
     fn sample(&self, n: usize) -> Vec<f64> {
         // Pull `d` if you need it, but sampling only needs 2d as f64.
         let _d = match self.kind {
@@ -189,8 +252,16 @@ impl Kernel for NearestNeighborKernel {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `kind` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn kind(&self) -> KernelType { self.kind }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `boxed_clone` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
 }

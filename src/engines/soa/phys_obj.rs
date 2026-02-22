@@ -1,6 +1,6 @@
 /*!
 `PhysObj` is the core state container for particle/object-based simulations in
-`engines::soa_engine`.
+`engines::soa`.
 
 Design goals
 ------------
@@ -92,36 +92,61 @@ pub struct AttrSchema {
 impl AttrSchema {
     /// Create an empty schema.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): This function takes no explicit parameters.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Number of registered attributes.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the current length/size.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn len(&self) -> usize {
         self.metas.len()
     }
 
     /// True iff no attributes are registered.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Checks whether `empty` condition is true.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn is_empty(&self) -> bool {
         self.metas.is_empty()
     }
 
     /// Immutable view of all metadata records.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `metas` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn metas(&self) -> &[AttrMeta] {
         &self.metas
     }
 
     /// Lookup attribute ID by name.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `id_of` logic for this module.
+    /// - Parameters:
+    ///   - `name` (`&str`): Name key used for lookup/registration behavior.
     pub fn id_of(&self, name: &str) -> Option<AttrId> {
         self.name_to_id.get(name).copied()
     }
 
     /// Immutable metadata lookup by ID.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `meta` logic for this module.
+    /// - Parameters:
+    ///   - `attr` (`AttrId`): Attribute identifier used to access metadata/data.
     pub fn meta(&self, attr: AttrId) -> Option<&AttrMeta> {
         self.metas.get(attr)
     }
@@ -129,6 +154,12 @@ impl AttrSchema {
     /// Register a new attribute and return its ID.
     ///
     /// Invariant: names are unique and IDs are stable append-only indices.
+    /// Annotation:
+    /// - Purpose: Executes `register` logic for this module.
+    /// - Parameters:
+    ///   - `name` (`impl Into<String>`): Name key used for lookup/registration behavior.
+    ///   - `default` (`f64`): Parameter of type `f64` used by `register`.
+    ///   - `note` (`Option<String>`): Parameter of type `Option<String>` used by `register`.
     pub fn register(
         &mut self,
         name: impl Into<String>,
@@ -221,6 +252,10 @@ impl<const D: usize> PhysObj<D> {
     - `kind` = 0
     - no generic attributes
     */
+    /// Annotation:
+    /// - Purpose: Executes `empty` logic for this module.
+    /// - Parameters:
+    ///   - `n` (`usize`): Parameter of type `usize` used by `empty`.
     pub fn empty(n: usize) -> Self {
         assert!(D > 0, "PhysObj::empty: D must be > 0");
         assert!(n > 0, "PhysObj::empty: n must be > 0");
@@ -249,6 +284,15 @@ impl<const D: usize> PhysObj<D> {
     - all `inv_mass[i]` are finite and strictly positive
     - `pos/vel/acc` each have shape `[D, n]`
     */
+    /// Annotation:
+    /// - Purpose: Builds this value from `core` input.
+    /// - Parameters:
+    ///   - `pos` (`VectorList<f64>`): Parameter of type `VectorList<f64>` used by `from_core`.
+    ///   - `vel` (`VectorList<f64>`): Parameter of type `VectorList<f64>` used by `from_core`.
+    ///   - `acc` (`VectorList<f64>`): Parameter of type `VectorList<f64>` used by `from_core`.
+    ///   - `inv_mass` (`Vec<f64>`): Parameter of type `Vec<f64>` used by `from_core`.
+    ///   - `alive` (`Vec<bool>`): Parameter of type `Vec<bool>` used by `from_core`.
+    ///   - `kind` (`Vec<ObjKind>`): Kind/tag input controlling strategy or variant selection.
     pub fn from_core(
         pos: VectorList<f64>,
         vel: VectorList<f64>,
@@ -321,30 +365,51 @@ impl<const D: usize> PhysObj<D> {
 
     /// Compile-time spatial dimension `D`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `dim` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): This function takes no explicit parameters.
     pub const fn dim() -> usize {
         D
     }
 
     /// Number of objects tracked by this container.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the current length/size.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn len(&self) -> usize {
         self.n
     }
 
     /// True iff there are no objects.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Checks whether `empty` condition is true.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
 
     /// Number of registered generic attributes.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `num_attrs` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn num_attrs(&self) -> usize {
         self.attr_schema.len()
     }
 
     /// Borrow immutable attribute schema.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `attr_schema` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn attr_schema(&self) -> &AttrSchema {
         &self.attr_schema
     }
@@ -355,6 +420,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Immutable position column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `pos_of` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn pos_of(&self, obj: ObjId) -> Result<&[f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.pos.get_vector(obj as isize))
@@ -362,6 +431,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Mutable position column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `pos_of_mut` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn pos_of_mut(&mut self, obj: ObjId) -> Result<&mut [f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.pos.get_vector_mut(obj as isize))
@@ -369,6 +442,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Immutable velocity column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `vel_of` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn vel_of(&self, obj: ObjId) -> Result<&[f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.vel.get_vector(obj as isize))
@@ -376,6 +453,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Mutable velocity column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `vel_of_mut` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn vel_of_mut(&mut self, obj: ObjId) -> Result<&mut [f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.vel.get_vector_mut(obj as isize))
@@ -383,6 +464,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Immutable acceleration column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `acc_of` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn acc_of(&self, obj: ObjId) -> Result<&[f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.acc.get_vector(obj as isize))
@@ -390,12 +475,21 @@ impl<const D: usize> PhysObj<D> {
 
     /// Mutable acceleration column view for object `obj` (length `D`).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `acc_of_mut` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn acc_of_mut(&mut self, obj: ObjId) -> Result<&mut [f64], PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.acc.get_vector_mut(obj as isize))
     }
 
     /// Set full position vector for object `obj`.
+    /// Annotation:
+    /// - Purpose: Sets the `pos` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`&[f64]`): Value provided by caller for write/update behavior.
     pub fn set_pos(&mut self, obj: ObjId, value: &[f64]) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         if value.len() != D {
@@ -409,6 +503,11 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Set full velocity vector for object `obj`.
+    /// Annotation:
+    /// - Purpose: Sets the `vel` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`&[f64]`): Value provided by caller for write/update behavior.
     pub fn set_vel(&mut self, obj: ObjId, value: &[f64]) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         if value.len() != D {
@@ -422,6 +521,11 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Set full acceleration vector for object `obj`.
+    /// Annotation:
+    /// - Purpose: Sets the `acc` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`&[f64]`): Value provided by caller for write/update behavior.
     pub fn set_acc(&mut self, obj: ObjId, value: &[f64]) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         if value.len() != D {
@@ -436,12 +540,21 @@ impl<const D: usize> PhysObj<D> {
 
     /// Immutable inverse-mass scalar for object `obj`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `inv_mass_of` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn inv_mass_of(&self, obj: ObjId) -> Result<f64, PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.inv_mass[obj])
     }
 
     /// Update inverse mass for object `obj`. Must be finite and > 0.
+    /// Annotation:
+    /// - Purpose: Sets the `inv_mass` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`f64`): Value provided by caller for write/update behavior.
     pub fn set_inv_mass(&mut self, obj: ObjId, value: f64) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         if !value.is_finite() || value <= 0.0 {
@@ -456,6 +569,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Read object liveness flag.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Checks whether `alive` condition is true.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn is_alive(&self, obj: ObjId) -> Result<bool, PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.alive[obj])
@@ -463,6 +580,11 @@ impl<const D: usize> PhysObj<D> {
 
     /// Set object liveness flag.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `alive` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`bool`): Value provided by caller for write/update behavior.
     pub fn set_alive(&mut self, obj: ObjId, value: bool) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         self.alive[obj] = value;
@@ -471,6 +593,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Read object kind tag.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `kind_of` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn kind_of(&self, obj: ObjId) -> Result<ObjKind, PhysObjError> {
         self.check_obj(obj)?;
         Ok(self.kind[obj])
@@ -478,6 +604,11 @@ impl<const D: usize> PhysObj<D> {
 
     /// Set object kind tag.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `kind` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `value` (`ObjKind`): Value provided by caller for write/update behavior.
     pub fn set_kind(&mut self, obj: ObjId, value: ObjKind) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         self.kind[obj] = value;
@@ -486,6 +617,10 @@ impl<const D: usize> PhysObj<D> {
 
     /// Zero all acceleration vectors.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `clear_acc` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn clear_acc(&mut self) {
         self.acc.fill(0.0);
     }
@@ -501,6 +636,12 @@ impl<const D: usize> PhysObj<D> {
     - Appends one new column to `attrs` and fills it with the attribute default for all
       existing objects.
     */
+    /// Annotation:
+    /// - Purpose: Executes `register_attr` logic for this module.
+    /// - Parameters:
+    ///   - `name` (`impl Into<String>`): Name key used for lookup/registration behavior.
+    ///   - `default` (`f64`): Parameter of type `f64` used by `register_attr`.
+    ///   - `note` (`Option<String>`): Parameter of type `Option<String>` used by `register_attr`.
     pub fn register_attr(
         &mut self,
         name: impl Into<String>,
@@ -514,11 +655,20 @@ impl<const D: usize> PhysObj<D> {
 
     /// Lookup attribute ID by name.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `attr_id_of` logic for this module.
+    /// - Parameters:
+    ///   - `name` (`&str`): Name key used for lookup/registration behavior.
     pub fn attr_id_of(&self, name: &str) -> Option<AttrId> {
         self.attr_schema.id_of(name)
     }
 
     /// Get attribute value by numeric IDs.
+    /// Annotation:
+    /// - Purpose: Executes `attr` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `attr` (`AttrId`): Attribute identifier used to access metadata/data.
     pub fn attr(&self, obj: ObjId, attr: AttrId) -> Result<f64, PhysObjError> {
         self.check_obj(obj)?;
         self.check_attr(attr)?;
@@ -526,6 +676,12 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Set attribute value by numeric IDs.
+    /// Annotation:
+    /// - Purpose: Sets the `attr` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `attr` (`AttrId`): Attribute identifier used to access metadata/data.
+    ///   - `value` (`f64`): Value provided by caller for write/update behavior.
     pub fn set_attr(&mut self, obj: ObjId, attr: AttrId, value: f64) -> Result<(), PhysObjError> {
         self.check_obj(obj)?;
         self.check_attr(attr)?;
@@ -540,6 +696,11 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Get attribute value by name.
+    /// Annotation:
+    /// - Purpose: Executes `attr_by_name` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `name` (`&str`): Name key used for lookup/registration behavior.
     pub fn attr_by_name(&self, obj: ObjId, name: &str) -> Result<f64, PhysObjError> {
         let attr = self
             .attr_schema
@@ -551,6 +712,12 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Set attribute value by name.
+    /// Annotation:
+    /// - Purpose: Sets the `attr_by_name` value.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
+    ///   - `name` (`&str`): Name key used for lookup/registration behavior.
+    ///   - `value` (`f64`): Value provided by caller for write/update behavior.
     pub fn set_attr_by_name(
         &mut self,
         obj: ObjId,
@@ -580,6 +747,10 @@ impl<const D: usize> PhysObj<D> {
     - `kind = 0`
     - each generic attribute column = registered default
     */
+    /// Annotation:
+    /// - Purpose: Executes `push_object` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn push_object(&mut self) -> ObjId {
         let obj = self.n;
         self.n += 1;
@@ -613,6 +784,10 @@ impl<const D: usize> PhysObj<D> {
     This method does not remove rows immediately; it just toggles `alive = false`.
     Delayed compaction keeps IDs stable for interaction structures that still reference them.
     */
+    /// Annotation:
+    /// - Purpose: Executes `kill_object` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     pub fn kill_object(&mut self, obj: ObjId) -> Result<(), PhysObjError> {
         self.set_alive(obj, false)
     }
@@ -622,6 +797,10 @@ impl<const D: usize> PhysObj<D> {
     // ==========================================================================
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `check_obj` logic for this module.
+    /// - Parameters:
+    ///   - `obj` (`ObjId`): Object identifier or object-related input.
     fn check_obj(&self, obj: ObjId) -> Result<(), PhysObjError> {
         if obj >= self.n {
             return Err(PhysObjError::InvalidObjId { obj, n: self.n });
@@ -630,6 +809,10 @@ impl<const D: usize> PhysObj<D> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `check_attr` logic for this module.
+    /// - Parameters:
+    ///   - `attr` (`AttrId`): Attribute identifier used to access metadata/data.
     fn check_attr(&self, attr: AttrId) -> Result<(), PhysObjError> {
         if attr >= self.attrs.len() {
             return Err(PhysObjError::InvalidAttrId {
@@ -641,6 +824,10 @@ impl<const D: usize> PhysObj<D> {
     }
 
     /// Rebuild all vector fields to shape `[D, new_n]`, preserving previous object values.
+    /// Annotation:
+    /// - Purpose: Executes `resize_vector_fields` logic for this module.
+    /// - Parameters:
+    ///   - `new_n` (`usize`): Parameter of type `usize` used by `resize_vector_fields`.
     fn resize_vector_fields(&mut self, new_n: usize) {
         let old_n = self.pos.num_vectors();
 

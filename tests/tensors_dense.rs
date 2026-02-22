@@ -7,6 +7,11 @@ use physics_in_parallel::math::{
 
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `basic_dense_tensor_demo` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn basic_dense_tensor_demo() {
     // Construct a 2×3 f64 tensor filled with zeros.
     let mut a: Tensor<f64> = Tensor::empty(&[2, 3]);

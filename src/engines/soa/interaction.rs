@@ -1,11 +1,10 @@
 /*!
-`interaction` defines pairwise interaction primitives for `engines::soa_engine`.
+`interaction` defines general pair-interaction primitives for `engines::soa`.
 
 Scope of this module
 --------------------
 1. `PairTopology`: undirected pair-graph over object IDs with fast membership checks.
-2. `Interaction` trait: minimal stepping contract for force accumulation.
-3. `SpringInteraction`: first concrete interaction law (Hooke springs on active edges).
+2. `Interaction` trait: generic stepping contract for force/acceleration accumulation.
 
 Design notes
 ------------
@@ -18,6 +17,7 @@ Design notes
 use ahash::AHashMap;
 
 use crate::math::tensor::rank_2::matrix::dense::Matrix;
+
 use super::phys_obj::{ObjId, PhysObj, PhysObjError};
 
 // ======================================================================================
@@ -40,16 +40,16 @@ pub enum InteractionError {
     SelfEdge { obj: ObjId },
     /// Edge index does not exist.
     InvalidEdgeId { edge: EdgeId, n_edges: usize },
-    /// Non-finite or invalid physics parameter.
-    InvalidParam { field: &'static str, value: f64 },
-    /// Internal parameter vectors and edge arrays diverged in length.
-    ParamLengthMismatch { n_edges: usize, n_k: usize, n_l0: usize },
     /// Lifted error from `PhysObj` accessors.
     PhysObj(PhysObjError),
 }
 
 impl From<PhysObjError> for InteractionError {
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `from` logic for this module.
+    /// - Parameters:
+    ///   - `value` (`PhysObjError`): Value provided by caller for write/update behavior.
     fn from(value: PhysObjError) -> Self {
         Self::PhysObj(value)
     }
@@ -61,6 +61,11 @@ impl From<PhysObjError> for InteractionError {
 
 /// Pack canonicalized `(i, j)` into one `u64` key for hash membership.
 #[inline]
+/// Annotation:
+/// - Purpose: Executes `pack` logic for this module.
+/// - Parameters:
+///   - `i` (`ObjId`): Primary index argument.
+///   - `j` (`ObjId`): Secondary index argument.
 fn pack(i: ObjId, j: ObjId) -> u64 {
     let (a, b) = if i < j { (i, j) } else { (j, i) };
     ((a as u64) << 32) | (b as u64)
@@ -68,6 +73,11 @@ fn pack(i: ObjId, j: ObjId) -> u64 {
 
 /// Canonicalize `(i, j)` as `(min(i,j), max(i,j))`.
 #[inline]
+/// Annotation:
+/// - Purpose: Executes `canonical_pair` logic for this module.
+/// - Parameters:
+///   - `i` (`ObjId`): Primary index argument.
+///   - `j` (`ObjId`): Secondary index argument.
 fn canonical_pair(i: ObjId, j: ObjId) -> (ObjId, ObjId) {
     if i < j { (i, j) } else { (j, i) }
 }
@@ -93,6 +103,10 @@ pub struct PairTopology {
 
 impl PairTopology {
     /// Create an empty topology over object IDs `[0, n_objects)`.
+    /// Annotation:
+    /// - Purpose: Constructs and returns a new instance.
+    /// - Parameters:
+    ///   - `n_objects` (`usize`): Object-state container used by this operation.
     pub fn new(n_objects: usize) -> Self {
         assert!(n_objects > 0, "PairTopology::new: n_objects must be > 0");
         Self {
@@ -106,6 +120,10 @@ impl PairTopology {
 
     /// Number of objects addressable by this topology.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `n_objects` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn n_objects(&self) -> usize {
         self.n_objects
     }
@@ -115,6 +133,10 @@ impl PairTopology {
     /// Existing edge IDs remain unchanged. Caller should guarantee any existing edges are
     /// still valid under the new bound.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Sets the `n_objects` value.
+    /// - Parameters:
+    ///   - `n_objects` (`usize`): Object-state container used by this operation.
     pub fn set_n_objects(&mut self, n_objects: usize) {
         assert!(n_objects > 0, "PairTopology::set_n_objects: n_objects must be > 0");
         self.n_objects = n_objects;
@@ -122,23 +144,39 @@ impl PairTopology {
 
     /// Total number of edge slots ever created (active + inactive).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the current length/size.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn len_edges(&self) -> usize {
         self.edges.len()
     }
 
     /// Number of active edges.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `active_count` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn active_count(&self) -> usize {
         self.active_edges.len()
     }
 
     /// Borrow active edge list.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `active_edges` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn active_edges(&self) -> &[EdgeId] {
         &self.active_edges
     }
 
     /// Get endpoints for edge `e`.
+    /// Annotation:
+    /// - Purpose: Executes `edge_pair` logic for this module.
+    /// - Parameters:
+    ///   - `e` (`EdgeId`): Parameter of type `EdgeId` used by `edge_pair`.
     pub fn edge_pair(&self, e: EdgeId) -> Result<(ObjId, ObjId), InteractionError> {
         self.edges
             .get(e)
@@ -151,23 +189,42 @@ impl PairTopology {
 
     /// Get active edge ID for pair `(i,j)`, if present.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Computes an index mapping for input coordinates.
+    /// - Parameters:
+    ///   - `i` (`ObjId`): Primary index argument.
+    ///   - `j` (`ObjId`): Secondary index argument.
     pub fn index_of(&self, i: ObjId, j: ObjId) -> Option<EdgeId> {
         self.table.get(&pack(i, j)).copied()
     }
 
     /// Fast membership check for active pair.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `contains_pair` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`ObjId`): Primary index argument.
+    ///   - `j` (`ObjId`): Secondary index argument.
     pub fn contains_pair(&self, i: ObjId, j: ObjId) -> bool {
         self.table.contains_key(&pack(i, j))
     }
 
     /// True iff edge index exists and is active.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Checks whether `active_index` condition is true.
+    /// - Parameters:
+    ///   - `e` (`EdgeId`): Parameter of type `EdgeId` used by `is_active_index`.
     pub fn is_active_index(&self, e: EdgeId) -> bool {
         self.pos_in_active.get(e).and_then(|x| *x).is_some()
     }
 
     /// Insert pair `(i, j)` if absent, otherwise return existing edge ID.
+    /// Annotation:
+    /// - Purpose: Inserts data into the underlying structure.
+    /// - Parameters:
+    ///   - `i` (`ObjId`): Primary index argument.
+    ///   - `j` (`ObjId`): Secondary index argument.
     pub fn insert(&mut self, i: ObjId, j: ObjId) -> Result<EdgeId, InteractionError> {
         self.validate_pair(i, j)?;
 
@@ -189,6 +246,11 @@ impl PairTopology {
     }
 
     /// Delete pair `(i, j)` if active.
+    /// Annotation:
+    /// - Purpose: Removes data from the underlying structure.
+    /// - Parameters:
+    ///   - `i` (`ObjId`): Primary index argument.
+    ///   - `j` (`ObjId`): Secondary index argument.
     pub fn delete(&mut self, i: ObjId, j: ObjId) -> Result<(), InteractionError> {
         self.validate_pair(i, j)?;
 
@@ -219,6 +281,10 @@ impl PairTopology {
     - Matrix is symmetric by construction.
     - Diagonal is always `0`.
     */
+    /// Annotation:
+    /// - Purpose: Converts this value into `adj_matrix` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_adj_matrix(&self) -> Matrix<usize> {
         let mut a = Matrix::<usize>::empty(self.n_objects, self.n_objects);
         for &e in &self.active_edges {
@@ -230,6 +296,11 @@ impl PairTopology {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `validate_pair` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`ObjId`): Primary index argument.
+    ///   - `j` (`ObjId`): Secondary index argument.
     fn validate_pair(&self, i: ObjId, j: ObjId) -> Result<(), InteractionError> {
         if i >= self.n_objects {
             return Err(InteractionError::InvalidObjId {
@@ -254,249 +325,45 @@ impl PairTopology {
 // -------------------------------- Interaction trait -----------------------------------
 // ======================================================================================
 
-/// Minimal behavior for an interaction module that can operate on `PhysObj`.
+/// Minimal behavior for a pair interaction module that operates on `PhysObj`.
 pub trait Interaction<const D: usize> {
     /// Immutable topology view.
+    /// Annotation:
+    /// - Purpose: Executes `topology` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn topology(&self) -> &PairTopology;
+
     /// Mutable topology view.
+    /// Annotation:
+    /// - Purpose: Executes `topology_mut` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn topology_mut(&mut self) -> &mut PairTopology;
 
     /// Optional topology update hook (default: no-op).
+    /// Annotation:
+    /// - Purpose: Updates `topology` state.
+    /// - Parameters:
+    ///   - `_objects` (`&PhysObj<D>`): Object-state container used by this operation.
     fn update_topology(&mut self, _objects: &PhysObj<D>) -> Result<(), InteractionError> {
         Ok(())
     }
 
     /// Accumulate acceleration contributions into `objects.acc`.
+    /// Annotation:
+    /// - Purpose: Executes `accumulate_acc` logic for this module.
+    /// - Parameters:
+    ///   - `objects` (`&mut PhysObj<D>`): Object-state container used by this operation.
     fn accumulate_acc(&self, objects: &mut PhysObj<D>) -> Result<(), InteractionError>;
 
     /// One interaction step = topology update + acceleration accumulation.
+    /// Annotation:
+    /// - Purpose: Executes `step` logic for this module.
+    /// - Parameters:
+    ///   - `objects` (`&mut PhysObj<D>`): Object-state container used by this operation.
     fn step(&mut self, objects: &mut PhysObj<D>) -> Result<(), InteractionError> {
         self.update_topology(objects)?;
         self.accumulate_acc(objects)
-    }
-}
-
-// ======================================================================================
-// ------------------------------ Spring interaction ------------------------------------
-// ======================================================================================
-
-/**
-Hookean spring interaction on active topology edges.
-
-Per-edge parameters
--------------------
-- `k[e]`: spring constant (`> 0`, finite)
-- `l0[e]`: rest length (`>= 0`, finite)
-*/
-#[derive(Debug, Clone)]
-pub struct SpringInteraction {
-    topology: PairTopology,
-    k: Vec<f64>,
-    l0: Vec<f64>,
-}
-
-impl SpringInteraction {
-    /// Create an empty spring interaction for `n_objects` objects.
-    pub fn new(n_objects: usize) -> Self {
-        Self {
-            topology: PairTopology::new(n_objects),
-            k: Vec::new(),
-            l0: Vec::new(),
-        }
-    }
-
-    /// Construct from pre-built topology with uniform default parameters.
-    pub fn with_topology(
-        topology: PairTopology,
-        k_default: f64,
-        l0_default: f64,
-    ) -> Result<Self, InteractionError> {
-        Self::validate_param("k_default", k_default, true)?;
-        Self::validate_param("l0_default", l0_default, false)?;
-
-        let m = topology.len_edges();
-        Ok(Self {
-            topology,
-            k: vec![k_default; m],
-            l0: vec![l0_default; m],
-        })
-    }
-
-    /// Number of total edge slots.
-    #[inline]
-    pub fn len_edges(&self) -> usize {
-        self.topology.len_edges()
-    }
-
-    /// Number of active edges.
-    #[inline]
-    pub fn active_count(&self) -> usize {
-        self.topology.active_count()
-    }
-
-    /// Insert/update one spring edge.
-    ///
-    /// If `(i,j)` already exists and is active, this updates parameters in place.
-    /// Otherwise a new edge slot is created.
-    pub fn add_edge(
-        &mut self,
-        i: ObjId,
-        j: ObjId,
-        k: f64,
-        l0: f64,
-    ) -> Result<EdgeId, InteractionError> {
-        Self::validate_param("k", k, true)?;
-        Self::validate_param("l0", l0, false)?;
-
-        if let Some(e) = self.topology.index_of(i, j) {
-            self.k[e] = k;
-            self.l0[e] = l0;
-            return Ok(e);
-        }
-
-        let e = self.topology.insert(i, j)?;
-        debug_assert_eq!(e, self.k.len());
-        self.k.push(k);
-        self.l0.push(l0);
-        Ok(e)
-    }
-
-    /// Delete one spring pair if active.
-    #[inline]
-    pub fn remove_edge(&mut self, i: ObjId, j: ObjId) -> Result<(), InteractionError> {
-        self.topology.delete(i, j)
-    }
-
-    /// Get `(k, l0)` for edge `e`.
-    pub fn edge_params(&self, e: EdgeId) -> Result<(f64, f64), InteractionError> {
-        if e >= self.k.len() || e >= self.l0.len() {
-            return Err(InteractionError::InvalidEdgeId {
-                edge: e,
-                n_edges: self.k.len().min(self.l0.len()),
-            });
-        }
-        Ok((self.k[e], self.l0[e]))
-    }
-
-    /// Update `(k, l0)` for edge `e`.
-    pub fn set_edge_params(&mut self, e: EdgeId, k: f64, l0: f64) -> Result<(), InteractionError> {
-        Self::validate_param("k", k, true)?;
-        Self::validate_param("l0", l0, false)?;
-
-        if e >= self.k.len() || e >= self.l0.len() {
-            return Err(InteractionError::InvalidEdgeId {
-                edge: e,
-                n_edges: self.k.len().min(self.l0.len()),
-            });
-        }
-        self.k[e] = k;
-        self.l0[e] = l0;
-        Ok(())
-    }
-
-    #[inline]
-    pub fn topology(&self) -> &PairTopology {
-        &self.topology
-    }
-
-    #[inline]
-    pub fn topology_mut(&mut self) -> &mut PairTopology {
-        &mut self.topology
-    }
-
-    #[inline]
-    fn validate_param(field: &'static str, value: f64, strictly_positive: bool) -> Result<(), InteractionError> {
-        if !value.is_finite() {
-            return Err(InteractionError::InvalidParam { field, value });
-        }
-        if strictly_positive && value <= 0.0 {
-            return Err(InteractionError::InvalidParam { field, value });
-        }
-        if !strictly_positive && value < 0.0 {
-            return Err(InteractionError::InvalidParam { field, value });
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn check_param_lengths(&self) -> Result<(), InteractionError> {
-        let n_edges = self.topology.len_edges();
-        if self.k.len() != n_edges || self.l0.len() != n_edges {
-            return Err(InteractionError::ParamLengthMismatch {
-                n_edges,
-                n_k: self.k.len(),
-                n_l0: self.l0.len(),
-            });
-        }
-        Ok(())
-    }
-}
-
-impl<const D: usize> Interaction<D> for SpringInteraction {
-    #[inline]
-    fn topology(&self) -> &PairTopology {
-        &self.topology
-    }
-
-    #[inline]
-    fn topology_mut(&mut self) -> &mut PairTopology {
-        &mut self.topology
-    }
-
-    /**
-    Accumulate Hooke accelerations over all active edges:
-    `F = -k * (|r_j-r_i| - l0) * u_ij`, then `a_i += F * inv_mass_i`, `a_j -= F * inv_mass_j`.
-    */
-    fn accumulate_acc(&self, objects: &mut PhysObj<D>) -> Result<(), InteractionError> {
-        self.check_param_lengths()?;
-
-        for &e in self.topology.active_edges() {
-            let (i, j) = self.topology.edge_pair(e)?;
-
-            // Skip dead objects in soft-lifecycle mode.
-            if !objects.is_alive(i)? || !objects.is_alive(j)? {
-                continue;
-            }
-
-            // Build displacement vector and norm.
-            let mut u = [0.0f64; D];
-            let mut nsq = 0.0f64;
-            {
-                let ri = objects.pos_of(i)?;
-                let rj = objects.pos_of(j)?;
-                for d in 0..D {
-                    let dr = rj[d] - ri[d];
-                    u[d] = dr;
-                    nsq += dr * dr;
-                }
-            }
-
-            let norm = nsq.sqrt();
-            if !norm.is_finite() || norm == 0.0 {
-                continue;
-            }
-            let inv_norm = 1.0 / norm;
-            for x in &mut u {
-                *x *= inv_norm;
-            }
-
-            let f_mag = -self.k[e] * (norm - self.l0[e]);
-            let ai_scale = f_mag * objects.inv_mass_of(i)?;
-            let aj_scale = f_mag * objects.inv_mass_of(j)?;
-
-            {
-                let ai = objects.acc_of_mut(i)?;
-                for d in 0..D {
-                    ai[d] += ai_scale * u[d];
-                }
-            }
-            {
-                let aj = objects.acc_of_mut(j)?;
-                for d in 0..D {
-                    aj[d] -= aj_scale * u[d];
-                }
-            }
-        }
-        Ok(())
     }
 }

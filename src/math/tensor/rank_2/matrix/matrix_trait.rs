@@ -24,18 +24,41 @@ use crate::math::{
 // ============================================================================
 pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     // ----------------------------------- Shape -------------------------------
+    /// Annotation:
+    /// - Purpose: Executes `rows` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn rows(&self) -> usize;
 
+    /// Annotation:
+    /// - Purpose: Executes `cols` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn cols(&self) -> usize;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn shape(&self) -> [usize; 2] { [self.rows(), self.cols()] }
 
     // ----------------------------- Element access ----------------------------
     /// Get **by value** at `(i, j)`. Backends may choose to wrap/normalize indices.
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
     fn get(&self, i: isize, j: isize) -> T;
 
     /// Set the value at `(i, j)`.
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `j` (`isize`): Secondary index argument.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set(&mut self, i: isize, j: isize, val: T);
 
     // ------------------------------ Zero-copy views --------------------------
@@ -53,22 +76,57 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
 
     // ------------------------------- Bulk helpers ---------------------------
     /// Set entire row `i` from `vals` (length must equal `cols()`).
+    /// Annotation:
+    /// - Purpose: Sets the `row_from_slice` value.
+    /// - Parameters:
+    ///   - `i` (`isize`): Primary index argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_row_from_slice`.
     fn set_row_from_slice(&mut self, i: isize, vals: &[T]);
 
     /// Set entire column `j` from `vals` (length must equal `rows()`).
+    /// Annotation:
+    /// - Purpose: Sets the `col_from_slice` value.
+    /// - Parameters:
+    ///   - `j` (`isize`): Secondary index argument.
+    ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_col_from_slice`.
     fn set_col_from_slice(&mut self, j: isize, vals: &[T]);
 
     // ---------------------------------- I/O --------------------------------
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn print(&self);
 
+    /// Annotation:
+    /// - Purpose: Converts this value into `string` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_string(&self);
 
     // ------------------------------- Basic Linalg ------------------------------
+    /// Annotation:
+    /// - Purpose: Executes `transpose` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn transpose(&mut self);
 
+    /// Annotation:
+    /// - Purpose: Executes `clamp` logic for this module.
+    /// - Parameters:
+    ///   - `min_val` (`T`): Value provided by caller for write/update behavior.
+    ///   - `max_val` (`T`): Value provided by caller for write/update behavior.
     fn clamp(&mut self, min_val: T, max_val: T) where T: PartialOrd;
 
+    /// Annotation:
+    /// - Purpose: Executes `normalize` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn normalize(&mut self);
 
+    /// Annotation:
+    /// - Purpose: Executes `normalize_by_max` logic for this module.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn normalize_by_max(&mut self) where T: PartialOrd;
 }

@@ -14,6 +14,11 @@ use physics_in_parallel::math::{
 };
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `dense_tensor_ndarray_roundtrip` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn dense_tensor_ndarray_roundtrip() {
     let a = ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
     let t = DenseTensor::<f64>::from_ndarray(&a);
@@ -26,6 +31,11 @@ fn dense_tensor_ndarray_roundtrip() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `sparse_tensor_ndarray_roundtrip` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn sparse_tensor_ndarray_roundtrip() {
     let a = ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0.0, 2.0, 0.0, 4.0, 0.0, 6.0]).unwrap();
     let s = SparseTensor::<f64>::from_ndarray(&a);
@@ -34,6 +44,11 @@ fn sparse_tensor_ndarray_roundtrip() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `dense_matrix_ndarray_roundtrip` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn dense_matrix_ndarray_roundtrip() {
     let a = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
 
@@ -43,6 +58,11 @@ fn dense_matrix_ndarray_roundtrip() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `vector_list_ndarray_roundtrip` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn vector_list_ndarray_roundtrip() {
     let a = arr2(&[
         [1.0, 2.0, 3.0],
@@ -56,6 +76,11 @@ fn vector_list_ndarray_roundtrip() {
 }
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `vector_list_rand_ndarray_roundtrip` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn vector_list_rand_ndarray_roundtrip() {
     let hf_arr = arr2(&[[0.5, 0.5], [0.5, -0.5]]);
     let hf = HaarVectors::from_ndarray(&hf_arr);

@@ -32,27 +32,56 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     /// - Sparse implementation should set `Repr<U> = sparse::Tensor<U>`.
     type Repr<U: Scalar>: TensorTrait<U>;
 
+    /// Annotation:
+    /// - Purpose: Executes `empty` logic for this module.
+    /// - Parameters:
+    ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
     fn empty(shape: &[usize]) -> Self;
 
+    /// Annotation:
+    /// - Purpose: Returns the `sum` value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn get_sum(&self) -> T;
 
     /// Shape vector.
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn shape(&self) -> &[usize];
 
     // ------------------------ Indexing & Element Access ------------------------
 
     /// Row-major flat index for a possibly-negative per-axis index.
+    /// Annotation:
+    /// - Purpose: Computes an index mapping for input coordinates.
+    /// - Parameters:
+    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
     fn index(&self, idx: &[isize]) -> usize;
 
     /// Get **by value** at `idx`. (Sparse backends return zero for missing.)
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
     fn get(&self, idx: &[isize]) -> T
     where
         T: Copy;
 
     /// Mutable reference to the element at `idx` **if it exists**.
+    /// Annotation:
+    /// - Purpose: Returns the `mut` value.
+    /// - Parameters:
+    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
     fn get_mut(&mut self, idx: &[isize]) -> &mut T;
 
     /// Set the value at `idx`. Writing zero may prune storage in sparse backends.
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set(&mut self, idx: &[isize], val: T);
 
     // ----------------------------- Parallel Ops -------------------------------
@@ -61,6 +90,10 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     ///
     /// - Dense: set **every element** to `value`.
     /// - Sparse: set **existing nonzeros** to `value` (and clear if `value == 0`).
+    /// Annotation:
+    /// - Purpose: Executes `par_fill` logic for this module.
+    /// - Parameters:
+    ///   - `value` (`T`): Value provided by caller for write/update behavior.
     fn par_fill(&mut self, value: T)
     where
         T: Copy + Send + Sync;
@@ -93,5 +126,9 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
 
 
     // ---------------------------- IO ------------------------------
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn print(&self);
 }

@@ -76,12 +76,20 @@ pub struct Tensor<T: Scalar> {
 impl<T: Scalar> Tensor<T> {
     /// Number of elements (a.k.a. linear size).
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Returns the current length/size.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// True iff there are zero elements (never true given our shape assertion).
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Checks whether `empty` condition is true.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -93,6 +101,11 @@ impl<T: Scalar> Tensor<T> {
 
 /// Euclidean modulo for axis indices (supports negatives).
 #[inline(always)]
+/// Annotation:
+/// - Purpose: Executes `wrap_axis_index` logic for this module.
+/// - Parameters:
+///   - `idx` (`isize`): Index argument selecting an element or slot.
+///   - `dim` (`usize`): Parameter of type `usize` used by `wrap_axis_index`.
 fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
@@ -103,6 +116,11 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
 
 /// Wrap linear index into `[0, len)`.
 #[inline(always)]
+/// Annotation:
+/// - Purpose: Executes `wrap_linear_index` logic for this module.
+/// - Parameters:
+///   - `idx` (`usize`): Index argument selecting an element or slot.
+///   - `len` (`usize`): Parameter of type `usize` used by `wrap_linear_index`.
 fn wrap_linear_index(idx: usize, len: usize) -> usize {
     debug_assert!(len > 0);
     idx % len
@@ -116,6 +134,10 @@ fn wrap_linear_index(idx: usize, len: usize) -> usize {
 
 impl<T: Scalar> Tensor<T> {
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Returns the `by_idx` value.
+    /// - Parameters:
+    ///   - `idx` (`usize`): Index argument selecting an element or slot.
     pub fn get_by_idx(&self, idx: usize) -> &T {
         let k = wrap_linear_index(idx, self.data.len());
         // SAFETY: k < len by construction
@@ -123,6 +145,10 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Returns the `by_idx_mut` value.
+    /// - Parameters:
+    ///   - `idx` (`usize`): Index argument selecting an element or slot.
     pub fn get_by_idx_mut(&mut self, idx: usize) -> &mut T {
         let k = wrap_linear_index(idx, self.data.len());
         // SAFETY: k < len by construction
@@ -130,6 +156,11 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Sets the `by_idx` value.
+    /// - Parameters:
+    ///   - `idx` (`usize`): Index argument selecting an element or slot.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     pub fn set_by_idx(&mut self, idx: usize, val: T) {
         let k = wrap_linear_index(idx, self.data.len());
         // SAFETY: k < len by construction
@@ -152,6 +183,10 @@ where
     /// # Panics
     /// Panics if `shape` contains a zero dimension or if `product` overflows `usize`.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `empty` logic for this module.
+    /// - Parameters:
+    ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
     fn empty(shape: &[usize]) -> Self {
         assert!(
             shape.iter().all(|&d| d > 0),
@@ -164,6 +199,10 @@ where
         }
     }
 
+    /// Annotation:
+    /// - Purpose: Returns the `sum` value.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn get_sum(&self) -> T {
         let result = self
             .data.par_iter()
@@ -174,6 +213,10 @@ where
 
     /// Shape vector.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Returns the logical shape metadata.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -183,6 +226,10 @@ where
     /// - Accepts negative indices and arbitrarily large/small signed values.
     /// - Never panics due to out-of-bounds (only rank mismatch is debug-asserted).
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Computes an index mapping for input coordinates.
+    /// - Parameters:
+    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `index`.
     fn index(&self, indices: &[isize]) -> usize {
         debug_assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
 
@@ -201,6 +248,10 @@ where
 
     /// Get by (wrapped) multi-index. Returns a copy of T (Scalar assumed Copy).
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Executes `get` logic for this module.
+    /// - Parameters:
+    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get`.
     fn get(&self, indices: &[isize]) -> T {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -210,6 +261,10 @@ where
     /// Get mutable reference by (wrapped) multi-index.
     /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Returns the `mut` value.
+    /// - Parameters:
+    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get_mut`.
     fn get_mut(&mut self, indices: &[isize]) -> &mut T {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -218,6 +273,11 @@ where
 
     /// Set value at (wrapped) multi-index.
     #[inline(always)]
+    /// Annotation:
+    /// - Purpose: Executes `set` logic for this module.
+    /// - Parameters:
+    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `set`.
+    ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set(&mut self, indices: &[isize], val: T) {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -226,6 +286,10 @@ where
 
     /// Parallel fill with a constant value.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Executes `par_fill` logic for this module.
+    /// - Parameters:
+    ///   - `value` (`T`): Value provided by caller for write/update behavior.
     fn par_fill(&mut self, value: T)
     where
         T: Copy + Send + Sync,
@@ -286,6 +350,10 @@ where
             .expect("tensor cast failed: component out of range for target type")
     }
 
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn print(&self) {
         self.print_2d();
     }
@@ -432,6 +500,10 @@ impl<T: Scalar> Tensor<T> {
 impl<T: Scalar + Display> ToString for Tensor<T> {
     /// Serializes as nested bracket blocks with `;` separators, e.g.:
     /// `[[1;2;3];[4;5;6]]` for a 2×3 tensor.
+    /// Annotation:
+    /// - Purpose: Converts this value into `string` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_string(&self) -> String {
         fn format_recursive<T: Display>(data: &[T], shape: &[usize]) -> String {
             if shape.len() == 1 {
@@ -470,6 +542,10 @@ impl<T: Scalar + FromStr> Tensor<T> {
     ///
     /// # Panics
     /// Panics on malformed input or inconsistent row lengths.
+    /// Annotation:
+    /// - Purpose: Builds this value from `string` input.
+    /// - Parameters:
+    ///   - `s` (`&str`): Parameter of type `&str` used by `from_string`.
     pub fn from_string(s: &str) -> Self {
         let normalized = s
             .trim()
@@ -515,12 +591,20 @@ impl<T: Scalar + FromStr> Tensor<T> {
 impl<T: Scalar> Tensor<T> {
     /// Convert this **dense** tensor to a **sparse** one by skipping zeros.
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `sparse` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_sparse(&self) -> TensorSparse<T> {
         TensorSparse::from_dense(self)
     }
 
     /// Build a **dense** tensor from a **sparse** one (missing entries = zero).
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `sparse` input.
+    /// - Parameters:
+    ///   - `sparse` (`&TensorSparse<T>`): Parameter of type `&TensorSparse<T>` used by `from_sparse`.
     pub fn from_sparse(sparse: &TensorSparse<T>) -> Self {
         let shape = sparse.shape().to_vec();
         let size: usize = shape.iter().product();
@@ -535,6 +619,10 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarray(array: &ArrayD<T>) -> Self {
         let owned = array.to_owned();
         let shape = owned.shape().to_vec();
@@ -544,11 +632,19 @@ impl<T: Scalar> Tensor<T> {
 
     #[deprecated(note = "use from_ndarray")]
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarry` input.
+    /// - Parameters:
+    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
     pub fn from_ndarry(array: &ArrayD<T>) -> Self {
         Self::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> ArrayD<T> {
         ArrayD::from_shape_vec(IxDyn(&self.shape), self.data.clone())
             .expect("Tensor::to_ndarray: shape/data length mismatch")
@@ -559,11 +655,19 @@ impl<T: Scalar> NdarrayConvert for Tensor<T> {
     type NdArray = ArrayD<T>;
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Parameters:
+    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         Tensor::<T>::from_ndarray(array)
     }
 
     #[inline]
+    /// Annotation:
+    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         Tensor::<T>::to_ndarray(self)
     }
@@ -578,6 +682,10 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
     ///
     /// # Panics
     /// Panics if `rank > 2`.
+    /// Annotation:
+    /// - Purpose: Prints a human-readable representation.
+    /// - Parameters:
+    ///   - (none): This function has no documented non-receiver parameters.
     pub fn print_2d(&self) {
         match self.shape.len() {
             1 => {

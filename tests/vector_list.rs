@@ -1,4 +1,9 @@
 #[test]
+/// Annotation:
+/// - Purpose: Executes `vector_list` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn vector_list() {
         use physics_in_parallel::math::{
         tensor::rank_2::vector_list::VectorList,
@@ -44,6 +49,11 @@ fn vector_list() {
 
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `vector_list_rand` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn vector_list_rand() {
         use physics_in_parallel::math::{
         tensor::rank_2::{ 

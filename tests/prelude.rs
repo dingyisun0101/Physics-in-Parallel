@@ -1,6 +1,11 @@
 use physics_in_parallel::math::prelude::*;
 
 #[test]
+/// Annotation:
+/// - Purpose: Executes `prelude_compiles_for_common_types` logic.
+/// - Parameters:
+///   - (none): This function has no documented non-receiver parameters.
+///   - (none): This function takes no explicit parameters.
 fn prelude_compiles_for_common_types() {
     let mut t = Tensor::<f64, DenseBackend>::empty(&[2, 2]);
     t.set(&[0, 1], 3.0);
