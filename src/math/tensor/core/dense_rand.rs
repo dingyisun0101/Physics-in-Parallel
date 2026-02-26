@@ -57,9 +57,9 @@ impl TensorRandFiller {
             Some(n) => n,
             None => NUM_RNGS,
         };
-        let mut master = SmallRng::from_os_rng();
+        let mut master = rand::make_rng::<SmallRng>();
         let mut rngs: Vec<SmallRng> = (0..req)
-            .map(|_| SmallRng::try_from_rng(&mut master).expect("Failed to seed RNG"))
+            .map(|_| SmallRng::from_rng(&mut master))
             .collect();
         rngs.shrink_to_fit();
         Self { kind, num_rngs: req, rngs }
@@ -80,7 +80,7 @@ impl TensorRandFiller {
         };
         let mut master = SmallRng::seed_from_u64(seed);
         let mut rngs: Vec<SmallRng> = (0..req)
-            .map(|_| SmallRng::try_from_rng(&mut master).expect("Failed to seed RNG"))
+            .map(|_| SmallRng::from_rng(&mut master))
             .collect();
         rngs.shrink_to_fit();
         Self { kind, num_rngs: req, rngs }

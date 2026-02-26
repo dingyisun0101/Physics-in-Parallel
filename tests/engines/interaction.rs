@@ -1,17 +1,13 @@
-use physics_in_parallel::engines::soa::interaction::{DirectionMode, InteractionError};
+use physics_in_parallel::engines::soa::interaction::DirectionMode;
 use physics_in_parallel::engines::soa::{Interaction, Topology};
 
 #[test]
-fn topology_undirected_rejects_noncanonical_order() {
+fn topology_undirected_canonicalizes_node_order() {
     let mut topo = Topology::new(4);
 
-    let err = topo.insert(&[2, 1]).unwrap_err();
-    assert!(matches!(
-        err,
-        InteractionError::InvalidUndirectedOrder { .. }
-    ));
-
-    let edge = topo.insert(&[1, 2]).unwrap();
+    let edge = topo.insert(&[2, 1]).unwrap();
+    let edge_2 = topo.insert(&[1, 2]).unwrap();
+    assert_eq!(edge, edge_2);
     assert_eq!(topo.active_count(), 1);
     assert_eq!(
         topo.edge_key(edge).unwrap().nodes.as_ref(),

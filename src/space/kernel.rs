@@ -17,8 +17,7 @@ Concurrency
 
 use rayon::prelude::*;
 use serde::Serialize;
-use rand::Rng;
-use rand::rng;
+use rand::{rng, RngExt};
 
 // ======================================================================================
 // ------------------------------------ Kernel Trait ------------------------------------

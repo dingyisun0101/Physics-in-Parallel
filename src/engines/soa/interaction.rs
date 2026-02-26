@@ -17,12 +17,12 @@ pub type ObjId = usize;
 /// Stable interaction slot index.
 pub type EdgeId = usize;
 
-/// Key ordering mode used by topology validation.
+/// Key ordering mode used by topology canonicalization/validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectionMode {
     /// Preserve caller-provided node order exactly.
     Directed,
-    /// Require nondecreasing node order (`nodes[k-1] <= nodes[k]`).
+    /// Canonicalize key node order (sorted ascending before lookup/insert/remove).
     Undirected,
 }
 
@@ -253,7 +253,13 @@ impl Topology {
 
     fn key_from_nodes(&self, nodes: &[ObjId]) -> Result<InteractionKey, InteractionError> {
         self.validate_nodes(nodes)?;
-        Ok(InteractionKey::from_slice(nodes))
+        if self.mode == DirectionMode::Undirected {
+            let mut canonical = nodes.to_vec();
+            canonical.sort_unstable();
+            Ok(InteractionKey::from_slice(&canonical))
+        } else {
+            Ok(InteractionKey::from_slice(nodes))
+        }
     }
 
     fn validate_nodes(&self, nodes: &[ObjId]) -> Result<(), InteractionError> {
@@ -263,18 +269,6 @@ impl Topology {
                     obj,
                     n_objects: self.n_objects,
                 });
-            }
-        }
-
-        if self.mode == DirectionMode::Undirected {
-            for k in 1..nodes.len() {
-                if nodes[k - 1] > nodes[k] {
-                    return Err(InteractionError::InvalidUndirectedOrder {
-                        at: k,
-                        prev: nodes[k - 1],
-                        curr: nodes[k],
-                    });
-                }
             }
         }
 
@@ -501,5 +495,19 @@ impl<T> Interaction<T> {
         F: Fn(EdgeId, &T) + Send + Sync,
     {
         self.payloads.par_for_each_active(f);
+    }
+
+    /// Parallel read-only visit over active `(slot, key, payload)` entries.
+    pub fn par_for_each_active<F>(&self, f: F)
+    where
+        T: Sync,
+        F: Fn(EdgeId, &InteractionKey, &T) + Send + Sync,
+    {
+        self.payloads.par_for_each_active(|edge, payload| {
+            let key = self.topology.edge_key(edge).expect(
+                "interaction topology/payload storage out of sync while parallel iterating active entries",
+            );
+            f(edge, key, payload);
+        });
     }
 }
