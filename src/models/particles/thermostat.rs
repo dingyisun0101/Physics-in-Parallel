@@ -7,7 +7,7 @@ use rand::rngs::SmallRng;
 use rand_distr::{Distribution, StandardNormal};
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_M_INV, ATTR_V};
+use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ATTR_V};
 
 /// Errors returned by thermostat modules.
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +168,32 @@ impl Thermostat for LangevinThermostat {
             Some(flags)
         };
 
+        let rigid_flags: Option<Vec<bool>> = if !objects.core.contains(ATTR_RIGID) {
+            None
+        } else {
+            let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
+            if rigid.dim() != 1 {
+                return Err(ThermostatError::InvalidAttrShape {
+                    label: ATTR_RIGID,
+                    expected_dim: 1,
+                    got_dim: rigid.dim(),
+                });
+            }
+            if rigid.num_vectors() != n {
+                return Err(ThermostatError::InconsistentParticleCount {
+                    label: ATTR_RIGID,
+                    expected: n,
+                    got: rigid.num_vectors(),
+                });
+            }
+
+            let mut flags = Vec::with_capacity(n);
+            for i in 0..n {
+                flags.push(rigid.get(i as isize, 0) > 0.0);
+            }
+            Some(flags)
+        };
+
         let c = (-self.gamma * dt).exp();
         let one_minus_c2 = (1.0 - c * c).max(0.0);
 
@@ -175,6 +201,11 @@ impl Thermostat for LangevinThermostat {
         for i in 0..n {
             if let Some(flags) = &alive_flags {
                 if !flags[i] {
+                    continue;
+                }
+            }
+            if let Some(flags) = &rigid_flags {
+                if flags[i] {
                     continue;
                 }
             }

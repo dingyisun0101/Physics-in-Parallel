@@ -5,7 +5,7 @@ General time-integration tools for massive-particle models.
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_R, ATTR_V};
+use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IntegratorError {
@@ -79,6 +79,35 @@ fn gather_alive_flags(objects: &PhysObj, n: usize) -> Result<Option<Vec<bool>>, 
     Ok(Some(flags))
 }
 
+#[inline]
+fn gather_rigid_flags(objects: &PhysObj, n: usize) -> Result<Option<Vec<bool>>, IntegratorError> {
+    if !objects.core.contains(ATTR_RIGID) {
+        return Ok(None);
+    }
+
+    let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
+    if rigid.dim() != 1 {
+        return Err(IntegratorError::InvalidAttrShape {
+            label: ATTR_RIGID,
+            expected_dim: 1,
+            got_dim: rigid.dim(),
+        });
+    }
+    if rigid.num_vectors() != n {
+        return Err(IntegratorError::InconsistentParticleCount {
+            label: ATTR_RIGID,
+            expected: n,
+            got: rigid.num_vectors(),
+        });
+    }
+
+    let mut flags = Vec::with_capacity(n);
+    for i in 0..n {
+        flags.push(rigid.get(i as isize, 0) > 0.0);
+    }
+    Ok(Some(flags))
+}
+
 pub trait Integrator {
     /// - Purpose: Advances the particle state by one time step.
     /// - Parameters:
@@ -147,6 +176,7 @@ fn apply_v_then_r(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError>
     }
 
     let alive_flags = gather_alive_flags(objects, n)?;
+    let rigid_flags = gather_rigid_flags(objects, n)?;
     let a_data: Vec<f64> = {
         let a = objects.core.get::<f64>(ATTR_A)?;
         a.as_tensor().data.clone()
@@ -162,6 +192,11 @@ fn apply_v_then_r(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError>
             .for_each(|(i, v_row)| {
                 if let Some(flags) = &alive_flags {
                     if !flags[i] {
+                        return;
+                    }
+                }
+                if let Some(flags) = &rigid_flags {
+                    if flags[i] {
                         return;
                     }
                 }
@@ -185,6 +220,11 @@ fn apply_v_then_r(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError>
             .for_each(|(i, r_row)| {
                 if let Some(flags) = &alive_flags {
                     if !flags[i] {
+                        return;
+                    }
+                }
+                if let Some(flags) = &rigid_flags {
+                    if flags[i] {
                         return;
                     }
                 }

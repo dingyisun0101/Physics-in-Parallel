@@ -3,7 +3,7 @@ General boundary-condition tools for particle models.
 */
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_V};
+use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V};
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,7 +61,9 @@ fn validate_bounds(min: &[f64], max: &[f64]) -> Result<(), BoundaryError> {
 }
 
 #[inline]
-fn shape_and_alive(objects: &PhysObj) -> Result<(usize, usize, Option<Vec<bool>>), BoundaryError> {
+fn shape_alive_rigid(
+    objects: &PhysObj,
+) -> Result<(usize, usize, Option<Vec<bool>>, Option<Vec<bool>>), BoundaryError> {
     let (dim, n) = {
         let r = objects.core.get::<f64>(ATTR_R)?;
         (r.dim(), r.num_vectors())
@@ -113,7 +115,35 @@ fn shape_and_alive(objects: &PhysObj) -> Result<(usize, usize, Option<Vec<bool>>
         Some(flags)
     };
 
-    Ok((dim, n, alive_flags))
+    let rigid_flags = if !objects.core.contains(ATTR_RIGID) {
+        None
+    } else {
+        let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
+        if rigid.dim() != 1 {
+            return Err(BoundaryError::InvalidAttrShape {
+                label: ATTR_RIGID,
+                expected_dim: 1,
+                got_dim: rigid.dim(),
+            });
+        }
+        if rigid.num_vectors() != n {
+            return Err(BoundaryError::InconsistentParticleCount {
+                label: ATTR_RIGID,
+                expected: n,
+                got: rigid.num_vectors(),
+            });
+        }
+
+        let flags = rigid
+            .as_tensor()
+            .data
+            .par_iter()
+            .map(|&x| x > 0.0)
+            .collect::<Vec<bool>>();
+        Some(flags)
+    };
+
+    Ok((dim, n, alive_flags, rigid_flags))
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +168,7 @@ impl PeriodicBox {
 
 impl Boundary for PeriodicBox {
     fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, _n, alive_flags) = shape_and_alive(objects)?;
+        let (dim, _n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
 
         let r = objects.core.get_mut::<f64>(ATTR_R)?;
         r.as_tensor_mut()
@@ -147,6 +177,9 @@ impl Boundary for PeriodicBox {
             .enumerate()
             .for_each(|(i, row)| {
                 if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
+                    return;
+                }
+                if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
                     return;
                 }
 
@@ -187,7 +220,7 @@ impl ClampBox {
 
 impl Boundary for ClampBox {
     fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, _n, alive_flags) = shape_and_alive(objects)?;
+        let (dim, _n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
 
         let r = objects.core.get_mut::<f64>(ATTR_R)?;
         r.as_tensor_mut()
@@ -196,6 +229,9 @@ impl Boundary for ClampBox {
             .enumerate()
             .for_each(|(i, row)| {
                 if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
+                    return;
+                }
+                if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
                     return;
                 }
 
@@ -230,7 +266,7 @@ impl ReflectBox {
 
 impl Boundary for ReflectBox {
     fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, n, alive_flags) = shape_and_alive(objects)?;
+        let (dim, n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
         let mut flip_mask: Vec<u8> = vec![0; n * dim];
 
         {
@@ -242,6 +278,9 @@ impl Boundary for ReflectBox {
                 .enumerate()
                 .for_each(|(i, (r_row, mask_row))| {
                     if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
+                        return;
+                    }
+                    if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
                         return;
                     }
 
@@ -282,6 +321,9 @@ impl Boundary for ReflectBox {
                 .enumerate()
                 .for_each(|(i, (v_row, mask_row))| {
                     if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
+                        return;
+                    }
+                    if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
                         return;
                     }
 

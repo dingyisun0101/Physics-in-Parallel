@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use crate::engines::soa::phys_obj::{AttrsCore, AttrsError, AttrsMeta, PhysObj};
 pub use crate::models::particles::attrs::{
     ATTR_A,
+    ATTR_RIGID,
     ATTR_M,
     ATTR_M_INV,
     ATTR_R,
@@ -65,6 +66,9 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Attr
     let mut m_inv = VectorList::<f64>::empty(1, num_particles);
     m_inv.fill(1.0);
     core.insert(ATTR_M_INV, m_inv)?;
+
+    let rigid = VectorList::<f64>::empty(1, num_particles);
+    core.insert(ATTR_RIGID, rigid)?;
 
     let meta = AttrsMeta {
         id: 0,
