@@ -2,8 +2,10 @@
 Spring-network interaction wrapper for particle models.
 */
 
+use crate::engines::soa::PhysObj;
 use crate::engines::soa::interaction::DirectionMode;
 use crate::engines::soa::{EdgeId, Interaction, InteractionError};
+use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_M_INV, ATTR_R, ATTR_RIGID};
 
 /// Optional distance window `(min, max)` where this spring is active.
 pub type SpringCutoff = (f64, f64);
@@ -128,6 +130,139 @@ impl SpringNetwork {
                 f(key.nodes[0], key.nodes[1], spring);
             }
         });
+    }
+
+    /// Applies Hooke-law acceleration contributions for all active springs.
+    ///
+    /// Semantics:
+    /// - For rigid/non-rigid pairs, the spring is still evaluated and only the non-rigid endpoint is updated.
+    /// - For rigid/rigid pairs, no acceleration is written.
+    /// - If `include_dead` is `false` and `alive` exists, dead endpoints are skipped.
+    pub fn apply_hooke_acceleration(
+        &self,
+        objects: &mut PhysObj,
+        include_dead: bool,
+    ) -> Result<(), InteractionError> {
+        let (dim, n, r_data, m_inv_data, alive_flags, rigid_flags) = {
+            let r = objects.core.get::<f64>(ATTR_R)?;
+            let m_inv = objects.core.get::<f64>(ATTR_M_INV)?;
+
+            if r.dim() == 0 || r.num_vectors() == 0 {
+                return Ok(());
+            }
+            if m_inv.dim() != 1 || m_inv.num_vectors() != r.num_vectors() {
+                return Ok(());
+            }
+
+            let dim = r.dim();
+            let n = r.num_vectors();
+
+            let mut r_data = vec![0.0f64; n * dim];
+            for i in 0..n {
+                for k in 0..dim {
+                    r_data[i * dim + k] = r.get(i as isize, k as isize);
+                }
+            }
+
+            let mut m_inv_data = vec![0.0f64; n];
+            for i in 0..n {
+                m_inv_data[i] = m_inv.get(i as isize, 0);
+            }
+
+            let alive_flags = if !include_dead && objects.core.contains(ATTR_ALIVE) {
+                let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
+                if alive.dim() != 1 || alive.num_vectors() != n {
+                    None
+                } else {
+                    Some(
+                        (0..n)
+                            .map(|i| alive.get(i as isize, 0) > 0.0)
+                            .collect::<Vec<bool>>(),
+                    )
+                }
+            } else {
+                None
+            };
+
+            let rigid_flags = if objects.core.contains(ATTR_RIGID) {
+                let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
+                if rigid.dim() != 1 || rigid.num_vectors() != n {
+                    None
+                } else {
+                    Some(
+                        (0..n)
+                            .map(|i| rigid.get(i as isize, 0) > 0.0)
+                            .collect::<Vec<bool>>(),
+                    )
+                }
+            } else {
+                None
+            };
+
+            (dim, n, r_data, m_inv_data, alive_flags, rigid_flags)
+        };
+
+        let mut accum = vec![0.0f64; n * dim];
+        let mut dr = vec![0.0f64; dim];
+
+        for (_edge, key, spring) in self.springs.iter_active() {
+            if key.nodes.len() != 2 {
+                continue;
+            }
+            let i = key.nodes[0];
+            let j = key.nodes[1];
+            if i >= n || j >= n || i == j {
+                continue;
+            }
+
+            if let Some(alive) = &alive_flags {
+                if !alive[i] || !alive[j] {
+                    continue;
+                }
+            }
+
+            for k in 0..dim {
+                dr[k] = r_data[i * dim + k] - r_data[j * dim + k];
+            }
+            let norm_sq = dr.iter().map(|x| x * x).sum::<f64>();
+            if !norm_sq.is_finite() || norm_sq <= f64::EPSILON {
+                continue;
+            }
+            let norm = norm_sq.sqrt();
+
+            if let Some((cut_min, cut_max)) = spring.cutoff {
+                if norm < cut_min || norm > cut_max {
+                    continue;
+                }
+            }
+
+            let f_mag = -spring.k * (norm - spring.l_0);
+            let i_rigid = rigid_flags.as_ref().is_some_and(|flags| flags[i]);
+            let j_rigid = rigid_flags.as_ref().is_some_and(|flags| flags[j]);
+
+            for k in 0..dim {
+                let force = f_mag * (dr[k] / norm);
+                if !i_rigid {
+                    accum[i * dim + k] += force * m_inv_data[i];
+                }
+                if !j_rigid {
+                    accum[j * dim + k] -= force * m_inv_data[j];
+                }
+            }
+        }
+
+        let a = objects.core.get_mut::<f64>(ATTR_A)?;
+        if a.dim() != dim || a.num_vectors() != n {
+            return Ok(());
+        }
+
+        for i in 0..n {
+            for k in 0..dim {
+                let old = a.get(i as isize, k as isize);
+                a.set(i as isize, k as isize, old + accum[i * dim + k]);
+            }
+        }
+        Ok(())
     }
 
     fn ensure_n_objects_for(&mut self, pair: (usize, usize)) {

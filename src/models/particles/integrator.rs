@@ -125,15 +125,9 @@ pub struct ExplicitEuler;
 pub struct SemiImplicitEuler;
 
 #[inline]
-/// - Purpose: Shared Euler kernel that updates velocity from acceleration, then position from updated velocity.
-/// - Parameters:
-///   - `objects` (`&mut PhysObj`): SoA object container containing `r`, `v`, and `a` attributes to update in-place.
-///   - `dt` (`f64`): Positive finite time-step size for one integration step.
-fn apply_v_then_r(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-    if !dt.is_finite() || dt <= 0.0 {
-        return Err(IntegratorError::InvalidDt { dt });
-    }
-
+fn validate_core_shapes(
+    objects: &PhysObj,
+) -> Result<(usize, usize, Option<Vec<bool>>, Option<Vec<bool>>), IntegratorError> {
     let (dim, n) = {
         let v = objects.core.get::<f64>(ATTR_V)?;
         (v.dim(), v.num_vectors())
@@ -177,11 +171,90 @@ fn apply_v_then_r(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError>
 
     let alive_flags = gather_alive_flags(objects, n)?;
     let rigid_flags = gather_rigid_flags(objects, n)?;
-    let a_data: Vec<f64> = {
-        let a = objects.core.get::<f64>(ATTR_A)?;
-        a.as_tensor().data.clone()
-    };
+    Ok((dim, n, alive_flags, rigid_flags))
+}
 
+#[inline]
+/// - Purpose: Explicit Euler update: `r_{n+1}=r_n+v_n*dt`, `v_{n+1}=v_n+a_n*dt`.
+/// - Parameters:
+///   - `objects` (`&mut PhysObj`): SoA object container containing `r`, `v`, and `a` attributes to update in-place.
+///   - `dt` (`f64`): Positive finite time-step size for one integration step.
+fn apply_explicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
+    if !dt.is_finite() || dt <= 0.0 {
+        return Err(IntegratorError::InvalidDt { dt });
+    }
+
+    let (dim, _n, alive_flags, rigid_flags) = validate_core_shapes(objects)?;
+    let a_data = objects.core.get::<f64>(ATTR_A)?.as_tensor().data.clone();
+    let v_old = objects.core.get::<f64>(ATTR_V)?.as_tensor().data.clone();
+    let mut v_new = v_old.clone();
+
+    v_new
+        .par_chunks_mut(dim)
+        .enumerate()
+        .for_each(|(i, v_row)| {
+            if let Some(flags) = &alive_flags {
+                if !flags[i] {
+                    return;
+                }
+            }
+            if let Some(flags) = &rigid_flags {
+                if flags[i] {
+                    return;
+                }
+            }
+            let a_row = &a_data[i * dim..(i + 1) * dim];
+            for k in 0..dim {
+                v_row[k] += a_row[k] * dt;
+            }
+        });
+
+    {
+        let r = objects.core.get_mut::<f64>(ATTR_R)?;
+        let r_data = &mut r.as_tensor_mut().data;
+
+        r_data
+            .par_chunks_mut(dim)
+            .enumerate()
+            .for_each(|(i, r_row)| {
+                if let Some(flags) = &alive_flags {
+                    if !flags[i] {
+                        return;
+                    }
+                }
+                if let Some(flags) = &rigid_flags {
+                    if flags[i] {
+                        return;
+                    }
+                }
+
+                let v_row = &v_old[i * dim..(i + 1) * dim];
+                for k in 0..dim {
+                    r_row[k] += v_row[k] * dt;
+                }
+            });
+    }
+
+    {
+        let v = objects.core.get_mut::<f64>(ATTR_V)?;
+        v.as_tensor_mut().data.copy_from_slice(&v_new);
+    }
+
+    Ok(())
+}
+
+#[inline]
+/// - Purpose: Semi-implicit Euler update: `v_{n+1}=v_n+a_n*dt`, `r_{n+1}=r_n+v_{n+1}*dt`.
+/// - Parameters:
+///   - `objects` (`&mut PhysObj`): SoA object container containing `r`, `v`, and `a` attributes to update in-place.
+///   - `dt` (`f64`): Positive finite time-step size for one integration step.
+fn apply_semi_implicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
+    if !dt.is_finite() || dt <= 0.0 {
+        return Err(IntegratorError::InvalidDt { dt });
+    }
+
+    let (dim, _n, alive_flags, rigid_flags) = validate_core_shapes(objects)?;
+    let a_data: Vec<f64> = objects.core.get::<f64>(ATTR_A)?.as_tensor().data.clone();
     let updated_v_data: Vec<f64> = {
         let v = objects.core.get_mut::<f64>(ATTR_V)?;
         let v_data = &mut v.as_tensor_mut().data;
@@ -245,7 +318,7 @@ impl Integrator for ExplicitEuler {
     ///   - `objects` (`&mut PhysObj`): SoA object container containing mutable state vectors.
     ///   - `dt` (`f64`): Positive finite time-step size for one integration step.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-        apply_v_then_r(objects, dt)
+        apply_explicit_euler(objects, dt)
     }
 }
 
@@ -255,6 +328,6 @@ impl Integrator for SemiImplicitEuler {
     ///   - `objects` (`&mut PhysObj`): SoA object container containing mutable state vectors.
     ///   - `dt` (`f64`): Positive finite time-step size for one integration step.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-        apply_v_then_r(objects, dt)
+        apply_semi_implicit_euler(objects, dt)
     }
 }
