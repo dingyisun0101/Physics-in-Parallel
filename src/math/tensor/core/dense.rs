@@ -44,11 +44,13 @@ use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::str::FromStr;
 
 use rayon::prelude::*;
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use num_traits::NumCast;
 use ndarray::{ArrayD, IxDyn};
 
+use crate::io::json::{scalar_type_name, DenseTensorPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::ndarray_convert::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use super::sparse::Tensor as TensorSparse;
@@ -66,12 +68,78 @@ use super::tensor_trait::TensorTrait;
 ///
 /// # Invariants
 /// - `data.len() == shape.iter().product()`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Tensor<T: Scalar> {
     /// The extents along each axis. Example: `[rows, cols]` for 2D.
     pub shape: Vec<usize>,
     /// Flat, row-major storage of all elements.
     pub data: Vec<T>,
+}
+
+impl<T> Serialize for Tensor<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_payload()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Tensor<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let payload = DenseTensorPayload::<T>::deserialize(deserializer)?;
+        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> ToJsonPayload for Tensor<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    type Payload = DenseTensorPayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        Ok(DenseTensorPayload::new(
+            "tensor",
+            scalar_type_name::<T>(),
+            self.shape.clone(),
+            self.data.clone(),
+        ))
+    }
+}
+
+impl<T> FromJsonPayload for Tensor<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    type Payload = DenseTensorPayload<T>;
+
+    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        payload.validate::<T>("tensor")?;
+        let expected_len = payload.shape.iter().product::<usize>();
+        if payload.data.len() != expected_len {
+            return Err(format!(
+                "dense tensor data length mismatch: expected {expected_len}, got {}",
+                payload.data.len()
+            ));
+        }
+
+        Ok(Self {
+            shape: payload.shape,
+            data: payload.data,
+        })
+    }
 }
 
 impl<T: Scalar> Tensor<T> {
@@ -683,18 +751,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        let mut data_json: Vec<Value> = Vec::with_capacity(self.data.len());
-        for &x in &self.data {
-            data_json.push(serde_json::to_value(x)?);
-        }
-
-        Ok(json!({
-            "kind": "tensor",
-            "scalar_type": std::any::type_name::<T>(),
-            "shape": self.shape,
-            "storage": "dense",
-            "data": data_json,
-        }))
+        self.to_json_value()
     }
 
     #[inline]
@@ -702,7 +759,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
 }
 

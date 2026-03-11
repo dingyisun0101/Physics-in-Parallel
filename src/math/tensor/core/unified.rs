@@ -12,7 +12,8 @@ This facade delegates to existing backend implementations in `core::dense` and
 use core::marker::PhantomData;
 
 use ndarray::ArrayD;
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::math::{
@@ -52,6 +53,60 @@ impl<T: Scalar> Backend<T> for Sparse {
 pub struct Tensor<T: Scalar, B: Backend<T> = Dense> {
     inner: B::Storage,
     _backend: PhantomData<B>,
+}
+
+impl<T> Serialize for Tensor<T, Dense>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.serialize_value()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Tensor<T, Dense>
+where
+    T: Scalar + DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = DenseStorage::<T>::deserialize(deserializer)?;
+        Ok(Self::from_storage(inner))
+    }
+}
+
+impl<T> Serialize for Tensor<T, Sparse>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.serialize_value()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Tensor<T, Sparse>
+where
+    T: Scalar + DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = SparseStorage::<T>::deserialize(deserializer)?;
+        Ok(Self::from_storage(inner))
+    }
 }
 
 impl<T: Scalar, B: Backend<T>> Tensor<T, B> {

@@ -14,9 +14,11 @@ pub use rand::{HaarVectors, NNVectors, VectorListRand};
 
 use ndarray::Array2;
 use rayon::prelude::*;
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
+use crate::io::json::{scalar_type_name, FromJsonPayload, Rank2RowsPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
@@ -31,6 +33,83 @@ use crate::math::{
 pub struct VectorList<T: Scalar> {
     /// Backing tensor with physical shape `[n, dim]` (row-major).
     pub tensor: Tensor2D<T>,
+}
+
+impl<T> Serialize for VectorList<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_payload()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for VectorList<T>
+where
+    T: Scalar + DeserializeOwned + Copy,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let payload = Rank2RowsPayload::<T>::deserialize(deserializer)?;
+        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> ToJsonPayload for VectorList<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    type Payload = Rank2RowsPayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        let n = self.num_vectors();
+        let dim = self.dim();
+        let mut vectors: Vec<Vec<T>> = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let row = self.get_vector(i as isize);
+            let mut row_values: Vec<T> = Vec::with_capacity(dim);
+            for &x in row {
+                row_values.push(x);
+            }
+            vectors.push(row_values);
+        }
+
+        Ok(Rank2RowsPayload::new(
+            "vector_list",
+            scalar_type_name::<T>(),
+            [dim, n],
+            vectors,
+        ))
+    }
+}
+
+impl<T> FromJsonPayload for VectorList<T>
+where
+    T: Scalar + DeserializeOwned + Copy,
+{
+    type Payload = Rank2RowsPayload<T>;
+
+    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        payload.validate_vector_list::<T>()?;
+        let [dim, n] = payload.shape;
+
+        let mut vector_list = Self::empty(dim, n);
+        for (i, row) in payload.data.into_iter().enumerate() {
+            for (k, value) in row.into_iter().enumerate() {
+                vector_list.set(i as isize, k as isize, value);
+            }
+        }
+
+        Ok(vector_list)
+    }
 }
 
 /// Annotation:
@@ -295,26 +374,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        let n = self.num_vectors();
-        let dim = self.dim();
-        let mut vectors: Vec<Value> = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let row = self.get_vector(i as isize);
-            let mut row_values: Vec<Value> = Vec::with_capacity(dim);
-            for &x in row {
-                row_values.push(serde_json::to_value(x)?);
-            }
-            vectors.push(Value::Array(row_values));
-        }
-
-        Ok(json!({
-            "kind": "vector_list",
-            "scalar_type": std::any::type_name::<T>(),
-            "shape": [dim, n],
-            "storage": "dense",
-            "data": vectors,
-        }))
+        self.to_json_value()
     }
 
     #[inline]
@@ -322,7 +382,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
 }
 

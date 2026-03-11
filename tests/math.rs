@@ -6,6 +6,8 @@ mod ndarray_convert;
 mod prelude;
 #[path = "math/scalar.rs"]
 mod scalar;
+#[path = "math/serde_roundtrip.rs"]
+mod serde_roundtrip;
 #[path = "math/tensor_sparse.rs"]
 mod tensor_sparse;
 #[path = "math/tensor_unified.rs"]

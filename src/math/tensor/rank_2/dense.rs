@@ -3,9 +3,11 @@ Core dense 2D tensor with fixed row-major physical layout.
 */
 
 use ndarray::Array2;
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
+use crate::io::json::{scalar_type_name, FromJsonPayload, Rank2RowsPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
@@ -17,6 +19,82 @@ pub struct Tensor2D<T: Scalar> {
     rows: usize,
     cols: usize,
     backend: DenseTensor<T>, // shape [rows, cols], row-major
+}
+
+impl<T> Serialize for Tensor2D<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_payload()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Tensor2D<T>
+where
+    T: Scalar + DeserializeOwned + Copy,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let payload = Rank2RowsPayload::<T>::deserialize(deserializer)?;
+        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> ToJsonPayload for Tensor2D<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    type Payload = Rank2RowsPayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        let mut rows_json: Vec<Vec<T>> = Vec::with_capacity(self.rows);
+        for i in 0..self.rows {
+            let row = self.row_view(i as isize);
+            let mut row_values: Vec<T> = Vec::with_capacity(self.cols);
+            for &x in row {
+                row_values.push(x);
+            }
+            rows_json.push(row_values);
+        }
+
+        Ok(Rank2RowsPayload::new(
+            "tensor_2d",
+            scalar_type_name::<T>(),
+            [self.rows, self.cols],
+            rows_json,
+        ))
+    }
+}
+
+impl<T> FromJsonPayload for Tensor2D<T>
+where
+    T: Scalar + DeserializeOwned + Copy,
+{
+    type Payload = Rank2RowsPayload<T>;
+
+    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        payload.validate::<T>("tensor_2d")?;
+        let [rows, cols] = payload.shape;
+
+        let mut flat = Vec::with_capacity(rows * cols);
+        for row in payload.data {
+            flat.extend(row);
+        }
+
+        let backend = DenseTensor::<T> {
+            shape: vec![rows, cols],
+            data: flat,
+        };
+        Ok(Self::from_backend(backend, rows, cols))
+    }
 }
 
 #[inline(always)]
@@ -247,23 +325,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        let mut rows_json: Vec<Value> = Vec::with_capacity(self.rows);
-        for i in 0..self.rows {
-            let row = self.row_view(i as isize);
-            let mut row_values: Vec<Value> = Vec::with_capacity(self.cols);
-            for &x in row {
-                row_values.push(serde_json::to_value(x)?);
-            }
-            rows_json.push(Value::Array(row_values));
-        }
-
-        Ok(json!({
-            "kind": "tensor_2d",
-            "scalar_type": std::any::type_name::<T>(),
-            "shape": [self.rows, self.cols],
-            "storage": "dense",
-            "data": rows_json,
-        }))
+        self.to_json_value()
     }
 
     #[inline]
@@ -271,6 +333,6 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
 }

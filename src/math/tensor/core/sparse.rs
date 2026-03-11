@@ -33,10 +33,14 @@ use num_traits::NumCast;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use std::ops::{Add, Sub, Mul, Div, BitAnd};
 
+use crate::io::json::{
+    scalar_type_name, FromJsonPayload, SparseEntry, SparseTensorPayload, ToJsonPayload,
+};
 use crate::math::ndarray_convert::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use super::dense::Tensor as TensorDense;
@@ -58,6 +62,82 @@ use super::tensor_trait::TensorTrait; // unified trait alias
 pub struct Tensor<T: Scalar> {
     shape: Vec<usize>,
     data: AHashMap<usize, T>, // flat index -> value (non-zero)
+}
+
+impl<T> Serialize for Tensor<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_payload()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Tensor<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let payload = SparseTensorPayload::<T>::deserialize(deserializer)?;
+        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> ToJsonPayload for Tensor<T>
+where
+    T: Scalar + Serialize + Copy,
+{
+    type Payload = SparseTensorPayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        let mut entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
+        entries.sort_unstable_by_key(|(k, _)| *k);
+
+        Ok(SparseTensorPayload::new(
+            scalar_type_name::<T>(),
+            self.shape.clone(),
+            entries
+                .into_iter()
+                .map(|(index, value)| SparseEntry { index, value })
+                .collect(),
+        ))
+    }
+}
+
+impl<T> FromJsonPayload for Tensor<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    type Payload = SparseTensorPayload<T>;
+
+    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        payload.validate::<T>()?;
+
+        let dense_size = payload.shape.iter().product::<usize>();
+        let mut data = AHashMap::new();
+        for entry in payload.data.entries {
+            if entry.index >= dense_size {
+                return Err(format!(
+                    "sparse tensor entry index {} out of bounds for dense size {}",
+                    entry.index, dense_size
+                ));
+            }
+            data.insert(entry.index, entry.value);
+        }
+
+        Ok(Self {
+            shape: payload.shape,
+            data,
+        })
+    }
 }
 
 // ===================================================================
@@ -676,27 +756,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        let mut entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
-        entries.sort_unstable_by_key(|(k, _)| *k);
-
-        let mut entries_json: Vec<Value> = Vec::with_capacity(entries.len());
-        for (k, v) in entries {
-            entries_json.push(json!({
-                "index": k,
-                "value": serde_json::to_value(v)?,
-            }));
-        }
-
-        Ok(json!({
-            "kind": "tensor",
-            "scalar_type": std::any::type_name::<T>(),
-            "shape": self.shape,
-            "storage": "sparse",
-            "data": {
-                "nnz": self.data.len(),
-                "entries": entries_json,
-            },
-        }))
+        self.to_json_value()
     }
 
     #[inline]
@@ -704,7 +764,7 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
 }
 

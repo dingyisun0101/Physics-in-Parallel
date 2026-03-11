@@ -4,11 +4,13 @@ Core attribute containers for SoA object storage.
 
 use ahash::AHashMap;
 use serde::Serialize;
-use serde_json::{json, Value};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
+use crate::io::json::{
+    AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload,
+};
 use crate::math::{
     scalar::Scalar,
     tensor::rank_2::vector_list::{DynVectorList, VectorList},
@@ -136,15 +138,16 @@ impl AttrsCore {
         self.data.keys().map(|k| k.as_str())
     }
 
-    #[inline]
-    /// - Purpose: Converts the full core attribute store into a JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+}
+
+impl ToJsonPayload for AttrsCore {
+    type Payload = AttrsCorePayload;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
         let mut labels: Vec<&str> = self.data.keys().map(|k| k.as_str()).collect();
         labels.sort_unstable();
 
-        let mut attrs: Vec<Value> = Vec::with_capacity(labels.len());
+        let mut attrs: Vec<LabeledPayload> = Vec::with_capacity(labels.len());
         for label in labels {
             let col = self
                 .data
@@ -152,25 +155,27 @@ impl AttrsCore {
                 .ok_or_else(|| serde_json::Error::io(std::io::Error::other(format!(
                     "label disappeared during serialization: {label}"
                 ))))?;
-            attrs.push(json!({
-                "label": label,
-                "payload": col.serialize_value()?,
-            }));
+            attrs.push(LabeledPayload {
+                label: label.to_string(),
+                payload: col.serialize_value()?,
+            });
         }
 
-        Ok(json!({
-            "n_objects": self.n_objects,
-            "num_attrs": self.data.len(),
-            "attrs": attrs,
-        }))
+        Ok(AttrsCorePayload {
+            n_objects: self.n_objects,
+            num_attrs: self.data.len(),
+            attrs,
+        })
     }
+}
 
+impl AttrsCore {
     #[inline]
     /// - Purpose: Serializes this core attribute store into JSON text.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
     /// - Purpose: Inserts a typed vector-list attribute under a unique label.
     /// - Parameters:
@@ -411,24 +416,11 @@ pub struct PhysObj {
 
 impl PhysObj {
     #[inline]
-    /// - Purpose: Converts this object container into a structured JSON value containing metadata and core.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        let meta_json: Value = serde_json::to_value(&self.meta)?;
-        let core_json: Value = self.core.serialize_value()?;
-        Ok(json!({
-            "meta": meta_json,
-            "core": core_json,
-        }))
-    }
-
-    #[inline]
     /// - Purpose: Serializes this object container into pretty JSON text.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.serialize_value()?)
+        self.to_json_string()
     }
 
     #[inline]
@@ -446,5 +438,16 @@ impl PhysObj {
         let mut file = File::create(output_file)?;
         file.write_all(text.as_bytes())?;
         Ok(())
+    }
+}
+
+impl ToJsonPayload for PhysObj {
+    type Payload = PhysObjPayload;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        Ok(PhysObjPayload {
+            meta: serde_json::to_value(&self.meta)?,
+            core: self.core.to_json_payload()?,
+        })
     }
 }

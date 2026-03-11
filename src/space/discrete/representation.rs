@@ -42,6 +42,7 @@ use rayon::prelude::*;
 use rand::random_range;
 use ndarray::{ArrayD, IxDyn};
 
+use crate::io::json::{scalar_type_name, CompactGridPayload, GridPayload, ToJsonPayload};
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::space_trait::Space;
 
@@ -549,14 +550,22 @@ impl<T: ScalarSerde + VacancyValue> Grid<T> {
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        let payload = serde_json::json!({
-            "kind": "grid",
-            "scalar_type": std::any::type_name::<T>(),
-            "shape": self.shape(),
-            "storage": "dense",
-            "data": self.data,
-        });
-        serde_json::to_string_pretty(&payload)
+        self.to_json_string()
+    }
+}
+
+impl<T> ToJsonPayload for Grid<T>
+where
+    T: ScalarSerde + VacancyValue,
+{
+    type Payload = GridPayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        Ok(GridPayload::new(
+            scalar_type_name::<T>(),
+            self.shape(),
+            self.data.clone(),
+        ))
     }
 }
 
@@ -575,15 +584,7 @@ where
 {
     let grid_to_save = grid.rescale(l_target);
 
-    #[derive(Serialize)]
-    struct GridJson<'a, T> {
-        /// Metadata “shape”: `[d, l]` (note: total data length is `l^d`)
-        shape: [usize; 2],
-        /// Row-major flattened data of length `l^d`
-        data: &'a [T],
-    }
-
-    let json_data = GridJson {
+    let json_data = CompactGridPayload {
         shape: grid_to_save.shape(),
         data: &grid_to_save.data,
     };
