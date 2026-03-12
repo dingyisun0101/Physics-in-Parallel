@@ -8,13 +8,26 @@ from pathlib import Path
 import numpy as np
 
 
+_FLAT_PAYLOAD_KINDS = {
+    "tensor",
+    "tensor_sparse",
+    "tensor_2d",
+    "matrix",
+    "vector_list",
+    "grid",
+    "grid_periodic",
+    "grid_clamped",
+}
+
+
 def to_ndarray(path) -> np.ndarray:
     """
     Read one PiP JSON output file into a NumPy array.
 
     Behavior:
-    - Tensor-, matrix-, vector-list-, and grid-like PiP payloads are converted
-      into numeric ndarrays with their logical shapes.
+    - Flat PiP payloads (`kind` + `shape` + `data`) are converted to numeric
+      ndarrays using the provided shape.
+    - Legacy PiP payloads are supported for backward compatibility.
     - Composite PiP payloads such as `PhysObj` are returned as 0-D object
       arrays containing recursively converted Python/NumPy content.
     """
@@ -25,16 +38,21 @@ def to_ndarray(path) -> np.ndarray:
 def _payload_to_ndarray(payload) -> np.ndarray:
     if isinstance(payload, dict):
         kind = payload.get("kind")
-        if kind == "tensor":
-            return _tensor_payload_to_ndarray(payload)
-        if kind in {"tensor_2d", "matrix"}:
-            return _rank2_payload_to_ndarray(payload)
-        if kind == "vector_list":
-            return _vector_list_payload_to_ndarray(payload)
-        if kind == "grid":
-            return _grid_payload_to_ndarray(payload)
-        if _looks_like_compact_grid(payload):
-            return _compact_grid_payload_to_ndarray(payload)
+
+        # Current PiP schema
+        if kind in _FLAT_PAYLOAD_KINDS and {"shape", "data"}.issubset(payload.keys()):
+            return _flat_payload_to_ndarray(payload)
+
+        # Legacy schema compatibility
+        if kind == "tensor" and "storage" in payload:
+            return _legacy_tensor_payload_to_ndarray(payload)
+        if kind == "vector_list" and "storage" in payload:
+            return _legacy_vector_list_payload_to_ndarray(payload)
+        if kind == "grid" and "storage" in payload:
+            return _legacy_grid_payload_to_ndarray(payload)
+        if _looks_like_legacy_compact_grid(payload):
+            return _legacy_compact_grid_payload_to_ndarray(payload)
+
         return _object_scalar_array(_json_to_python(payload))
 
     if isinstance(payload, list):
@@ -43,7 +61,21 @@ def _payload_to_ndarray(payload) -> np.ndarray:
     return np.asarray(payload)
 
 
-def _tensor_payload_to_ndarray(payload) -> np.ndarray:
+def _flat_payload_to_ndarray(payload) -> np.ndarray:
+    _require_keys(payload, {"shape", "data"})
+    shape = _normalize_shape(payload["shape"])
+
+    array = np.asarray(payload["data"])
+    expected_size = int(np.prod(shape, dtype=np.int64))
+    if array.size != expected_size:
+        raise ValueError(
+            f"flat payload data length mismatch: expected {expected_size}, got {array.size}"
+        )
+
+    return array.reshape(shape)
+
+
+def _legacy_tensor_payload_to_ndarray(payload) -> np.ndarray:
     _require_keys(payload, {"shape", "storage", "data"})
     shape = _normalize_shape(payload["shape"])
     storage = payload["storage"]
@@ -60,44 +92,37 @@ def _tensor_payload_to_ndarray(payload) -> np.ndarray:
             array.flat[entry["index"]] = entry["value"]
         return array
 
-    raise ValueError(f"unsupported PiP tensor storage: {storage!r}")
+    raise ValueError(f"unsupported legacy PiP tensor storage: {storage!r}")
 
 
-def _rank2_payload_to_ndarray(payload) -> np.ndarray:
-    _require_keys(payload, {"shape", "data"})
-    shape = _normalize_shape(payload["shape"])
-    array = np.asarray(payload["data"])
-    return array.reshape(shape)
-
-
-def _vector_list_payload_to_ndarray(payload) -> np.ndarray:
+def _legacy_vector_list_payload_to_ndarray(payload) -> np.ndarray:
     _require_keys(payload, {"shape", "data"})
     dim, n = _normalize_shape(payload["shape"])
     array = np.asarray(payload["data"])
     if array.shape != (n, dim):
         raise ValueError(
-            f"vector_list payload data shape mismatch: expected {(n, dim)}, got {array.shape}"
+            f"legacy vector_list payload data shape mismatch: expected {(n, dim)}, got {array.shape}"
         )
-    # PiP's logical ndarray convention for VectorList is [dim, n].
+    # Legacy convention was logical [dim, n].
     return array.T
 
 
-def _grid_payload_to_ndarray(payload) -> np.ndarray:
+def _legacy_grid_payload_to_ndarray(payload) -> np.ndarray:
     _require_keys(payload, {"shape", "data"})
-    return _reshape_grid_data(payload["shape"], payload["data"])
+    return _reshape_legacy_grid_data(payload["shape"], payload["data"])
 
 
-def _compact_grid_payload_to_ndarray(payload) -> np.ndarray:
-    return _reshape_grid_data(payload["shape"], payload["data"])
+def _legacy_compact_grid_payload_to_ndarray(payload) -> np.ndarray:
+    return _reshape_legacy_grid_data(payload["shape"], payload["data"])
 
 
-def _reshape_grid_data(shape_metadata, data) -> np.ndarray:
+def _reshape_legacy_grid_data(shape_metadata, data) -> np.ndarray:
     d, l = _normalize_shape(shape_metadata)
     array = np.asarray(data)
     return array.reshape((l,) * d)
 
 
-def _looks_like_compact_grid(payload) -> bool:
+def _looks_like_legacy_compact_grid(payload) -> bool:
     if set(payload.keys()) != {"shape", "data"}:
         return False
     shape = payload["shape"]
@@ -111,6 +136,8 @@ def _looks_like_compact_grid(payload) -> bool:
 def _normalize_shape(shape) -> tuple[int, ...]:
     if not isinstance(shape, list) or not shape or not all(isinstance(dim, int) for dim in shape):
         raise ValueError(f"invalid PiP shape metadata: {shape!r}")
+    if any(dim <= 0 for dim in shape):
+        raise ValueError(f"PiP shape dimensions must be > 0: {shape!r}")
     return tuple(shape)
 
 

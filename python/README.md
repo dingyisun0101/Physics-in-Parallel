@@ -14,17 +14,28 @@ to_ndarray(path) -> numpy.ndarray
 
 `path` must point to a JSON file produced by PiP.
 
-## Supported PiP JSON Kinds
+## Current PiP Flat Schema
+
+PiP now serializes numeric payloads as:
+
+```json
+{
+  "kind": "...",
+  "shape": [...],
+  "data": [...]
+}
+```
+
+`to_ndarray(path)` reshapes `data` using `shape` (NumPy convention, row-major/C order).
+
+## Supported Kinds
 
 ### Dense tensor
-
-Input shape:
 
 ```json
 {
   "kind": "tensor",
   "shape": [2, 2],
-  "storage": "dense",
   "data": [1.0, 2.0, 3.0, 4.0]
 }
 ```
@@ -35,22 +46,13 @@ Output:
 arr.shape == (2, 2)
 ```
 
-### Sparse tensor
-
-Input shape:
+### Sparse tensor (serialized densely)
 
 ```json
 {
-  "kind": "tensor",
+  "kind": "tensor_sparse",
   "shape": [2, 3],
-  "storage": "sparse",
-  "data": {
-    "nnz": 2,
-    "entries": [
-      {"index": 1, "value": 2.0},
-      {"index": 5, "value": 5.0}
-    ]
-  }
+  "data": [0.0, 2.0, 0.0, 0.0, 0.0, 5.0]
 }
 ```
 
@@ -62,17 +64,11 @@ arr.shape == (2, 3)
 
 ### Tensor2D / Matrix
 
-Input shape:
-
 ```json
 {
   "kind": "matrix",
   "shape": [2, 3],
-  "storage": "dense",
-  "data": [
-    [1.0, 2.0, 3.0],
-    [4.0, 5.0, 6.0]
-  ]
+  "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 }
 ```
 
@@ -84,48 +80,39 @@ arr.shape == (2, 3)
 
 ### VectorList
 
-PiP stores vector-list data as `n` row vectors, but its logical ndarray convention
-is `[dim, n]`. `to_ndarray()` returns that logical shape.
-
-Input shape:
+Current VectorList convention is `[n, dim]`.
 
 ```json
 {
   "kind": "vector_list",
-  "shape": [3, 2],
-  "storage": "dense",
-  "data": [
-    [1.0, 2.0, 3.0],
-    [4.0, 5.0, 6.0]
-  ]
+  "shape": [2, 3],
+  "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 }
 ```
 
 Output:
 
 ```python
-arr.shape == (3, 2)
+arr.shape == (2, 3)
 ```
 
 ### Grid
 
-Input shape:
+`kind` indicates boundary mode:
+- `grid_periodic`
+- `grid_clamped`
+
+Shape follows ndarray axes directly (e.g. 2D side length 4 is `[4, 4]`).
 
 ```json
 {
-  "kind": "grid",
-  "shape": [2, 4],
-  "storage": "dense",
+  "kind": "grid_periodic",
+  "shape": [4, 4],
   "data": [...]
 }
 ```
 
-Interpretation:
-- `shape[0] = d`
-- `shape[1] = l`
-- returned ndarray shape is `(l,) * d`
-
-So `[2, 4]` becomes:
+Output:
 
 ```python
 arr.shape == (4, 4)
@@ -143,6 +130,11 @@ Example:
 arr = to_ndarray("phys_obj.json")
 payload = arr[()]
 ```
+
+## Legacy Compatibility
+
+`to_ndarray()` still accepts older PiP payloads with fields like `storage`,
+`sparse.entries`, and compact grid metadata (`shape = [d, l]`).
 
 ## Requirements
 

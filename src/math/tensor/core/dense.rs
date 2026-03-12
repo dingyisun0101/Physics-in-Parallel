@@ -50,7 +50,7 @@ use serde_json::Value;
 use num_traits::NumCast;
 use ndarray::{ArrayD, IxDyn};
 
-use crate::io::json::{scalar_type_name, DenseTensorPayload, FromJsonPayload, ToJsonPayload};
+use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::ndarray_convert::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use super::sparse::Tensor as TensorSparse;
@@ -98,7 +98,7 @@ where
     where
         D: Deserializer<'de>,
     {
-        let payload = DenseTensorPayload::<T>::deserialize(deserializer)?;
+        let payload = FlatPayload::<T>::deserialize(deserializer)?;
         <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
     }
 }
@@ -107,12 +107,11 @@ impl<T> ToJsonPayload for Tensor<T>
 where
     T: Scalar + Serialize + Copy,
 {
-    type Payload = DenseTensorPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        Ok(DenseTensorPayload::new(
+        Ok(FlatPayload::new(
             "tensor",
-            scalar_type_name::<T>(),
             self.shape.clone(),
             self.data.clone(),
         ))
@@ -123,17 +122,10 @@ impl<T> FromJsonPayload for Tensor<T>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = DenseTensorPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate::<T>("tensor")?;
-        let expected_len = payload.shape.iter().product::<usize>();
-        if payload.data.len() != expected_len {
-            return Err(format!(
-                "dense tensor data length mismatch: expected {expected_len}, got {}",
-                payload.data.len()
-            ));
-        }
+        payload.validate_dense("tensor")?;
 
         Ok(Self {
             shape: payload.shape,

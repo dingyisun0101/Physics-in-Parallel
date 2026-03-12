@@ -37,12 +37,13 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use rayon::prelude::*;
 use rand::random_range;
 use ndarray::{ArrayD, IxDyn};
 
-use crate::io::json::{scalar_type_name, CompactGridPayload, GridPayload, ToJsonPayload};
+use crate::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::space_trait::Space;
 
@@ -183,12 +184,39 @@ pub enum GridInitMethod<T: Scalar> {
 - `data.len() == cfg.num_sites()`.
 - `cfg.d > 0`, `cfg.l > 0` (enforced by `GridConfig::new`).
 */
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Grid<T: Scalar> {
     /// Configuration (rank, side length, scale, periodicity).
     pub cfg: GridConfig,
     /// Row-major storage for all sites (length = `l^d`).
     pub data: Vec<T>,
+}
+
+impl<T> Serialize for Grid<T>
+where
+    T: Scalar + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_payload()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Grid<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let payload = FlatPayload::<T>::deserialize(deserializer)?;
+        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+    }
 }
 
 impl<T: Scalar> Grid<T> {
@@ -224,6 +252,31 @@ impl<T: Scalar> Grid<T> {
         let shape = vec![self.cfg.l; self.cfg.d];
         ArrayD::from_shape_vec(IxDyn(&shape), self.data.clone())
             .expect("Grid::to_ndarray: shape/data length mismatch")
+    }
+
+    #[inline(always)]
+    fn ndarray_shape(&self) -> Vec<usize> {
+        vec![self.cfg.l; self.cfg.d]
+    }
+
+    #[inline(always)]
+    fn serde_kind(&self) -> &'static str {
+        if self.cfg.periodic {
+            "grid_periodic"
+        } else {
+            "grid_clamped"
+        }
+    }
+}
+
+#[inline(always)]
+fn parse_grid_kind(kind: &str) -> Result<bool, String> {
+    match kind {
+        "grid_periodic" | "grid" => Ok(true),
+        "grid_clamped" => Ok(false),
+        _ => Err(format!(
+            "grid kind must be 'grid_periodic' or 'grid_clamped'; got '{kind}'"
+        )),
     }
 }
 
@@ -342,14 +395,6 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
     // --- Private helpers -----------------------------------------------------
 
-    /// Return a compact metadata “shape” as `[d, l]`.
-    #[inline(always)]
-    /// Annotation:
-    /// - Purpose: Returns the logical shape metadata.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn shape(&self) -> [usize; 2] { [self.cfg.d, self.cfg.l] }
-
     /// **Wrap** (periodic) or **clamp** (non-periodic) a single coordinate into `[0, l-1]`.
     #[inline(always)]
     /// Annotation:
@@ -464,7 +509,11 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     ///
     /// The JSON schema is:
     /// ```json
-    /// { "shape": [d, l_target], "data": [ ... length = l_target^d ... ] }
+    /// {
+    ///   "kind": "grid_periodic" | "grid_clamped",
+    ///   "shape": [l_target, l_target, ...],
+    ///   "data": [ ... length = l_target^d ... ]
+    /// }
     /// ```
     /// Annotation:
     /// - Purpose: Executes `save` logic for this module.
@@ -546,7 +595,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
 
 impl<T: ScalarSerde + VacancyValue> Grid<T> {
     #[inline]
-    /// - Purpose: Serializes this grid into pretty JSON text with compact shape metadata.
+    /// - Purpose: Serializes this grid into pretty JSON text.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
@@ -556,16 +605,47 @@ impl<T: ScalarSerde + VacancyValue> Grid<T> {
 
 impl<T> ToJsonPayload for Grid<T>
 where
-    T: ScalarSerde + VacancyValue,
+    T: Scalar + Serialize,
 {
-    type Payload = GridPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        Ok(GridPayload::new(
-            scalar_type_name::<T>(),
-            self.shape(),
+        Ok(FlatPayload::new(
+            self.serde_kind(),
+            self.ndarray_shape(),
             self.data.clone(),
         ))
+    }
+}
+
+impl<T> FromJsonPayload for Grid<T>
+where
+    T: Scalar + DeserializeOwned,
+{
+    type Payload = FlatPayload<T>;
+
+    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        let periodic = parse_grid_kind(&payload.kind)?;
+        let expected_len = payload.validate_shape("grid")?;
+        if payload.data.len() != expected_len {
+            return Err(format!(
+                "grid data length mismatch: expected {expected_len}, got {}",
+                payload.data.len()
+            ));
+        }
+
+        let l = payload.shape[0];
+        if payload.shape.iter().any(|&dim| dim != l) {
+            return Err(format!(
+                "grid shape must be cubic (all dimensions equal), got {:?}",
+                payload.shape
+            ));
+        }
+
+        Ok(Self {
+            cfg: GridConfig::new(payload.shape.len(), l, periodic),
+            data: payload.data,
+        })
     }
 }
 
@@ -583,9 +663,11 @@ where
     T: ScalarSerde + VacancyValue,
 {
     let grid_to_save = grid.rescale(l_target);
+    let shape = grid_to_save.ndarray_shape();
 
-    let json_data = CompactGridPayload {
-        shape: grid_to_save.shape(),
+    let json_data = FlatPayloadRef {
+        kind: grid_to_save.serde_kind(),
+        shape: &shape,
         data: &grid_to_save.data,
     };
 

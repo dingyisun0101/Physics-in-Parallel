@@ -1,5 +1,5 @@
 /*!
-A container for many fixed-length vectors with external logical shape `[dim, n]`.
+A container for many fixed-length vectors with external logical shape `[n, dim]`.
 
 Internal storage
 ----------------
@@ -18,7 +18,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::io::json::{scalar_type_name, FromJsonPayload, Rank2RowsPayload, ToJsonPayload};
+use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
@@ -57,7 +57,7 @@ where
     where
         D: Deserializer<'de>,
     {
-        let payload = Rank2RowsPayload::<T>::deserialize(deserializer)?;
+        let payload = FlatPayload::<T>::deserialize(deserializer)?;
         <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
     }
 }
@@ -66,27 +66,15 @@ impl<T> ToJsonPayload for VectorList<T>
 where
     T: Scalar + Serialize + Copy,
 {
-    type Payload = Rank2RowsPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
         let n = self.num_vectors();
         let dim = self.dim();
-        let mut vectors: Vec<Vec<T>> = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let row = self.get_vector(i as isize);
-            let mut row_values: Vec<T> = Vec::with_capacity(dim);
-            for &x in row {
-                row_values.push(x);
-            }
-            vectors.push(row_values);
-        }
-
-        Ok(Rank2RowsPayload::new(
+        Ok(FlatPayload::new(
             "vector_list",
-            scalar_type_name::<T>(),
-            [dim, n],
-            vectors,
+            vec![n, dim],
+            self.tensor.data().to_vec(),
         ))
     }
 }
@@ -95,20 +83,23 @@ impl<T> FromJsonPayload for VectorList<T>
 where
     T: Scalar + DeserializeOwned + Copy,
 {
-    type Payload = Rank2RowsPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate_vector_list::<T>()?;
-        let [dim, n] = payload.shape;
-
-        let mut vector_list = Self::empty(dim, n);
-        for (i, row) in payload.data.into_iter().enumerate() {
-            for (k, value) in row.into_iter().enumerate() {
-                vector_list.set(i as isize, k as isize, value);
-            }
+        payload.validate_dense("vector_list")?;
+        if payload.shape.len() != 2 {
+            return Err(format!(
+                "vector_list shape rank mismatch: expected 2, got {}",
+                payload.shape.len()
+            ));
         }
-
-        Ok(vector_list)
+        let n = payload.shape[0];
+        let dim = payload.shape[1];
+        let backend = DenseTensor {
+            shape: vec![n, dim],
+            data: payload.data,
+        };
+        Ok(Self::from_tensor2d(Tensor2D::from_backend(backend, n, dim)))
     }
 }
 
@@ -247,12 +238,12 @@ impl<T: Scalar> VectorList<T> {
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     #[inline] pub fn num_vectors(&self) -> usize { self.tensor.rows() }
-    /// External logical shape `[dim, n]`.
+    /// External logical shape `[n, dim]`.
     /// Annotation:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn shape(&self) -> [usize; 2] { [self.dim(), self.num_vectors()] }
+    #[inline] pub fn shape(&self) -> [usize; 2] { [self.num_vectors(), self.dim()] }
 
     // ------------------------ I/O helpers ------------------------
     #[inline]
@@ -270,7 +261,7 @@ impl<T: Scalar> VectorList<T> {
         VectorList { tensor: self.tensor.cast_to::<U>() }
     }
 
-    /// Build from ndarray with shape `[dim, n]`.
+    /// Build from ndarray with shape `[n, dim]`.
     #[inline]
     /// Annotation:
     /// - Purpose: Builds this value from `ndarray` input.
@@ -279,34 +270,17 @@ impl<T: Scalar> VectorList<T> {
     pub fn from_ndarray(array: &Array2<T>) -> Self {
         let shape = array.shape();
         assert!(shape[0] > 0 && shape[1] > 0, "VectorList::from_ndarray: shape must be nonzero");
-
-        let dim = shape[0];
-        let n = shape[1];
-        let mut out = Tensor2D::<T>::empty(n, dim);
-        for i in 0..n {
-            for k in 0..dim {
-                out.set(i as isize, k as isize, array[(k, i)]);
-            }
-        }
-        Self { tensor: out }
+        Self { tensor: Tensor2D::from_ndarray(array) }
     }
 
-    /// Convert to ndarray with shape `[dim, n]`.
+    /// Convert to ndarray with shape `[n, dim]`.
     #[inline]
     /// Annotation:
     /// - Purpose: Converts this value into `ndarray` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_ndarray(&self) -> Array2<T> {
-        let (dim, n) = (self.dim(), self.num_vectors());
-        let mut data = Vec::with_capacity(dim * n);
-        for k in 0..dim {
-            for i in 0..n {
-                data.push(self.tensor.get(i as isize, k as isize));
-            }
-        }
-        Array2::from_shape_vec((dim, n), data)
-            .expect("VectorList::to_ndarray: shape/data length mismatch")
+        self.tensor.to_ndarray()
     }
 
     // --------------------- element accessors ---------------------

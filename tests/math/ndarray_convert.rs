@@ -64,7 +64,7 @@ fn dense_matrix_ndarray_roundtrip() {
 ///   - (none): This function has no documented non-receiver parameters.
 ///   - (none): This function takes no explicit parameters.
 fn vector_list_ndarray_roundtrip() {
-    let a = arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]); // shape [dim=2, n=3]
+    let a = arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]); // shape [n=2, dim=3]
 
     let vl = VectorList::<f64>::from_ndarray(&a);
     assert_eq!(vl.shape(), [2, 3]);

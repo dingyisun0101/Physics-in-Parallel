@@ -9,7 +9,7 @@ fn vector_list() {
 
     // Make 3 vectors in R^3, all zeros initially.
     let mut vl: VectorList<f64> = VectorList::empty(3, 20);
-    assert_eq!(vl.shape(), [3, 20]);
+    assert_eq!(vl.shape(), [20, 3]);
 
     // Set vectors:
     // v0 = (1, 2, 3), v1 = (4, 5, 6), v2 = (7, 8, 9)
@@ -35,7 +35,7 @@ fn vector_list() {
 
     // Decompose into norms and unit vectors:
     let (norms, mut units) = vl.to_polar();
-    assert_eq!(units.shape(), [3, 20]);
+    assert_eq!(units.shape(), [20, 3]);
 
     // Scale each unit vector by its norm (reconstruct original magnitudes).
     units.scale_vectors_by_list(&norms.clone());
@@ -63,19 +63,19 @@ fn vector_list_rand() {
 
     // 2d Haar vectors
     let mut hv_1 = HaarVectors::new(2, n, None);
-    assert_eq!(hv_1.vl.shape(), [2, n]);
+    assert_eq!(hv_1.vl.shape(), [n, 2]);
     hv_1.refresh();
     hv_1.vl.print();
 
     // 1d Haar vectors cast into isize
     let mut hv_2 = HaarVectors::new(1, n, None);
-    assert_eq!(hv_2.vl.shape(), [1, n]);
+    assert_eq!(hv_2.vl.shape(), [n, 1]);
     hv_2.refresh();
     let hv_2_vl = hv_2.vl.cast_to::<isize>();
     hv_2_vl.print();
 
     let mut nn_vectors = NNVectors::new(1, n, None);
-    assert_eq!(nn_vectors.vl.shape(), [1, n]);
+    assert_eq!(nn_vectors.vl.shape(), [n, 1]);
     nn_vectors.refresh();
     nn_vectors.vl.print();
 }

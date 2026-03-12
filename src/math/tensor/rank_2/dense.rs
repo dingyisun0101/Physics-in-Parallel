@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::io::json::{scalar_type_name, FromJsonPayload, Rank2RowsPayload, ToJsonPayload};
+use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
@@ -43,7 +43,7 @@ where
     where
         D: Deserializer<'de>,
     {
-        let payload = Rank2RowsPayload::<T>::deserialize(deserializer)?;
+        let payload = FlatPayload::<T>::deserialize(deserializer)?;
         <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
     }
 }
@@ -52,24 +52,13 @@ impl<T> ToJsonPayload for Tensor2D<T>
 where
     T: Scalar + Serialize + Copy,
 {
-    type Payload = Rank2RowsPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        let mut rows_json: Vec<Vec<T>> = Vec::with_capacity(self.rows);
-        for i in 0..self.rows {
-            let row = self.row_view(i as isize);
-            let mut row_values: Vec<T> = Vec::with_capacity(self.cols);
-            for &x in row {
-                row_values.push(x);
-            }
-            rows_json.push(row_values);
-        }
-
-        Ok(Rank2RowsPayload::new(
+        Ok(FlatPayload::new(
             "tensor_2d",
-            scalar_type_name::<T>(),
-            [self.rows, self.cols],
-            rows_json,
+            vec![self.rows, self.cols],
+            self.backend.data.clone(),
         ))
     }
 }
@@ -78,20 +67,22 @@ impl<T> FromJsonPayload for Tensor2D<T>
 where
     T: Scalar + DeserializeOwned + Copy,
 {
-    type Payload = Rank2RowsPayload<T>;
+    type Payload = FlatPayload<T>;
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate::<T>("tensor_2d")?;
-        let [rows, cols] = payload.shape;
-
-        let mut flat = Vec::with_capacity(rows * cols);
-        for row in payload.data {
-            flat.extend(row);
+        payload.validate_dense("tensor_2d")?;
+        if payload.shape.len() != 2 {
+            return Err(format!(
+                "tensor_2d shape rank mismatch: expected 2, got {}",
+                payload.shape.len()
+            ));
         }
+        let rows = payload.shape[0];
+        let cols = payload.shape[1];
 
         let backend = DenseTensor::<T> {
             shape: vec![rows, cols],
-            data: flat,
+            data: payload.data,
         };
         Ok(Self::from_backend(backend, rows, cols))
     }

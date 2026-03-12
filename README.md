@@ -52,7 +52,7 @@ These are exposed from `src/lib.rs`:
 - Rank-2 math:
   - `Tensor2D` for 2D tensor views/operations.
   - `Matrix` for matrix-centric workflows and matrix traits.
-  - `VectorList` for "many vectors with fixed dimension" storage and operations.
+  - `VectorList` for "many vectors with fixed dimension" storage and operations (logical shape `[n, dim]`).
 
 - Random fillers:
   - `TensorRandFiller` and `RandType` support random initialization patterns reused by model code.
@@ -83,6 +83,7 @@ These are exposed from `src/lib.rs`:
   - Grid configuration (`GridConfig`) and initialization (`GridInitMethod`).
   - `Grid<T>` storage representation for lattice-like spaces.
   - Serialization helpers (`save_grid`) and vacancy conventions.
+  - Grid JSON payloads use flat NumPy-style shape axes, plus kind tags for boundary mode (`grid_periodic` / `grid_clamped`).
   - Random pair generation utilities (`RandPairGenerator`) for stochastic displacement/workflows.
 
 ### How it builds on `math`
@@ -188,3 +189,53 @@ Current package: `models::particles`.
 4. Use `models` packages to run concrete workflows (create state, integrate, apply boundaries/thermostats, observe).
 
 This layering keeps the low-level infrastructure reusable while letting models stay concise and domain-focused.
+
+---
+
+## Serialization schema (current)
+
+PiP uses one flat JSON payload shape for dense-like numeric data:
+
+```json
+{
+  "kind": "...",
+  "shape": [...],
+  "data": [...]
+}
+```
+
+- `shape` follows NumPy/ndarray axis convention.
+- `data` is flat row-major (C-order).
+- Sparse tensors currently serialize as dense payloads with `kind = "tensor_sparse"`.
+
+Common kinds:
+
+- `tensor`
+- `tensor_sparse`
+- `tensor_2d`
+- `matrix`
+- `vector_list` (shape is `[n, dim]`)
+- `grid_periodic` / `grid_clamped`
+
+Example payloads:
+
+```json
+{ "kind": "tensor", "shape": [2, 2], "data": [1.0, 2.0, 3.0, 4.0] }
+```
+
+```json
+{ "kind": "vector_list", "shape": [2, 3], "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] }
+```
+
+```json
+{ "kind": "grid_periodic", "shape": [4, 4], "data": [0, 1, 2, 3, 4, 5, 6, 7, ...] }
+```
+
+---
+
+## Examples
+
+Two runnable examples are provided:
+
+- `cargo run --example serde_flat_json`
+- `cargo run --example vector_list_ndarray`

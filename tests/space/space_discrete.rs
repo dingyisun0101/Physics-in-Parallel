@@ -188,8 +188,8 @@ fn rand_pair_generator_public_surface() {
     let src: &VectorList<isize> = nn_gen.sources();
     let tgt: &VectorList<isize> = nn_gen.targets();
 
-    assert_eq!(src.shape(), [2, 32]);
-    assert_eq!(tgt.shape(), [2, 32]);
+    assert_eq!(src.shape(), [32, 2]);
+    assert_eq!(tgt.shape(), [32, 2]);
 
     for i in 0..32 {
         let dx = tgt.get(i as isize, 0) - src.get(i as isize, 0);
@@ -211,8 +211,8 @@ fn rand_pair_generator_public_surface() {
     );
 
     pl_gen.refresh();
-    assert_eq!(pl_gen.sources().shape(), [3, 16]);
-    assert_eq!(pl_gen.targets().shape(), [3, 16]);
+    assert_eq!(pl_gen.sources().shape(), [16, 3]);
+    assert_eq!(pl_gen.targets().shape(), [16, 3]);
     assert!(
         pl_gen.sources().as_tensor().data.iter().all(|&x| x == 0),
         "with source filler = None, sources should remain at default zeros"

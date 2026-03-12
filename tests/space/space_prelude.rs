@@ -14,5 +14,5 @@ fn space_prelude_compiles_for_common_types() {
 
     let mut rpg = RandPairGenerator::new(KernelType::NearestNeighbor { d: 1 }, 1, 8, None, Some(1));
     rpg.refresh();
-    assert_eq!(rpg.sources().shape(), [1, 8]);
+    assert_eq!(rpg.sources().shape(), [8, 1]);
 }

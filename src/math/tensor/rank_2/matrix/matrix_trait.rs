@@ -1,17 +1,17 @@
 // src/math/tensor/rank_2/matrix/matrix_trait.rs
 /*!
-    Common **2D matrix interface** for dense/sparse backends.
+Common **2D matrix interface** for dense/sparse backends.
 
-    **Keep row/col view types internal to each backend.**
-        This trait only exposes **zero-copy row accessors** as plain slices for maximum
-        performance on dense, row-major storage. Columns (typically strided) and any
-        sparse-specific views should be implemented **inside** each backend module.
+**Keep row/col view types internal to each backend.**
+This trait only exposes **zero-copy row accessors** as plain slices for maximum
+performance on dense, row-major storage. Columns (typically strided) and any
+sparse-specific views should be implemented **inside** each backend module.
 
-    ### Notes
-        - `row/col_view()` / `row/col_view_mut()` must return slices that directly borrow the
-        backend’s internal storage (no copies).
-        - Implementations should document index normalization (e.g., whether negative
-        indices are supported/wrapped).
+### Notes
+- `row/col_view()` / `row/col_view_mut()` must return slices that directly borrow the
+  backend's internal storage (no copies).
+- Implementations should document index normalization (e.g., whether negative
+  indices are supported/wrapped).
 */
 
 use crate::math::{

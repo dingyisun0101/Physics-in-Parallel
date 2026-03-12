@@ -8,6 +8,8 @@ mod prelude;
 mod scalar;
 #[path = "math/serde_roundtrip.rs"]
 mod serde_roundtrip;
+#[path = "math/serde_flat_format.rs"]
+mod serde_flat_format;
 #[path = "math/tensor_sparse.rs"]
 mod tensor_sparse;
 #[path = "math/tensor_unified.rs"]

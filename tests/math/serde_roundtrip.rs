@@ -10,7 +10,8 @@ fn dense_tensor_serde_roundtrip() {
 
     let json = serde_json::to_value(&tensor).expect("dense tensor should serialize");
     assert_eq!(json["kind"], "tensor");
-    assert_eq!(json["storage"], "dense");
+    assert_eq!(json["shape"], serde_json::json!([2, 2]));
+    assert_eq!(json["data"], serde_json::json!([1.0, 0.0, 0.0, 4.0]));
 
     let restored: dense::Tensor<f64> =
         serde_json::from_value(json).expect("dense tensor should deserialize");
@@ -26,8 +27,9 @@ fn sparse_tensor_serde_roundtrip() {
     tensor.set(&[1, 2], 5.0);
 
     let json = serde_json::to_value(&tensor).expect("sparse tensor should serialize");
-    assert_eq!(json["kind"], "tensor");
-    assert_eq!(json["storage"], "sparse");
+    assert_eq!(json["kind"], "tensor_sparse");
+    assert_eq!(json["shape"], serde_json::json!([2, 3]));
+    assert_eq!(json["data"], serde_json::json!([0.0, 2.0, 0.0, 0.0, 0.0, 5.0]));
 
     let restored: sparse::Tensor<f64> =
         serde_json::from_value(json).expect("sparse tensor should deserialize");

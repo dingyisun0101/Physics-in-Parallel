@@ -23,19 +23,19 @@ fn vector_list_rand() {
     
     // 2d Haar vectors
     let mut hv_1 = HaarVectors::new(2, n, None);
-    assert_eq!(hv_1.vl.shape(), [2, n]);
+    assert_eq!(hv_1.vl.shape(), [n, 2]);
     hv_1.refresh();
     hv_1.vl.print();
 
     // 1d Haar vectors cast into isize
     let mut hv_2 = HaarVectors::new(1, n, None);
-    assert_eq!(hv_2.vl.shape(), [1, n]);
+    assert_eq!(hv_2.vl.shape(), [n, 1]);
     hv_2.refresh();
     let hv_2_vl = hv_2.vl.cast_to::<isize>();
     hv_2_vl.print();
 
     let mut nn_vectors = NNVectors::new(1, n, None);
-    assert_eq!(nn_vectors.vl.shape(), [1, n]);
+    assert_eq!(nn_vectors.vl.shape(), [n, 1]);
     nn_vectors.refresh();
     nn_vectors.vl.print();
 }

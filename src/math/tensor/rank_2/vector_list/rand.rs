@@ -1,26 +1,26 @@
 // src/math/tensor/rank_2/vector_list/rand.rs
 /*!
-    Random fillers & utilities that work **in-place** on `VectorList<T>`.
+Random fillers and utilities that work **in-place** on `VectorList<T>`.
 
-    This file defines a small trait `VectorListRand` (requires `new` and `refresh`)
-    and two implementers:
-        - `HaarVectors`: unit vectors sampled uniformly on `S^{D-1}` (Haar).
-        - `NNVectors`: nearest-neighbor one-hot ±1 direction vectors.
+This file defines a small trait `VectorListRand` (requires `new` and `refresh`)
+and two implementers:
+- `HaarVectors`: unit vectors sampled uniformly on `S^{D-1}` (Haar).
+- `NNVectors`: nearest-neighbor one-hot +/-1 direction vectors.
 
-    Notes
-    -----
-        - It uses a DENSE backend by default!
-        - `HaarVectors::refresh` draws i.i.d. Normal(0,1) and L2-normalizes each vector.
-        - `NNVectors::refresh` samples integer **codes** in `[0, 2D)` and decodes them:
-            axis = code / 2, sign = +1 if even else -1. It first zeroes all entries,
-            then sets the one-hot signed axis per column.
+Notes:
+- It uses a dense backend by default.
+- `HaarVectors::refresh` draws i.i.d. `Normal(0,1)` and L2-normalizes each vector.
+- `NNVectors::refresh` samples integer codes in `[0, 2D)` and decodes them:
+  `axis = code / 2`, `sign = +1` if even else `-1`.
 
-    Both implement `VectorListRand`:
-        let mut hv = HaarVectors::new(dim, n);
-        hv.refresh();
+Both implement `VectorListRand`:
+```ignore
+let mut hv = HaarVectors::new(dim, n, None);
+hv.refresh();
 
-        let mut nn = NNVectors::new(dim, n);
-        nn.refresh();
+let mut nn = NNVectors::new(dim, n, None);
+nn.refresh();
+```
 */
 use rayon::prelude::*;
 use ndarray::Array2;
@@ -44,7 +44,7 @@ use super::VectorList;
 pub trait VectorListRand {
     type Elem;
 
-    /// Allocate an empty `[dim, n]` `VectorList` and any internal buffers.
+    /// Allocate an empty `[n, dim]` `VectorList` and any internal buffers.
     /// Annotation:
     /// - Purpose: Constructs and returns a new instance.
     /// - Parameters:
@@ -53,7 +53,7 @@ pub trait VectorListRand {
     ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self where Self: Sized;
 
-    /// Refill the internal `VectorList` in-place, keeping shape `[dim, n]`.
+    /// Refill the internal `VectorList` in-place, keeping shape `[n, dim]`.
     /// Annotation:
     /// - Purpose: Executes `refresh` logic for this module.
     /// - Parameters:
@@ -112,7 +112,7 @@ impl VectorListRand for HaarVectors {
 }
 
 impl HaarVectors {
-    /// Build a HaarVectors container from existing ndarray data (`[dim, n]`).
+    /// Build a HaarVectors container from existing ndarray data (`[n, dim]`).
     ///
     /// The random filler is initialized to the standard Haar refresh distribution
     /// (`Normal { mean: 0, std: 1 }`), so a subsequent `refresh()` remains valid.
@@ -132,7 +132,7 @@ impl HaarVectors {
         Self { vl, dim, n, filler }
     }
 
-    /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
+    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
     /// Annotation:
     /// - Purpose: Converts this value into `ndarray` form.
@@ -190,7 +190,7 @@ impl NdarrayConvert for HaarVectors {
 
 #[derive(Debug, Clone)]
 pub struct NNVectors {
-    pub vl: VectorList<isize>,  // shape [dim, n], entries in {-1, 0, +1}
+    pub vl: VectorList<isize>,  // shape [n, dim], entries in {-1, 0, +1}
     pub dim: usize,
     pub n: usize,
     code_buf: Tensor<usize>,     // shape [n], holds codes in [0, 2*dim)
@@ -254,7 +254,7 @@ impl VectorListRand for NNVectors {
 }
 
 impl NNVectors {
-    /// Build an NNVectors container from existing ndarray data (`[dim, n]`).
+    /// Build an NNVectors container from existing ndarray data (`[n, dim]`).
     ///
     /// The random code buffer/filler are initialized with defaults so `refresh()` remains valid.
     #[inline]
@@ -274,7 +274,7 @@ impl NNVectors {
         Self { vl, dim, n, code_buf, code_filler }
     }
 
-    /// Export inner vector-list storage to ndarray with shape `[dim, n]`.
+    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
     /// Annotation:
     /// - Purpose: Converts this value into `ndarray` form.

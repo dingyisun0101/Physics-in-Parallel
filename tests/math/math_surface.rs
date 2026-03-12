@@ -340,14 +340,14 @@ fn tensor2d_matrix_vector_list_public_surface() {
     let _vtm = vl.as_tensor_mut();
     vl.print();
     let _vl_cast = vl.cast_to::<i64>();
-    let arr_v = arr2(&[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]);
+    let arr_v = arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
     vl = VectorList::<f64>::from_ndarray(&arr_v);
     let _arr_back = vl.to_ndarray();
     assert_eq!(vl.get(1, 2), 6.0);
     vl.set(1, 2, 7.0);
-    assert_eq!(vl.get_vector(1), [2.0, 4.0, 7.0]);
+    assert_eq!(vl.get_vector(1), [4.0, 5.0, 7.0]);
     vl.get_vector_mut(0)[0] = 9.0;
-    assert_eq!(vl.get_axis(0), vec![9.0, 2.0]);
+    assert_eq!(vl.get_axis(0), vec![9.0, 4.0]);
     vl.scale_vectors_by_list(&[2.0, 3.0]);
     vl.set_vector_from_slice(0, &[1.0, 1.0, 1.0]);
     vl.set_axis_from_slice(1, &[2.0, 3.0]);

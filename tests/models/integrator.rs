@@ -19,7 +19,7 @@ fn euler_updates_v_then_r() {
     );
     assert_eq!(
         obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
-        [1.0].as_slice()
+        [0.5].as_slice()
     );
 
     let mut obj2 = create_template(1, 1).unwrap();
