@@ -1,0 +1,308 @@
+Physics-in-Parallel correctness and efficiency TODO
+==================================================
+
+Scope
+-----
+Work one file at a time, from the lowest-level numeric contracts toward the
+higher-level simulation modules. Ignore README and generated-looking annotation
+comments until correctness and efficiency work is complete. Regenerate
+human-facing documentation only after code behavior is settled.
+
+
+0. Baseline checks
+------------------
+[ ] Run `cargo test` before the first code change and record the baseline.
+[ ] Run `cargo fmt --check` and decide whether to include formatting cleanup as
+    a separate mechanical pass.
+[ ] Run `cargo clippy --all-targets --all-features -- -D warnings` and separate
+    behavior-relevant findings from style-only findings.
+[ ] For each file below, add or update focused tests before or alongside changes
+    when the behavior is nontrivial.
+
+
+1. Scalar foundation
+--------------------
+[ ] Review `src/math/scalar/scalar_trait.rs`.
+    [ ] Confirm the `Scalar` trait contract is minimal and matches actual use.
+    [ ] Decide whether integer `sqrt`, norm, and `abs_real` semantics should be
+        part of a physics-facing scalar abstraction or split into narrower traits.
+    [ ] Confirm `Scalar::Real` bounds are sufficient for all real/complex paths.
+    [ ] Confirm sealing is intentional for public crate extensibility.
+
+[ ] Review `src/math/scalar/real.rs`.
+    [ ] Verify signed integer `abs_real` and `norm_sqr_real` behavior at min values.
+    [ ] Confirm saturating integer square/norm behavior is intended.
+    [ ] Check whether negative integer `sqrt` returning zero is acceptable.
+    [ ] Add tests for edge values not already covered.
+
+[ ] Review `src/math/scalar/complex.rs`.
+    [ ] Verify complex `sqrt`, norm, conjugation, and finite checks.
+    [ ] Confirm complex-to-real cast behavior should drop imaginary components.
+    [ ] Add tests for nonzero imaginary casts and non-finite components.
+
+
+2. Core tensor trait and dense backend
+--------------------------------------
+[ ] Review `src/math/tensor/core/tensor_trait.rs`.
+    [ ] Clarify backend semantics for wrapping, sparse implicit zeros, and
+        in-place zip behavior.
+    [ ] Remove impossible `?Sized` bounds if keeping `Clone` on the trait.
+    [ ] Decide whether `get_mut` on sparse should insert zeros or only return
+        existing entries; align trait docs and implementation.
+
+[ ] Review `src/math/tensor/core/dense.rs`.
+    [ ] Verify shape validation and checked product behavior.
+    [ ] Decide whether toroidal indexing should be universal tensor behavior or
+        explicit periodic-space behavior.
+    [ ] Check release-mode rank mismatch behavior; debug assertions disappear.
+    [ ] Replace direct `ToString` implementation with `Display` if keeping the
+        string roundtrip API.
+    [ ] Review unsafe access blocks and ensure invariants hold in release builds.
+    [ ] Improve `par_zip_with_inplace` index generation to avoid per-element
+        allocation of `Vec<isize>`.
+    [ ] Add tests for rank mismatch, zero dimensions, overflow, and wrapping.
+
+[ ] Review `src/math/tensor/core/dense_rand.rs`.
+    [ ] Replace panic-based validation with explicit validation or documented
+        constructor failures where practical.
+    [ ] Use `usize::div_ceil` where applicable.
+    [ ] Avoid repeated distribution construction in hot loops when possible.
+    [ ] Confirm RNG splitting is deterministic for seeded fillers and stable
+        across refresh calls.
+    [ ] Add tests for invalid distributions and deterministic seeded output.
+
+
+3. Sparse and unified tensors
+-----------------------------
+[ ] Review `src/math/tensor/core/sparse.rs`.
+    [ ] Verify sparse arithmetic semantics for addition, subtraction,
+        multiplication, division, and bit-and.
+    [ ] Check whether scalar addition should affect implicit zeros; current
+        sparse scalar ops only transform stored entries.
+    [ ] Validate `par_fill` semantics: current sparse behavior fills existing
+        nonzeros only, not the full dense domain.
+    [ ] Review `get_mut_or_insert_zero` and zero-pruning expectations.
+    [ ] Avoid unnecessary key union work for operations where intersection is
+        enough, especially multiplication and bit-and.
+    [ ] Add tests documenting sparse scalar-op and `par_fill` behavior.
+
+[ ] Review `src/math/tensor/core/unified.rs`.
+    [ ] Verify dense/sparse dispatch preserves backend identity.
+    [ ] Confirm conversion and serde behavior match public API expectations.
+    [ ] Add tests for mixed conversion paths and error cases.
+
+
+4. Rank-2 math containers
+-------------------------
+[ ] Review `src/math/tensor/rank_2/dense.rs`.
+    [ ] Verify row-major layout and row/column access semantics.
+    [ ] Remove unnecessary explicit lifetimes.
+    [ ] Check ndarray conversion for non-standard array memory layouts.
+    [ ] Fix `to_string` wrapper if it currently discards the produced string.
+
+[ ] Review `src/math/tensor/rank_2/matrix/matrix_trait.rs`.
+    [ ] Decide whether panicking column slice APIs belong in the trait.
+    [ ] Consider a trait API that distinguishes contiguous row slices from
+        cached or guarded column access.
+
+[ ] Review `src/math/tensor/rank_2/matrix/dense.rs`.
+    [ ] Verify mutable column guard soundness and drop behavior.
+    [ ] Check matrix normalization for integer scalar types.
+    [ ] Consider parallel or cache-friendly transpose for large matrices.
+    [ ] Add tests for column mutation committing on drop.
+
+[ ] Review `src/math/tensor/rank_2/vector_list.rs`.
+    [ ] Verify `VectorList::empty(dim, n)` argument order is consistently used.
+    [ ] Parallelize `scale_vectors_by_list` or justify serial row scaling.
+    [ ] Avoid cloning dense backends for simple elementwise operations where an
+        allocation can be filled directly.
+    [ ] Add tests for zero vectors, normalization, and shape mismatches.
+
+[ ] Review `src/math/tensor/rank_2/vector_list/rand.rs`.
+    [ ] Verify Haar vector normalization and zero-norm handling.
+    [ ] Check nearest-neighbor sampling uniformity over `2 * dim` directions.
+    [ ] Remove needless mutable borrows flagged by clippy.
+    [ ] Add deterministic seeded tests where possible.
+
+
+5. IO and Python interoperability
+---------------------------------
+[ ] Review `src/io/json.rs`.
+    [ ] Improve validation error messages, especially wrong-kind messages.
+    [ ] Use checked shape products everywhere deserialization can allocate.
+    [ ] Confirm flat schema is stable before documentation regeneration.
+
+[ ] Review `src/io/ndarray.rs` and `src/math/ndarray_convert.rs`.
+    [ ] Confirm trait naming and scope are still useful.
+    [ ] Verify all ndarray conversions preserve row-major semantics.
+
+[ ] Review `python/numpy_support.py`.
+    [ ] Test against current Rust flat payloads for tensors, vector lists, grids,
+        and `PhysObj`.
+    [ ] Decide whether legacy support should remain.
+
+
+6. Space layer
+--------------
+[ ] Review `src/space/space_trait.rs`.
+    [ ] Replace `&PathBuf` with `&Path` if changing public API is acceptable.
+    [ ] Confirm trait responsibilities are limited to space behavior.
+
+[ ] Review `src/space/discrete/representation.rs`.
+    [ ] Verify `GridConfig::num_sites` overflow behavior.
+    [ ] Decide whether `GridInitMethod::Empty` should mean default value or
+        vacancy sentinel.
+    [ ] Validate random initialization reproducibility requirements.
+    [ ] Add explicit behavior for `rescale(0)` instead of relying on downstream
+        divide-by-zero or empty-shape behavior.
+    [ ] Consider average/downsample mode for numeric grids; keep point sampling
+        for categorical grids.
+    [ ] Rename deprecated or misspelled APIs such as `from_ndarry` if allowed.
+
+[ ] Review `src/space/kernel.rs`.
+    [ ] Verify power-law inverse-CDF formula and support interval.
+    [ ] Decide whether kernels need seedable deterministic sampling.
+    [ ] Avoid per-element thread-local RNG overhead if performance matters.
+    [ ] Add distribution property tests for sample ranges.
+
+[ ] Review `src/space/discrete/displacement.rs`.
+    [ ] Avoid temporary casted `VectorList<isize>` for continuous displacements.
+    [ ] Confirm truncation from continuous directions to integer steps is the
+        intended algorithm; consider rounding or lattice-aware sampling.
+    [ ] Simplify optional source filler logic.
+    [ ] Add tests for continuous-kernel displacement behavior.
+
+
+7. Engine layer
+---------------
+[ ] Review `src/engines/soa/phys_obj.rs`.
+    [ ] Fix duplicated generic bounds flagged by clippy.
+    [ ] Check all shape and type errors carry enough context.
+    [ ] Confirm `AttrsCore::rename` and object-count invariants after mutation.
+    [ ] Decide whether heterogeneous typed storage should support deserialization.
+    [ ] Add tests for removal, rename collisions, and out-of-bounds row access.
+
+[ ] Review `src/engines/soa/interaction.rs`.
+    [ ] Confirm undirected topology should sort nodes instead of rejecting
+        non-canonical order.
+    [ ] Decide whether duplicate nodes in an interaction key should be allowed.
+    [ ] Ensure topology and payload stores cannot become inconsistent through
+        public mutable access.
+    [ ] Consider compaction or capacity management for long-running churn.
+    [ ] Add tests for mixed arity, duplicate nodes, clear/reinsert, and payload
+        overwrite behavior.
+
+[ ] Review `src/engines/soa/neighbor_list.rs`.
+    [ ] Verify stride computation and linear-id conversion for dimensions above 2.
+    [ ] Check duplicate candidate pairs caused by neighboring-cell traversal.
+    [ ] Consider periodic boundary support or document non-periodic-only behavior.
+    [ ] Add tests for 1D, 2D, 3D, boundary-clipped particles, and duplicate pairs.
+
+
+8. Particle model state and observers
+-------------------------------------
+[ ] Review `src/models/particles/attrs.rs`.
+    [ ] Confirm canonical labels are complete and consistent across modules.
+
+[ ] Review `src/models/particles/create_state.rs`.
+    [ ] Validate `create_template` behavior for zero dimensions or zero particles.
+    [ ] Check whether `ATTR_ALIVE` should be part of the default template.
+    [ ] Confirm rigid default semantics.
+    [ ] Verify `randomize_r` uniform bounds and jittered-grid centering behavior.
+    [ ] Verify `randomize_v` Maxwell-Boltzmann variance and mass convention.
+    [ ] Add tests for invalid dimensions, invalid random parameters, and seeded
+        reproducibility if added.
+
+[ ] Review `src/models/particles/observe.rs`.
+    [ ] Verify kinetic-energy formula using inverse mass: `0.5 * v^2 / m_inv`.
+    [ ] Decide whether rigid particles should be excluded or included.
+    [ ] Validate behavior for zero active particles and invalid masses.
+    [ ] Add tests for alive masks and temperature degrees of freedom.
+
+
+9. Particle dynamics algorithms
+-------------------------------
+[ ] Review `src/models/particles/integrator.rs`.
+    [ ] Reduce full-buffer cloning in explicit and semi-implicit Euler.
+    [ ] Consider adding velocity Verlet or leapfrog for better physical accuracy.
+    [ ] Verify alive and rigid masks preserve both position and velocity as
+        intended.
+    [ ] Validate acceleration reset expectations; current integrators consume `a`
+        but do not clear it.
+    [ ] Add tests for rigid particles, shape errors, and multi-particle updates.
+
+[ ] Review `src/models/particles/boundary.rs`.
+    [ ] Verify periodic, clamp, and reflect behavior for large overshoots.
+    [ ] Check reflect velocity flip parity for multiple boundary crossings.
+    [ ] Decide how non-finite positions/velocities should be handled.
+    [ ] Add tests for multi-axis reflection and rigid mask behavior.
+
+[ ] Review `src/models/particles/thermostat.rs`.
+    [ ] Verify Langevin update formula and fluctuation-dissipation convention.
+    [ ] Consider parallelizing thermostat application with deterministic per-index
+        RNG seeds.
+    [ ] Confirm seed and step counter behavior is reproducible and documented.
+    [ ] Validate rigid and alive mask behavior.
+    [ ] Add tests for rigid particles, invalid mass, and distribution sanity.
+
+
+10. Particle interactions
+-------------------------
+[ ] Review `src/models/particles/interactions/spring_network.rs`.
+    [ ] Return errors instead of silently `Ok(())` for invalid `m_inv`, `alive`,
+        `rigid`, or `a` shapes.
+    [ ] Validate spring parameters: finite `k`, finite non-negative `l_0`, valid
+        cutoff order.
+    [ ] Verify Hooke force sign convention with a two-particle test.
+    [ ] Decide whether accelerations should be added to existing `a` or overwrite.
+    [ ] Consider parallel accumulation with thread-local buffers or pair coloring.
+    [ ] Add tests for rigid endpoints, dead endpoints, cutoff, invalid shapes, and
+        equal-position particles.
+
+[ ] Review `src/models/particles/interactions/power_law.rs`.
+    [ ] Fix or confirm `PowerLawRange` order; docs currently say `(max, min)`.
+    [ ] Decide whether this module is only a storage wrapper or should apply
+        acceleration like `SpringNetwork`.
+    [ ] Validate `k`, `alpha`, and range parameters.
+    [ ] Add tests once behavior is defined.
+
+[ ] Review `src/models/particles/interactions/neighbor_list.rs`.
+    [ ] Validate position dimensions against neighbor-list dimensions.
+    [ ] Decide whether pairs exactly at cutoff should be included.
+    [ ] Check duplicate pair generation from underlying candidate traversal.
+    [ ] Add tests for alive filtering and cutoff boundaries.
+
+
+11. Public API cleanup
+----------------------
+[ ] Review top-level module files:
+    [ ] `src/lib.rs`
+    [ ] `src/math.rs`
+    [ ] `src/space.rs`
+    [ ] `src/engines.rs`
+    [ ] `src/models.rs`
+    [ ] `src/prelude.rs`
+[ ] Confirm exported paths are intentional and stable.
+[ ] Remove or deprecate misspelled compatibility APIs after deciding API policy.
+[ ] Ensure examples compile and demonstrate the intended public API.
+
+
+12. Final verification
+----------------------
+[ ] Run `cargo fmt`.
+[ ] Run `cargo test`.
+[ ] Run `cargo clippy --all-targets --all-features -- -D warnings`.
+[ ] Run examples:
+    [ ] `cargo run --example serde_flat_json`
+    [ ] `cargo run --example vector_list_ndarray`
+[ ] Optionally run focused benchmarks or add Criterion benchmarks for hot paths.
+
+
+13. Documentation regeneration
+------------------------------
+[ ] Remove or replace generated-looking annotation comments where they reduce
+    readability.
+[ ] Regenerate human-facing module docs after correctness and efficiency changes.
+[ ] Update README only after module docs and public API are stable.
+[ ] Update `python/README.md` after final JSON schema and Python behavior are
+    confirmed.

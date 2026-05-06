@@ -1,5 +1,7 @@
-pub mod scalar_trait;
-pub mod real;
-pub mod complex;
+#![allow(clippy::tabs_in_doc_comments)]
 
-pub use scalar_trait::{Scalar, ScalarSerde};
+pub mod complex;
+pub mod real;
+pub mod scalar_trait;
+
+pub use scalar_trait::{Scalar, ScalarCastError, ScalarSerde};
