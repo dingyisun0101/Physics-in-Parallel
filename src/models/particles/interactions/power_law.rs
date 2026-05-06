@@ -104,7 +104,10 @@ impl PowerLawNetwork {
         if pair.0.max(pair.1) >= self.interactions.topology().n_objects() {
             return Ok(None);
         }
-        Ok(self.interactions.remove(&[pair.0, pair.1])?.map(|(_, payload)| payload))
+        Ok(self
+            .interactions
+            .remove(&[pair.0, pair.1])?
+            .map(|(_, payload)| payload))
     }
 
     /// Alias for `delete_power_law`.

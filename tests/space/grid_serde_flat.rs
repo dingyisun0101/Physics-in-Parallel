@@ -3,7 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use physics_in_parallel::space::discrete::representation::{save_grid, Grid, GridConfig, GridInitMethod};
+use physics_in_parallel::space::discrete::representation::{
+    Grid, GridConfig, GridInitMethod, save_grid,
+};
 
 fn unique_tmp_json(name: &str) -> PathBuf {
     let nanos = SystemTime::now()

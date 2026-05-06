@@ -33,8 +33,8 @@ use core::fmt::{Debug, Display};
 use core::iter::{Product, Sum};
 
 use num_traits::{Num, NumCast, One, Zero};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// Internal sealing so only this crate can implement scalar traits.
 pub(crate) mod scalar_sealed {

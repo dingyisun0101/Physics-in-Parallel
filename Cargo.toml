@@ -1,6 +1,6 @@
 [package]
 name = "physics_in_parallel"
-version = "2.0.8"
+version = "3.0.0"
 edition = "2024"
 
 description = "High-performance infrastructure for numerical simulations in physics"
@@ -22,16 +22,17 @@ num-traits = "0.2"
 num-complex = { version ="0.4", features = ["serde"]}
 
 # Random number generation
-rand = "0.10"
+rand = "0.10.1"
 rand_distr = "0.6"
 rand_chacha = "0.10"
+rand_pcg = "0.10.2"
 
 # Automatic parallelism 
-rayon = { version = "1.11"}
+rayon = { version = "1.12"}
 
 # Fast hash maps
 ahash = "0.8"
-hashbrown = "0.16.1"
+hashbrown = "0.17.0"
 
 # IO
 serde = { version = "1.0", features = ["derive"] }

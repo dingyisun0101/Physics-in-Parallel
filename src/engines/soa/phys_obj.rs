@@ -8,9 +8,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::io::json::{
-    AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload,
-};
+use crate::io::json::{AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload};
 use crate::math::{
     scalar::Scalar,
     tensor::rank_2::vector_list::{DynVectorList, VectorList},
@@ -18,7 +16,6 @@ use crate::math::{
 
 /// Stable attribute index.
 pub type AttrId = usize;
-
 
 // =============================================================================
 // ------------------- AttrsMeta: The Metadata Wrapper -------------------------
@@ -53,18 +50,22 @@ impl AttrsMeta {
     }
 }
 
-
-
-
 // =============================================================================
 // --------------------- AttrsCore: Core Data Wrapper --------------------------
 // =============================================================================
 /// Errors for attribute metadata/core operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttrsError {
-    DuplicateLabel { label: String },
-    UnknownLabel { label: String },
-    InvalidVectorShape { dim: usize, n: usize },
+    DuplicateLabel {
+        label: String,
+    },
+    UnknownLabel {
+        label: String,
+    },
+    InvalidVectorShape {
+        dim: usize,
+        n: usize,
+    },
     InconsistentObjectCount {
         label: String,
         expected: usize,
@@ -80,7 +81,10 @@ pub enum AttrsError {
         expected: String,
         got: String,
     },
-    WrongVectorLen { expected: usize, got: usize },
+    WrongVectorLen {
+        expected: usize,
+        got: usize,
+    },
 }
 
 /// Core typed vector-list storage keyed by attribute label.
@@ -137,7 +141,6 @@ impl AttrsCore {
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         self.data.keys().map(|k| k.as_str())
     }
-
 }
 
 impl ToJsonPayload for AttrsCore {
@@ -149,12 +152,11 @@ impl ToJsonPayload for AttrsCore {
 
         let mut attrs: Vec<LabeledPayload> = Vec::with_capacity(labels.len());
         for label in labels {
-            let col = self
-                .data
-                .get(label)
-                .ok_or_else(|| serde_json::Error::io(std::io::Error::other(format!(
+            let col = self.data.get(label).ok_or_else(|| {
+                serde_json::Error::io(std::io::Error::other(format!(
                     "label disappeared during serialization: {label}"
-                ))))?;
+                )))
+            })?;
             attrs.push(LabeledPayload {
                 label: label.to_string(),
                 payload: col.serialize_value()?,
@@ -273,9 +275,12 @@ impl AttrsCore {
     /// - Parameters:
     ///   - `label` (`&str`): Attribute label key used for lookup/downcast.
     pub fn get<T: Scalar + 'static>(&self, label: &str) -> Result<&VectorList<T>, AttrsError> {
-        let col = self.data.get(label).ok_or_else(|| AttrsError::UnknownLabel {
-            label: label.to_string(),
-        })?;
+        let col = self
+            .data
+            .get(label)
+            .ok_or_else(|| AttrsError::UnknownLabel {
+                label: label.to_string(),
+            })?;
 
         col.as_any()
             .downcast_ref::<VectorList<T>>()
@@ -387,23 +392,27 @@ impl AttrsCore {
     /// - Parameters:
     ///   - `label` (`&str`): Attribute label key used for lookup.
     pub fn dim_of(&self, label: &str) -> Result<usize, AttrsError> {
-        let col = self.data.get(label).ok_or_else(|| AttrsError::UnknownLabel {
-            label: label.to_string(),
-        })?;
+        let col = self
+            .data
+            .get(label)
+            .ok_or_else(|| AttrsError::UnknownLabel {
+                label: label.to_string(),
+            })?;
         Ok(col.dim())
     }
     /// - Purpose: Returns the runtime scalar type name stored under an attribute label.
     /// - Parameters:
     ///   - `label` (`&str`): Attribute label key used for lookup.
     pub fn type_name_of(&self, label: &str) -> Result<&'static str, AttrsError> {
-        let col = self.data.get(label).ok_or_else(|| AttrsError::UnknownLabel {
-            label: label.to_string(),
-        })?;
+        let col = self
+            .data
+            .get(label)
+            .ok_or_else(|| AttrsError::UnknownLabel {
+                label: label.to_string(),
+            })?;
         Ok(col.type_name())
     }
 }
-
-
 
 // =============================================================================
 // --------------------------------- PhysObj -----------------------------------

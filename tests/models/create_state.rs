@@ -1,6 +1,6 @@
 use physics_in_parallel::models::particles::create_state::{
-    create_template, randomize_r, randomize_v, MassiveParticlesError, RandPosMethod, RandVelMethod,
-    ATTR_M, ATTR_M_INV, ATTR_R, ATTR_V,
+    ATTR_M, ATTR_M_INV, ATTR_R, ATTR_V, MassiveParticlesError, RandPosMethod, RandVelMethod,
+    create_template, randomize_r, randomize_v,
 };
 
 #[test]

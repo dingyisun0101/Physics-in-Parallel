@@ -1,12 +1,12 @@
 // src/math_foundations/tensor/dense.rs
-/*! 
+/*!
 A **general-purpose N-dimensional dense tensor** backed by a flat `Vec<T>`.
 
 Goals:
 - **Performance-first**: contiguous memory layout with cache-friendly linear indexing.
 - **Ergonomics**: safe multidimensional accessors, explicit raw/unsafe alternatives.
 - **Parallelism**: `rayon`-powered in-place maps/zips and elementwise arithmetic.
-- **Type-agnostic**: generic over a unified `Scalar` trait (real or complex).
+- **Type-agnostic**: generic over the crate-wide `Scalar` trait (real or complex).
 - **Interoperability**: round-trip conversions to/from a sparse tensor type.
 
 # Highlights
@@ -22,7 +22,7 @@ Goals:
 - `ToString` + `from_string()`: simple textual roundtrip for small matrices.
 - `print_2d()`: quick terminal visualization for 1D/2D tensors.
 
-> **Note**  
+> **Note**
 > This file assumes a project-wide `Scalar` trait providing:
 > - associated `type Real`
 > - `fn re(&self) -> Self::Real`, `fn im(&self) -> Self::Real`
@@ -30,7 +30,7 @@ Goals:
 > - `fn zero() -> Self`, `fn default() -> Self`
 > and typical arithmetic traits. Adjust bounds if your `Scalar` differs.
 
-> **Semantics (Important!)**  
+> **Semantics (Important!)**
 > - All accessors use **toroidal wrapping**:
 >   - Axis index `a` maps to `((a % dim) + dim) % dim` (Euclidean modulo).
 >   - Linear index `k` maps to `k % len`.
@@ -40,21 +40,20 @@ Goals:
 */
 
 use std::fmt::Display;
-use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::str::FromStr;
 
+use ndarray::{ArrayD, IxDyn};
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use num_traits::NumCast;
-use ndarray::{ArrayD, IxDyn};
 
-use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
-use crate::math::ndarray_convert::NdarrayConvert;
-use crate::math::scalar::Scalar;
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
+use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
+use crate::math::ndarray_convert::NdarrayConvert;
+use crate::math::scalar::{Scalar, ScalarCastError};
 
 //===================================================================
 // -------------------------- Basic Struct --------------------------
@@ -171,7 +170,9 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
     let mut m = idx % d;
-    if m < 0 { m += d; }
+    if m < 0 {
+        m += d;
+    }
     m as usize
 }
 
@@ -266,9 +267,10 @@ where
     ///   - (none): This function has no documented non-receiver parameters.
     fn get_sum(&self) -> T {
         let result = self
-            .data.par_iter()
-            .cloned().
-            reduce(|| T::zero(), |a, b| a + b);
+            .data
+            .par_iter()
+            .cloned()
+            .reduce(|| T::zero(), |a, b| a + b);
         result
     }
 
@@ -375,36 +377,33 @@ where
     #[inline]
     fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
     where
-        Rhs: TensorTrait<T> + ?Sized,
+        Rhs: TensorTrait<T>,
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
         let rank = self.shape.len();
         let dims = self.shape.clone();
 
-        self.data
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(k, a)| {
-                // linear -> multi-index (row-major)
-                let mut rem = k;
-                let mut idx = vec![0isize; rank];
-                for ax in (0..rank).rev() {
-                    let d = dims[ax];
-                    // `rem % d` is in [0, d); convert to isize (non-negative)
-                    idx[ax] = (rem % d) as isize;
-                    rem /= d;
-                }
-                let b = other.get(&idx);
-                *a = f(*a, b);
-            });
+        self.data.par_iter_mut().enumerate().for_each(|(k, a)| {
+            // linear -> multi-index (row-major)
+            let mut rem = k;
+            let mut idx = vec![0isize; rank];
+            for ax in (0..rank).rev() {
+                let d = dims[ax];
+                // `rem % d` is in [0, d); convert to isize (non-negative)
+                idx[ax] = (rem % d) as isize;
+                rem /= d;
+            }
+            let b = other.get(&idx);
+            *a = f(*a, b);
+        });
     }
 
     /// Eager, element-wise type cast (panics on failure).
     #[inline]
     fn cast_to<U: Scalar>(&self) -> Self::Repr<U>
     where
-        T: Scalar,
+        T: Copy + Send + Sync,
     {
         // Call the inherent `try_cast_to` to avoid trait recursion.
         self.try_cast_to::<U>()
@@ -522,30 +521,13 @@ impl_tensor_scalar_assign!(DivAssign, div_assign, /);
 // ===================================================================
 
 impl<T: Scalar> Tensor<T> {
-    /// Attempt to cast `self` (component-wise) into `Tensor<U>`.
+    /// Attempt to cast `self` elementwise into `Tensor<U>`.
     /// Returns an error if any component over/underflows or cannot be represented.
     ///
-    /// - Complex→Real: uses `.re()`/`.im()` pair and reconstructs `U` via `from_re_im`.
+    /// - Each element is converted through `Scalar::try_cast`.
     /// - Parallelized over elements.
-    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, &'static str> {
-        #[inline(always)]
-        fn cast_scalar<T: Scalar, U: Scalar>(x: T) -> Result<U, &'static str> {
-            let r_t: T::Real = x.re();
-            let i_t: T::Real = x.im();
-
-            let r_u: U::Real =
-                NumCast::from(r_t).ok_or("real part out of range for target type")?;
-            let i_u: U::Real =
-                NumCast::from(i_t).ok_or("imag part out of range for target type")?;
-
-            Ok(U::from_re_im(r_u, i_u))
-        }
-
-        let data: Result<Vec<U>, _> = self
-            .data
-            .par_iter()
-            .map(|&x| cast_scalar::<T, U>(x))
-            .collect();
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
+        let data: Result<Vec<U>, _> = self.data.par_iter().map(|&x| x.try_cast::<U>()).collect();
 
         Ok(Tensor {
             shape: self.shape.clone(),
@@ -623,9 +605,9 @@ impl<T: Scalar + FromStr> Tensor<T> {
                     .filter(|x| !x.trim().is_empty())
                     .map(|num| {
                         let cleaned = num.trim();
-                        cleaned.parse::<T>().unwrap_or_else(|_| {
-                            panic!("Invalid number in tensor: '{}'", cleaned)
-                        })
+                        cleaned
+                            .parse::<T>()
+                            .unwrap_or_else(|_| panic!("Invalid number in tensor: '{}'", cleaned))
                     })
                     .collect()
             })
@@ -673,7 +655,9 @@ impl<T: Scalar> Tensor<T> {
 
         for (&k, &v) in sparse.iter() {
             // SAFETY: k < size as guaranteed by the sparse structure.
-            unsafe { *data.get_unchecked_mut(k) = v; }
+            unsafe {
+                *data.get_unchecked_mut(k) = v;
+            }
         }
 
         Self { shape, data }
@@ -790,7 +774,6 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
         }
     }
 }
-
 
 impl<T> Tensor<T>
 where

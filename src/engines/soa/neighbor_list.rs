@@ -5,15 +5,8 @@ Cell-linked neighbor-list backend for bounded particle systems.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NeighborListError {
     InvalidCellSize { cell_size: f64 },
-    InvalidBounds {
-        axis: usize,
-        min: f64,
-        max: f64,
-    },
-    InvalidPositionShape {
-        expected_len: usize,
-        got_len: usize,
-    },
+    InvalidBounds { axis: usize, min: f64, max: f64 },
+    InvalidPositionShape { expected_len: usize, got_len: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +77,11 @@ impl NeighborList {
         }
     }
 
-    pub fn rebuild(&mut self, positions: &[f64], n_particles: usize) -> Result<(), NeighborListError> {
+    pub fn rebuild(
+        &mut self,
+        positions: &[f64],
+        n_particles: usize,
+    ) -> Result<(), NeighborListError> {
         let expected_len = self.dim.saturating_mul(n_particles);
         if positions.len() != expected_len {
             return Err(NeighborListError::InvalidPositionShape {

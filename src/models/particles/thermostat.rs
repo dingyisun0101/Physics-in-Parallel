@@ -142,31 +142,32 @@ impl Thermostat for LangevinThermostat {
             out
         };
 
-        let alive_flags: Option<Vec<bool>> = if self.include_dead || !objects.core.contains(ATTR_ALIVE) {
-            None
-        } else {
-            let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
-            if alive.dim() != 1 {
-                return Err(ThermostatError::InvalidAttrShape {
-                    label: ATTR_ALIVE,
-                    expected_dim: 1,
-                    got_dim: alive.dim(),
-                });
-            }
-            if alive.num_vectors() != n {
-                return Err(ThermostatError::InconsistentParticleCount {
-                    label: ATTR_ALIVE,
-                    expected: n,
-                    got: alive.num_vectors(),
-                });
-            }
+        let alive_flags: Option<Vec<bool>> =
+            if self.include_dead || !objects.core.contains(ATTR_ALIVE) {
+                None
+            } else {
+                let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
+                if alive.dim() != 1 {
+                    return Err(ThermostatError::InvalidAttrShape {
+                        label: ATTR_ALIVE,
+                        expected_dim: 1,
+                        got_dim: alive.dim(),
+                    });
+                }
+                if alive.num_vectors() != n {
+                    return Err(ThermostatError::InconsistentParticleCount {
+                        label: ATTR_ALIVE,
+                        expected: n,
+                        got: alive.num_vectors(),
+                    });
+                }
 
-            let mut flags = Vec::with_capacity(n);
-            for i in 0..n {
-                flags.push(alive.get(i as isize, 0) > 0.0);
-            }
-            Some(flags)
-        };
+                let mut flags = Vec::with_capacity(n);
+                for i in 0..n {
+                    flags.push(alive.get(i as isize, 0) > 0.0);
+                }
+                Some(flags)
+            };
 
         let rigid_flags: Option<Vec<bool>> = if !objects.core.contains(ATTR_RIGID) {
             None

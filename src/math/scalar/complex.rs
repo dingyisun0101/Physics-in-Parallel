@@ -11,7 +11,7 @@
 
 use num_complex::Complex;
 
-use super::scalar_trait::{scalar_sealed::Sealed, Scalar};
+use super::scalar_trait::{Scalar, scalar_sealed::Sealed};
 
 impl Sealed for Complex<f32> {}
 impl Sealed for Complex<f64> {}

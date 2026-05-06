@@ -9,10 +9,10 @@ use physics_in_parallel::math::prelude::{RandType, TensorRandFiller, VectorList}
 use physics_in_parallel::space::{
     discrete::{
         displacement::RandPairGenerator,
-        representation::{save_grid, Grid, GridConfig, GridInitMethod},
+        representation::{Grid, GridConfig, GridInitMethod, save_grid},
     },
     kernel::{
-        create_kernel, Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel,
+        Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
     },
     space_trait::Space,
 };

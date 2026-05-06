@@ -1,12 +1,14 @@
 /*!
-Unified front API for tensor storage backends.
+Generic front API for tensor storage backends.
 
 `Tensor<T, B>` provides one user-facing type parameterized by backend marker `B`:
 - `Dense`  -> contiguous dense storage
 - `Sparse` -> hash-backed sparse storage
 
-This facade delegates to existing backend implementations in `core::dense` and
-`core::sparse` while exposing a consistent construction/access surface.
+This facade delegates to existing backend implementations in `rank_n::dense` and
+`rank_n::sparse` while exposing a consistent construction/access surface. The
+element type is always constrained by `T: Scalar`, so tensor algorithms operate
+on PiP scalar values rather than backend-specific primitive assumptions.
 */
 
 use core::marker::PhantomData;
@@ -18,13 +20,11 @@ use serde_json::Value;
 
 use crate::math::{
     ndarray_convert::NdarrayConvert,
-    scalar::Scalar,
+    scalar::{Scalar, ScalarCastError},
 };
 
 use super::{
-    dense::Tensor as DenseStorage,
-    sparse::Tensor as SparseStorage,
-    tensor_trait::TensorTrait,
+    dense::Tensor as DenseStorage, sparse::Tensor as SparseStorage, tensor_trait::TensorTrait,
 };
 
 /// Dense backend marker for `Tensor<T, B>`.
@@ -35,7 +35,7 @@ pub struct Dense;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Sparse;
 
-/// Backend type mapping for unified `Tensor`.
+/// Backend type mapping for generic `Tensor`.
 pub trait Backend<T: Scalar> {
     type Storage: TensorTrait<T>;
 }
@@ -48,7 +48,7 @@ impl<T: Scalar> Backend<T> for Sparse {
     type Storage = SparseStorage<T>;
 }
 
-/// Unified tensor facade.
+/// Generic tensor facade.
 #[derive(Debug, Clone)]
 pub struct Tensor<T: Scalar, B: Backend<T> = Dense> {
     inner: B::Storage,
@@ -116,7 +116,10 @@ impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
     /// - Parameters:
     ///   - `inner` (`B::Storage`): Parameter of type `B::Storage` used by `from_storage`.
     pub fn from_storage(inner: B::Storage) -> Self {
-        Self { inner, _backend: PhantomData }
+        Self {
+            inner,
+            _backend: PhantomData,
+        }
     }
 
     #[inline]
@@ -170,12 +173,30 @@ where
     }
 
     #[inline]
+    /// Tensor rank.
+    pub fn rank(&self) -> usize {
+        self.inner.rank()
+    }
+
+    #[inline]
+    /// Logical dense size.
+    pub fn size(&self) -> usize {
+        self.inner.size()
+    }
+
+    #[inline]
     /// Annotation:
     /// - Purpose: Returns the `sum` value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn get_sum(&self) -> T {
         self.inner.get_sum()
+    }
+
+    #[inline]
+    /// Sum of tensor values.
+    pub fn sum(&self) -> T {
+        self.inner.sum()
     }
 
     #[inline]
@@ -213,6 +234,14 @@ where
     }
 
     #[inline]
+    pub fn fill(&mut self, value: T)
+    where
+        T: Copy + Send + Sync,
+    {
+        self.inner.fill(value);
+    }
+
+    #[inline]
     pub fn par_map_in_place<F>(&mut self, f: F)
     where
         T: Copy + Send + Sync,
@@ -222,12 +251,169 @@ where
     }
 
     #[inline]
+    pub fn map<F>(&self, f: F) -> Self
+    where
+        T: Copy + Send + Sync,
+        F: Fn(T) -> T + Sync + Send,
+    {
+        Self::from_storage(self.inner.map(f))
+    }
+
+    #[inline]
+    pub fn map_in_place<F>(&mut self, f: F)
+    where
+        T: Copy + Send + Sync,
+        F: Fn(T) -> T + Sync + Send,
+    {
+        self.inner.map_in_place(f);
+    }
+
+    #[inline]
     pub fn par_zip_with_inplace<F>(&mut self, other: &Self, f: F)
     where
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
         self.inner.par_zip_with_inplace(&other.inner, f);
+    }
+
+    #[inline]
+    pub fn zip_with<F>(&self, other: &Self, f: F) -> Self
+    where
+        T: Copy + Send + Sync,
+        F: Fn(T, T) -> T + Sync + Send,
+    {
+        Self::from_storage(self.inner.zip_with(&other.inner, f))
+    }
+
+    #[inline]
+    pub fn conj(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.conj())
+    }
+
+    #[inline]
+    pub fn abs(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.abs())
+    }
+
+    #[inline]
+    pub fn norm_sqr(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.norm_sqr())
+    }
+
+    #[inline]
+    pub fn sqrt(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.sqrt())
+    }
+
+    #[inline]
+    pub fn scalar_mul(&self, scalar: T) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.scalar_mul(scalar))
+    }
+
+    #[inline]
+    pub fn elem_mul(&self, other: &Self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.elem_mul(&other.inner))
+    }
+
+    #[inline]
+    pub fn elem_div(&self, other: &Self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.elem_div(&other.inner))
+    }
+
+    #[inline]
+    pub fn transpose(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.transpose())
+    }
+
+    #[inline]
+    pub fn hermitian_transpose(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.hermitian_transpose())
+    }
+
+    #[inline]
+    pub fn dot(&self, other: &Self) -> T
+    where
+        T: Copy + Send + Sync,
+    {
+        self.inner.dot(&other.inner)
+    }
+
+    #[inline]
+    pub fn hermitian_dot(&self, other: &Self) -> T
+    where
+        T: Copy + Send + Sync,
+    {
+        self.inner.hermitian_dot(&other.inner)
+    }
+
+    #[inline]
+    pub fn norm_sqr_real(&self) -> T::Real
+    where
+        T: Copy + Send + Sync,
+        T::Real: Send + Sync,
+    {
+        self.inner.norm_sqr_real()
+    }
+
+    #[inline]
+    pub fn norm(&self) -> T
+    where
+        T: Copy + Send + Sync,
+        T::Real: Send + Sync,
+    {
+        self.inner.norm()
+    }
+
+    #[inline]
+    pub fn cross(&self, other: &Self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.cross(&other.inner))
+    }
+
+    #[inline]
+    pub fn wedge(&self, other: &Self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.wedge(&other.inner))
+    }
+
+    #[inline]
+    pub fn matmul(&self, other: &Self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_storage(self.inner.matmul(&other.inner))
     }
 
     #[inline]
@@ -247,7 +433,7 @@ impl<T: Scalar> Tensor<T, Dense> {
     }
 
     #[inline]
-    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U, Dense>, &'static str> {
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U, Dense>, ScalarCastError> {
         self.inner
             .try_cast_to::<U>()
             .map(Tensor::<U, Dense>::from_storage)
@@ -295,7 +481,7 @@ where
     T: Scalar + Serialize + Copy,
 {
     #[inline]
-    /// - Purpose: Converts this unified dense tensor into a structured JSON value.
+    /// - Purpose: Converts this generic dense tensor into a structured JSON value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
@@ -303,7 +489,7 @@ where
     }
 
     #[inline]
-    /// - Purpose: Converts this unified dense tensor into pretty JSON text.
+    /// - Purpose: Converts this generic dense tensor into pretty JSON text.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
@@ -318,7 +504,7 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 
     #[inline]
-    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U, Sparse>, &'static str> {
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U, Sparse>, ScalarCastError> {
         self.inner
             .try_cast_to::<U>()
             .map(Tensor::<U, Sparse>::from_storage)
@@ -384,7 +570,7 @@ where
     T: Scalar + Serialize + Copy,
 {
     #[inline]
-    /// - Purpose: Converts this unified sparse tensor into a structured JSON value.
+    /// - Purpose: Converts this generic sparse tensor into a structured JSON value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
@@ -392,7 +578,7 @@ where
     }
 
     #[inline]
-    /// - Purpose: Converts this unified sparse tensor into pretty JSON text.
+    /// - Purpose: Converts this generic sparse tensor into pretty JSON text.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {

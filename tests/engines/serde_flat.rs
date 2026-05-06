@@ -6,8 +6,10 @@ fn attrs_core_serializes_vector_payloads_in_flat_schema() {
     core.allocate::<f64>("r", 3, 2).expect("allocate r");
     core.allocate::<f64>("v", 3, 2).expect("allocate v");
 
-    core.set_vector_of::<f64>("r", 0, &[1.0, 2.0, 3.0]).expect("set r[0]");
-    core.set_vector_of::<f64>("r", 1, &[4.0, 5.0, 6.0]).expect("set r[1]");
+    core.set_vector_of::<f64>("r", 0, &[1.0, 2.0, 3.0])
+        .expect("set r[0]");
+    core.set_vector_of::<f64>("r", 1, &[4.0, 5.0, 6.0])
+        .expect("set r[1]");
 
     let json = core.serialize().expect("serialize attrs core");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse attrs core json");
@@ -45,5 +47,8 @@ fn phys_obj_serialization_embeds_flat_vector_list_payloads() {
     assert_eq!(value["meta"]["id"], 42);
     assert_eq!(value["core"]["num_attrs"], 1);
     assert_eq!(value["core"]["attrs"][0]["payload"]["kind"], "vector_list");
-    assert_eq!(value["core"]["attrs"][0]["payload"]["shape"], serde_json::json!([2, 2]));
+    assert_eq!(
+        value["core"]["attrs"][0]["payload"]["shape"],
+        serde_json::json!([2, 2])
+    );
 }

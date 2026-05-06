@@ -1,5 +1,5 @@
-use physics_in_parallel::math::tensor::core::{dense, sparse, tensor_trait::TensorTrait};
 use physics_in_parallel::math::tensor::VectorList;
+use physics_in_parallel::math::tensor::{TensorTrait, dense, sparse};
 use physics_in_parallel::space::discrete::representation::{Grid, GridConfig, GridInitMethod};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

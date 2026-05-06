@@ -57,7 +57,8 @@ impl ParticleNeighborList {
 
     pub fn rebuild(&mut self, objects: &PhysObj) -> Result<(), ParticleNeighborListError> {
         let r = objects.core.get::<f64>(ATTR_R)?;
-        self.grid.rebuild(r.as_tensor().data.as_slice(), r.num_vectors())?;
+        self.grid
+            .rebuild(r.as_tensor().data.as_slice(), r.num_vectors())?;
         Ok(())
     }
 

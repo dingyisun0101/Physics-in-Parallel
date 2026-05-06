@@ -1,7 +1,5 @@
-
-use std::path::PathBuf;
 use crate::math::prelude::ScalarSerde;
-
+use std::path::PathBuf;
 
 // ======================================================================================
 /*                                   Space Trait                                       */
@@ -70,4 +68,3 @@ pub trait Space<T: ScalarSerde> {
     ///   - `val` (`T`): Value provided by caller for write/update behavior.
     fn set_all(&mut self, val: T);
 }
-

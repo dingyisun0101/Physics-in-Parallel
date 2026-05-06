@@ -11,7 +11,7 @@ use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
-    tensor::core::{dense::Tensor as DenseTensor, tensor_trait::TensorTrait},
+    tensor::rank_n::{dense::Tensor as DenseTensor, tensor_trait::TensorTrait},
 };
 
 #[derive(Debug, Clone)]
@@ -98,7 +98,9 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
     let mut m = idx % d;
-    if m < 0 { m += d; }
+    if m < 0 {
+        m += d;
+    }
     m as usize
 }
 
@@ -110,9 +112,16 @@ impl<T: Scalar> Tensor2D<T> {
     ///   - `rows` (`usize`): Parameter of type `usize` used by `empty`.
     ///   - `cols` (`usize`): Parameter of type `usize` used by `empty`.
     pub fn empty(rows: usize, cols: usize) -> Self {
-        assert!(rows > 0 && cols > 0, "Tensor2D::empty: shape must be nonzero");
+        assert!(
+            rows > 0 && cols > 0,
+            "Tensor2D::empty: shape must be nonzero"
+        );
         let backend = DenseTensor::<T>::empty(&[rows, cols]);
-        Self { rows, cols, backend }
+        Self {
+            rows,
+            cols,
+            backend,
+        }
     }
 
     #[inline]
@@ -123,8 +132,16 @@ impl<T: Scalar> Tensor2D<T> {
     ///   - `rows` (`usize`): Parameter of type `usize` used by `from_backend`.
     ///   - `cols` (`usize`): Parameter of type `usize` used by `from_backend`.
     pub fn from_backend(backend: DenseTensor<T>, rows: usize, cols: usize) -> Self {
-        assert_eq!(backend.shape.as_slice(), &[rows, cols], "Tensor2D::from_backend: shape mismatch");
-        Self { rows, cols, backend }
+        assert_eq!(
+            backend.shape.as_slice(),
+            &[rows, cols],
+            "Tensor2D::from_backend: shape mismatch"
+        );
+        Self {
+            rows,
+            cols,
+            backend,
+        }
     }
 
     #[inline]
@@ -132,49 +149,63 @@ impl<T: Scalar> Tensor2D<T> {
     /// - Purpose: Executes `rows` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn rows(&self) -> usize { self.rows }
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `cols` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn cols(&self) -> usize { self.cols }
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn shape(&self) -> [usize; 2] { [self.rows, self.cols] }
+    pub fn shape(&self) -> [usize; 2] {
+        [self.rows, self.cols]
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `backend` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn backend(&self) -> &DenseTensor<T> { &self.backend }
+    pub fn backend(&self) -> &DenseTensor<T> {
+        &self.backend
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `backend_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn backend_mut(&mut self) -> &mut DenseTensor<T> { &mut self.backend }
+    pub fn backend_mut(&mut self) -> &mut DenseTensor<T> {
+        &mut self.backend
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `data` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn data(&self) -> &[T] { &self.backend.data }
+    pub fn data(&self) -> &[T] {
+        &self.backend.data
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `data_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn data_mut(&mut self) -> &mut [T] { &mut self.backend.data }
+    pub fn data_mut(&mut self) -> &mut [T] {
+        &mut self.backend.data
+    }
 
     #[inline]
     /// Annotation:
@@ -182,7 +213,10 @@ impl<T: Scalar> Tensor2D<T> {
     /// - Parameters:
     ///   - `i` (`isize`): Primary index argument.
     ///   - `j` (`isize`): Secondary index argument.
-    pub fn get(&self, i: isize, j: isize) -> T where T: Copy {
+    pub fn get(&self, i: isize, j: isize) -> T
+    where
+        T: Copy,
+    {
         self.backend.get(&[i, j])
     }
 
@@ -201,14 +235,14 @@ impl<T: Scalar> Tensor2D<T> {
     pub fn row_view<'a>(&'a self, i: isize) -> &'a [T] {
         let r = wrap_axis_index(i, self.rows);
         let off = r * self.cols;
-        &self.backend.data[off .. off + self.cols]
+        &self.backend.data[off..off + self.cols]
     }
 
     #[inline]
     pub fn row_view_mut<'a>(&'a mut self, i: isize) -> &'a mut [T] {
         let r = wrap_axis_index(i, self.rows);
         let off = r * self.cols;
-        &mut self.backend.data[off .. off + self.cols]
+        &mut self.backend.data[off..off + self.cols]
     }
 
     #[inline]
@@ -233,7 +267,11 @@ impl<T: Scalar> Tensor2D<T> {
     ///   - `j` (`isize`): Secondary index argument.
     ///   - `vals` (`&[T]`): Parameter of type `&[T]` used by `set_col_from_slice`.
     pub fn set_col_from_slice(&mut self, j: isize, vals: &[T]) {
-        assert_eq!(vals.len(), self.rows, "Tensor2D::set_col_from_slice: len mismatch");
+        assert_eq!(
+            vals.len(),
+            self.rows,
+            "Tensor2D::set_col_from_slice: len mismatch"
+        );
         let c = wrap_axis_index(j, self.cols);
         for (i, &v) in vals.iter().enumerate() {
             self.backend.set(&[i as isize, c as isize], v);
@@ -256,7 +294,10 @@ impl<T: Scalar> Tensor2D<T> {
         let (rows, cols) = (shape[0], shape[1]);
         let owned = array.to_owned();
         let (data, _) = owned.into_raw_vec_and_offset();
-        let backend = DenseTensor::<T> { shape: vec![rows, cols], data };
+        let backend = DenseTensor::<T> {
+            shape: vec![rows, cols],
+            data,
+        };
         Self::from_backend(backend, rows, cols)
     }
 
@@ -275,14 +316,18 @@ impl<T: Scalar> Tensor2D<T> {
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn print(&self) { self.backend.print(); }
+    pub fn print(&self) {
+        self.backend.print();
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Converts this value into `string` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_string(&self) { self.backend.to_string(); }
+    pub fn to_string(&self) {
+        self.backend.to_string();
+    }
 }
 
 impl<T: Scalar> NdarrayConvert for Tensor2D<T> {

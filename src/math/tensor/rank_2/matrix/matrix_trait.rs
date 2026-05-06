@@ -14,10 +14,7 @@ sparse-specific views should be implemented **inside** each backend module.
   indices are supported/wrapped).
 */
 
-use crate::math::{
-    scalar::Scalar, 
-};
-
+use crate::math::scalar::Scalar;
 
 // ============================================================================
 // -------------------------------- Trait Def ---------------------------------
@@ -41,7 +38,9 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn shape(&self) -> [usize; 2] { [self.rows(), self.cols()] }
+    fn shape(&self) -> [usize; 2] {
+        [self.rows(), self.cols()]
+    }
 
     // ----------------------------- Element access ----------------------------
     /// Get **by value** at `(i, j)`. Backends may choose to wrap/normalize indices.
@@ -116,7 +115,9 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     /// - Parameters:
     ///   - `min_val` (`T`): Value provided by caller for write/update behavior.
     ///   - `max_val` (`T`): Value provided by caller for write/update behavior.
-    fn clamp(&mut self, min_val: T, max_val: T) where T: PartialOrd;
+    fn clamp(&mut self, min_val: T, max_val: T)
+    where
+        T: PartialOrd;
 
     /// Annotation:
     /// - Purpose: Executes `normalize` logic for this module.
@@ -128,5 +129,7 @@ pub trait MatrixTrait<T: Scalar>: Send + Sync + Clone {
     /// - Purpose: Executes `normalize_by_max` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn normalize_by_max(&mut self) where T: PartialOrd;
+    fn normalize_by_max(&mut self)
+    where
+        T: PartialOrd;
 }

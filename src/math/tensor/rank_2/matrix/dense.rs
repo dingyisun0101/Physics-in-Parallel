@@ -16,17 +16,16 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use super::matrix_trait::MatrixTrait;
 use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
     tensor::{
-        core::dense::Tensor as DenseTensor,
-        core::tensor_trait::TensorTrait,
-        rank_2::dense::Tensor2D,
+        rank_2::dense::Tensor2D, rank_n::dense::Tensor as DenseTensor,
+        rank_n::tensor_trait::TensorTrait,
     },
 };
-use super::matrix_trait::MatrixTrait;
 
 // =============================================================================
 // --------------------------------- Views -------------------------------------
@@ -42,7 +41,10 @@ impl<'a, T> Deref for SliceView<'a, T> {
     /// - Purpose: Executes `deref` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref(&self) -> &Self::Target { self.slice }
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.slice
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -55,7 +57,10 @@ impl<T> Deref for SliceViewCached<T> {
     /// - Purpose: Executes `deref` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref(&self) -> &Self::Target { &self.buf }
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +74,8 @@ impl<'a, T> Deref for MatrixSlice<'a, T> {
     /// - Purpose: Executes `deref` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref(&self) -> &Self::Target {
+    #[inline]
+    fn deref(&self) -> &Self::Target {
         match self {
             MatrixSlice::Borrowed(v) => v,
             MatrixSlice::Cached(v) => v,
@@ -90,14 +96,20 @@ impl<'a, T: Scalar> Deref for ColMutGuard<'a, T> {
     /// - Purpose: Executes `deref` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref(&self) -> &Self::Target { &self.buf }
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
 }
 impl<'a, T: Scalar> DerefMut for ColMutGuard<'a, T> {
     /// Annotation:
     /// - Purpose: Executes `deref_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref_mut(&mut self) -> &mut Self::Target { &mut self.buf }
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf
+    }
 }
 impl<'a, T: Scalar> Drop for ColMutGuard<'a, T> {
     /// Annotation:
@@ -124,7 +136,8 @@ impl<'a, T: Scalar> Deref for MatrixSliceMut<'a, T> {
     /// - Purpose: Executes `deref` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref(&self) -> &Self::Target {
+    #[inline]
+    fn deref(&self) -> &Self::Target {
         match self {
             MatrixSliceMut::Borrowed(s) => s,
             MatrixSliceMut::Guard(g) => g,
@@ -136,7 +149,8 @@ impl<'a, T: Scalar> DerefMut for MatrixSliceMut<'a, T> {
     /// - Purpose: Executes `deref_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn deref_mut(&mut self) -> &mut Self::Target {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             MatrixSliceMut::Borrowed(s) => s,
             MatrixSliceMut::Guard(g) => g,
@@ -232,7 +246,9 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
     let mut m = idx % d;
-    if m < 0 { m += d; }
+    if m < 0 {
+        m += d;
+    }
     m as usize
 }
 
@@ -256,7 +272,10 @@ impl<T: Scalar> Matrix<T> {
     ///   - `src` (`impl TensorTrait<T>`): Parameter of type `impl TensorTrait<T>` used by `from_tensor`.
     pub fn from_tensor(src: impl TensorTrait<T>) -> Self {
         let shape = src.shape();
-        assert!(shape.len() == 2, "Matrix::from_tensor: source must be rank-2");
+        assert!(
+            shape.len() == 2,
+            "Matrix::from_tensor: source must be rank-2"
+        );
         let (rows, cols) = (shape[0], shape[1]);
         let mut m = Self::empty(rows, cols);
         for i in 0..rows {
@@ -272,39 +291,60 @@ impl<T: Scalar> Matrix<T> {
     /// - Purpose: Executes `rows` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn rows(&self) -> usize { self.rows }
+    #[inline]
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
     /// Annotation:
     /// - Purpose: Executes `cols` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn cols(&self) -> usize { self.cols }
+    #[inline]
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
     /// Annotation:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn shape(&self) -> [usize; 2] { [self.rows, self.cols] }
+    #[inline]
+    pub fn shape(&self) -> [usize; 2] {
+        [self.rows, self.cols]
+    }
     /// Annotation:
     /// - Purpose: Executes `backend` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn backend(&self) -> &Tensor2D<T> { &self.tensor }
+    #[inline]
+    pub fn backend(&self) -> &Tensor2D<T> {
+        &self.tensor
+    }
     /// Annotation:
     /// - Purpose: Executes `backend_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn backend_mut(&mut self) -> &mut Tensor2D<T> { &mut self.tensor }
+    #[inline]
+    pub fn backend_mut(&mut self) -> &mut Tensor2D<T> {
+        &mut self.tensor
+    }
 
     /// Dense backend view (compat with older APIs that needed a dense tensor ref).
     /// Annotation:
     /// - Purpose: Executes `dense_backend` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn dense_backend(&self) -> &DenseTensor<T> { self.tensor.backend() }
+    #[inline]
+    pub fn dense_backend(&self) -> &DenseTensor<T> {
+        self.tensor.backend()
+    }
     /// Annotation:
     /// - Purpose: Executes `dense_backend_mut` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn dense_backend_mut(&mut self) -> &mut DenseTensor<T> { self.tensor.backend_mut() }
+    #[inline]
+    pub fn dense_backend_mut(&mut self) -> &mut DenseTensor<T> {
+        self.tensor.backend_mut()
+    }
 
     #[inline]
     /// Annotation:
@@ -312,8 +352,16 @@ impl<T: Scalar> Matrix<T> {
     /// - Parameters:
     ///   - `rhs` (`&Self`): Parameter of type `&Self` used by `assert_compat`.
     fn assert_compat(&self, rhs: &Self) {
-        assert_eq!(self.rows, rhs.rows, "Matrix row mismatch: {} vs {}", self.rows, rhs.rows);
-        assert_eq!(self.cols, rhs.cols, "Matrix col mismatch: {} vs {}", self.cols, rhs.cols);
+        assert_eq!(
+            self.rows, rhs.rows,
+            "Matrix row mismatch: {} vs {}",
+            self.rows, rhs.rows
+        );
+        assert_eq!(
+            self.cols, rhs.cols,
+            "Matrix col mismatch: {} vs {}",
+            self.cols, rhs.cols
+        );
     }
 
     #[inline]
@@ -324,7 +372,11 @@ impl<T: Scalar> Matrix<T> {
     ///   - `rows` (`usize`): Parameter of type `usize` used by `from_backend`.
     ///   - `cols` (`usize`): Parameter of type `usize` used by `from_backend`.
     pub fn from_backend(tensor: Tensor2D<T>, rows: usize, cols: usize) -> Self {
-        assert_eq!(tensor.shape(), [rows, cols], "Matrix::from_backend: shape mismatch");
+        assert_eq!(
+            tensor.shape(),
+            [rows, cols],
+            "Matrix::from_backend: shape mismatch"
+        );
         Self { tensor, rows, cols }
     }
 
@@ -370,7 +422,10 @@ impl<T: Scalar> Matrix<T> {
     /// - Parameters:
     ///   - `i` (`isize`): Primary index argument.
     ///   - `j` (`isize`): Secondary index argument.
-    pub fn get(&self, i: isize, j: isize) -> T where T: Copy {
+    pub fn get(&self, i: isize, j: isize) -> T
+    where
+        T: Copy,
+    {
         self.tensor.get(i, j)
     }
 
@@ -390,7 +445,9 @@ impl<T: Scalar> Matrix<T> {
     where
         T: Copy,
     {
-        MatrixSlice::Borrowed(SliceView { slice: self.tensor.row_view(i) })
+        MatrixSlice::Borrowed(SliceView {
+            slice: self.tensor.row_view(i),
+        })
     }
 
     #[inline]
@@ -398,7 +455,9 @@ impl<T: Scalar> Matrix<T> {
     where
         T: Copy,
     {
-        MatrixSlice::Cached(SliceViewCached { buf: self.tensor.col_to_vec(j) })
+        MatrixSlice::Cached(SliceViewCached {
+            buf: self.tensor.col_to_vec(j),
+        })
     }
 
     #[inline]
@@ -430,14 +489,18 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     /// - Purpose: Executes `rows` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn rows(&self) -> usize { self.rows }
+    fn rows(&self) -> usize {
+        self.rows
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `cols` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn cols(&self) -> usize { self.cols }
+    fn cols(&self) -> usize {
+        self.cols
+    }
 
     #[inline]
     /// Annotation:
@@ -445,7 +508,9 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     /// - Parameters:
     ///   - `i` (`isize`): Primary index argument.
     ///   - `j` (`isize`): Secondary index argument.
-    fn get(&self, i: isize, j: isize) -> T { self.tensor.get(i, j) }
+    fn get(&self, i: isize, j: isize) -> T {
+        self.tensor.get(i, j)
+    }
 
     #[inline]
     /// Annotation:
@@ -454,13 +519,19 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     ///   - `i` (`isize`): Primary index argument.
     ///   - `j` (`isize`): Secondary index argument.
     ///   - `val` (`T`): Value provided by caller for write/update behavior.
-    fn set(&mut self, i: isize, j: isize, val: T) { self.tensor.set(i, j, val) }
+    fn set(&mut self, i: isize, j: isize, val: T) {
+        self.tensor.set(i, j, val)
+    }
 
     #[inline]
-    fn row_view<'a>(&'a self, i: isize) -> &'a [T] { self.tensor.row_view(i) }
+    fn row_view<'a>(&'a self, i: isize) -> &'a [T] {
+        self.tensor.row_view(i)
+    }
 
     #[inline]
-    fn row_view_mut<'a>(&'a mut self, i: isize) -> &'a mut [T] { self.tensor.row_view_mut(i) }
+    fn row_view_mut<'a>(&'a mut self, i: isize) -> &'a mut [T] {
+        self.tensor.row_view_mut(i)
+    }
 
     #[inline]
     fn col_view<'a>(&'a self, _j: isize) -> &'a [T] {
@@ -497,13 +568,19 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn print(&self) { self.tensor.print(); }
+    #[inline]
+    fn print(&self) {
+        self.tensor.print();
+    }
 
     /// Annotation:
     /// - Purpose: Converts this value into `string` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn to_string(&self) { self.tensor.to_string(); }
+    #[inline]
+    fn to_string(&self) {
+        self.tensor.to_string();
+    }
 
     #[inline]
     /// Annotation:
@@ -540,8 +617,12 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
         debug_assert!(min_val <= max_val, "clip: min_val must be <= max_val");
         self.tensor.backend_mut().par_map_in_place(|x| {
             let mut y = x;
-            if y < min_val { y = min_val; }
-            if y > max_val { y = max_val; }
+            if y < min_val {
+                y = min_val;
+            }
+            if y > max_val {
+                y = max_val;
+            }
             y
         });
     }
@@ -553,15 +634,22 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     ///   - (none): This function has no documented non-receiver parameters.
     fn normalize(&mut self)
     where
-        T: Copy + Send + Sync + PartialEq
-          + core::ops::Add<Output = T>
-          + core::ops::Mul<Output = T>
-          + core::ops::Div<Output = T>,
+        T: Copy
+            + Send
+            + Sync
+            + PartialEq
+            + core::ops::Add<Output = T>
+            + core::ops::Mul<Output = T>
+            + core::ops::Div<Output = T>,
     {
         let mut sum = T::zero();
-        for &x in self.tensor.data().iter() { sum = sum + x * x; }
+        for &x in self.tensor.data().iter() {
+            sum = sum + x * x;
+        }
         let n = <T>::sqrt(sum);
-        if n == T::zero() { return; }
+        if n == T::zero() {
+            return;
+        }
         self.tensor.backend_mut().par_map_in_place(|x| x / n);
     }
 
@@ -572,17 +660,19 @@ impl<T: Scalar> MatrixTrait<T> for Matrix<T> {
     ///   - (none): This function has no documented non-receiver parameters.
     fn normalize_by_max(&mut self)
     where
-        T: Scalar + PartialOrd
-          + core::ops::Mul<Output = T>
-          + core::ops::Div<Output = T>,
+        T: Scalar + PartialOrd + core::ops::Mul<Output = T> + core::ops::Div<Output = T>,
     {
         let mut max_sq = T::zero();
         for &x in self.tensor.data().iter() {
             let xsq = x * x;
-            if xsq > max_sq { max_sq = xsq; }
+            if xsq > max_sq {
+                max_sq = xsq;
+            }
         }
         let m = <T>::sqrt(max_sq);
-        if m == T::zero() { return; }
+        if m == T::zero() {
+            return;
+        }
         self.tensor.backend_mut().par_map_in_place(|x| x / m);
     }
 }

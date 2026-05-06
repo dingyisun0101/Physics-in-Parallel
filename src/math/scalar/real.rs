@@ -10,7 +10,7 @@
 //! grids, labels, masks, and other discrete simulation data while preserving
 //! the crate-wide `T -> T` scalar operation contract.
 
-use super::scalar_trait::{scalar_sealed::Sealed, Scalar};
+use super::scalar_trait::{Scalar, scalar_sealed::Sealed};
 
 #[inline]
 /// Integer square root for `u128`.

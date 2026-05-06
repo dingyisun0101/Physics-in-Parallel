@@ -22,19 +22,14 @@ let mut nn = NNVectors::new(dim, n, None);
 nn.refresh();
 ```
 */
-use rayon::prelude::*;
 use ndarray::Array2;
+use rayon::prelude::*;
 use serde_json::Value;
 
-use crate::math::tensor::core::{
-    dense::Tensor,
-    dense_rand::{RandType, TensorRandFiller},
-    tensor_trait::TensorTrait,
-};
+use crate::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense::Tensor};
 
-use crate::math::ndarray_convert::NdarrayConvert;
 use super::VectorList;
-
+use crate::math::ndarray_convert::NdarrayConvert;
 
 // ============================================================================
 // ------------------------------- Common Trait -------------------------------
@@ -51,7 +46,9 @@ pub trait VectorListRand {
     ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
     ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
     ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
-    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self where Self: Sized;
+    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self
+    where
+        Self: Sized;
 
     /// Refill the internal `VectorList` in-place, keeping shape `[n, dim]`.
     /// Annotation:
@@ -60,10 +57,6 @@ pub trait VectorListRand {
     ///   - (none): This function has no documented non-receiver parameters.
     fn refresh(&mut self);
 }
-
-
-
-
 
 // ============================================================================
 // -------------------------- Haar-random unit vectors ------------------------
@@ -91,7 +84,10 @@ impl VectorListRand for HaarVectors {
 
         let vl = VectorList::<f64>::empty(dim, n);
         let filler = TensorRandFiller::new(
-            RandType::Normal { mean: 0.0, std: 1.0 },
+            RandType::Normal {
+                mean: 0.0,
+                std: 1.0,
+            },
             num_rngs,
         );
         Self { vl, dim, n, filler }
@@ -126,7 +122,10 @@ impl HaarVectors {
         let dim = vl.dim();
         let n = vl.num_vectors();
         let filler = TensorRandFiller::new(
-            RandType::Normal { mean: 0.0, std: 1.0 },
+            RandType::Normal {
+                mean: 0.0,
+                std: 1.0,
+            },
             None,
         );
         Self { vl, dim, n, filler }
@@ -181,19 +180,16 @@ impl NdarrayConvert for HaarVectors {
     }
 }
 
-
-
-
 // ============================================================================
 // -------------------- Nearest-Neighbor one-hot ±1 vectors -------------------
 // ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct NNVectors {
-    pub vl: VectorList<isize>,  // shape [n, dim], entries in {-1, 0, +1}
+    pub vl: VectorList<isize>, // shape [n, dim], entries in {-1, 0, +1}
     pub dim: usize,
     pub n: usize,
-    code_buf: Tensor<usize>,     // shape [n], holds codes in [0, 2*dim)
+    code_buf: Tensor<usize>,       // shape [n], holds codes in [0, 2*dim)
     code_filler: TensorRandFiller, // RandType::UniformInt over code range
 }
 
@@ -217,11 +213,20 @@ impl VectorListRand for NNVectors {
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
 
         let code_filler = TensorRandFiller::new(
-            RandType::UniformInt { low: 0, high: (2 * dim) as i64 - 1 },
+            RandType::UniformInt {
+                low: 0,
+                high: (2 * dim) as i64 - 1,
+            },
             num_rngs,
         );
 
-        Self { vl, dim, n, code_buf, code_filler }
+        Self {
+            vl,
+            dim,
+            n,
+            code_buf,
+            code_filler,
+        }
     }
 
     /// Randomize codes and decode into one-hot ±1 vectors.
@@ -238,14 +243,15 @@ impl VectorListRand for NNVectors {
 
         // 2) rewrite all vectors in parallel.
         // VectorList stores physical shape [n, dim], so each vector is one contiguous row.
-        self.vl.as_tensor_mut()
+        self.vl
+            .as_tensor_mut()
             .data
             .par_chunks_mut(self.dim)
             .enumerate()
             .for_each(|(i, row)| {
                 let code = codes[i];
                 for (axis, x) in row.iter_mut().enumerate() {
-                    let a    = code / 2;
+                    let a = code / 2;
                     let sign = if code % 2 == 0 { 1isize } else { -1isize };
                     *x = if a == axis { sign } else { 0 };
                 }
@@ -268,10 +274,19 @@ impl NNVectors {
         let n = vl.num_vectors();
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
         let code_filler = TensorRandFiller::new(
-            RandType::UniformInt { low: 0, high: (2 * dim) as i64 - 1 },
+            RandType::UniformInt {
+                low: 0,
+                high: (2 * dim) as i64 - 1,
+            },
             None,
         );
-        Self { vl, dim, n, code_buf, code_filler }
+        Self {
+            vl,
+            dim,
+            n,
+            code_buf,
+            code_filler,
+        }
     }
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.

@@ -73,11 +73,17 @@ impl SpringNetwork {
     }
 
     /// Removes one spring by particle pair.
-    pub fn remove_spring(&mut self, pair: (usize, usize)) -> Result<Option<Spring>, InteractionError> {
+    pub fn remove_spring(
+        &mut self,
+        pair: (usize, usize),
+    ) -> Result<Option<Spring>, InteractionError> {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
-        Ok(self.springs.remove(&[pair.0, pair.1])?.map(|(_, spring)| spring))
+        Ok(self
+            .springs
+            .remove(&[pair.0, pair.1])?
+            .map(|(_, spring)| spring))
     }
 
     /// Returns an immutable spring payload by particle pair.

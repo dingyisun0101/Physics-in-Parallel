@@ -8,20 +8,11 @@ Import with:
 pub use crate::space::space_trait::Space;
 
 pub use crate::space::kernel::{
-    create_kernel,
-    Kernel,
-    KernelType,
-    NearestNeighborKernel,
-    PowerLawKernel,
-    UniformKernel,
+    Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
 };
 
 pub use crate::space::discrete::representation::{
-    save_grid,
-    Grid,
-    GridConfig,
-    GridInitMethod,
-    VacancyValue,
+    Grid, GridConfig, GridInitMethod, VacancyValue, save_grid,
 };
 
 pub use crate::space::discrete::displacement::RandPairGenerator;

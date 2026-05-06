@@ -1,4 +1,3 @@
-
 /// Annotation:
 /// - Purpose: Executes `main` logic for this module.
 /// - Parameters:
@@ -13,14 +12,12 @@ fn main() {}
 ///   - (none): This function has no documented non-receiver parameters.
 ///   - (none): This function takes no explicit parameters.
 fn vector_list_rand() {
-        use physics_in_parallel::math::{
-        tensor::rank_2::{ 
-            vector_list_rand::{HaarVectors, NNVectors, VectorListRand},
-        },
+    use physics_in_parallel::math::tensor::rank_2::vector_list_rand::{
+        HaarVectors, NNVectors, VectorListRand,
     };
-    
+
     let n = 10;
-    
+
     // 2d Haar vectors
     let mut hv_1 = HaarVectors::new(2, n, None);
     assert_eq!(hv_1.vl.shape(), [n, 2]);

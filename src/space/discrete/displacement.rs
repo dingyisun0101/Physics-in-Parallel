@@ -8,16 +8,8 @@
         3) compose: targets = sources + displacements
 */
 
-use crate::math::prelude::{
-    HaarVectors,
-    NNVectors,
-    TensorRandFiller,
-    VectorList,
-    VectorListRand,
-};
+use crate::math::prelude::{HaarVectors, NNVectors, TensorRandFiller, VectorList, VectorListRand};
 use crate::space::kernel::*;
-
-
 
 // ================================================================================================
 // ---------------------------- Displacement cache (enum) -----------------------------------------
@@ -66,7 +58,9 @@ impl RandPairGenerator {
 
         // Choose displacement cache based on kernel type
         let displacement_cache = match kernel_type {
-            KernelType::NearestNeighbor { .. } => DispCache::NN(NNVectors::new(dim, num_pairs, num_rngs)),
+            KernelType::NearestNeighbor { .. } => {
+                DispCache::NN(NNVectors::new(dim, num_pairs, num_rngs))
+            }
             _ => DispCache::Haar(HaarVectors::new(dim, num_pairs, num_rngs)),
         };
 
@@ -100,15 +94,19 @@ impl RandPairGenerator {
     /// - Purpose: Executes `sources` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn sources(&self) -> &VectorList<isize> { &self.source_coords_cache }
+    #[inline]
+    pub fn sources(&self) -> &VectorList<isize> {
+        &self.source_coords_cache
+    }
     /// Annotation:
     /// - Purpose: Executes `targets` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] pub fn targets(&self) -> &VectorList<isize> { &self.target_coords_cache }
+    #[inline]
+    pub fn targets(&self) -> &VectorList<isize> {
+        &self.target_coords_cache
+    }
 }
-
-
 
 // ================================================================================================
 // ----------------------------------- Generator Helpers ------------------------------------------

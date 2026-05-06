@@ -1,2 +1,2 @@
-pub mod ndarray;
 pub mod json;
+pub mod ndarray;

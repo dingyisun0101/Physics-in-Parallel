@@ -3,18 +3,11 @@ Massive-particle convenience constructors on top of `PhysObj`.
 */
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
-use crate::math::tensor::core::dense_rand::{RandType, TensorRandFiller};
+use crate::math::tensor::{RandType, TensorRandFiller};
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsCore, AttrsError, AttrsMeta, PhysObj};
-pub use crate::models::particles::attrs::{
-    ATTR_A,
-    ATTR_RIGID,
-    ATTR_M,
-    ATTR_M_INV,
-    ATTR_R,
-    ATTR_V,
-};
+pub use crate::models::particles::attrs::{ATTR_A, ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MassiveParticlesError {
@@ -35,12 +28,6 @@ impl From<AttrsError> for MassiveParticlesError {
         Self::Attrs(value)
     }
 }
-
-
-
-
-
-
 
 // =============================================================================
 // -------------------------- Empty Instance Creator ---------------------------
@@ -79,24 +66,20 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Attr
     Ok(PhysObj { meta, core })
 }
 
-
-
-
-
-
-
 // =============================================================================
 // --------------------- Particle States Randomizers ---------------------------
 // =============================================================================
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RandPosMethod<'a> {
-    Uniform { box_size: &'a [f64]}, // truly random asignment for each particle
-    JitteredGrid {spacings: &'a [f64], sigmas: &'a [f64]}, // Grid site + random jitter
+    Uniform {
+        box_size: &'a [f64],
+    }, // truly random asignment for each particle
+    JitteredGrid {
+        spacings: &'a [f64],
+        sigmas: &'a [f64],
+    }, // Grid site + random jitter
 }
-
-
-
 
 #[inline]
 /// - Purpose: Randomizes particle positions (`r`) using the requested placement strategy.
@@ -141,7 +124,10 @@ pub fn randomize_r(
             }
 
             let mut filler = TensorRandFiller::new(
-                RandType::Uniform { low: 0.0, high: 1.0 },
+                RandType::Uniform {
+                    low: 0.0,
+                    high: 1.0,
+                },
                 None,
             );
             filler.refresh(r.as_tensor_mut());
@@ -194,13 +180,18 @@ pub fn randomize_r(
             }
 
             let mut filler = TensorRandFiller::new(
-                RandType::Normal { mean: 0.0, std: 1.0 },
+                RandType::Normal {
+                    mean: 0.0,
+                    std: 1.0,
+                },
                 None,
             );
             filler.refresh(r.as_tensor_mut());
 
             let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
-            r.as_tensor_mut().data.par_chunks_mut(dim)
+            r.as_tensor_mut()
+                .data
+                .par_chunks_mut(dim)
                 .enumerate()
                 .for_each(|(particle_idx, row)| {
                     let mut lattice_idx = particle_idx;
@@ -217,10 +208,9 @@ pub fn randomize_r(
     Ok(())
 }
 
-
 pub enum RandVelMethod<'a> {
-    Uniform {low: f64, high: f64},
-    MaxwellBoltzmann {tau: f64},
+    Uniform { low: f64, high: f64 },
+    MaxwellBoltzmann { tau: f64 },
     DriftGaussian { avg: &'a [f64], sigma: &'a [f64] },
 }
 
@@ -245,10 +235,7 @@ pub fn randomize_v(
             }
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
-            let mut filler = TensorRandFiller::new(
-                RandType::Uniform { low, high },
-                None,
-            );
+            let mut filler = TensorRandFiller::new(RandType::Uniform { low, high }, None);
             filler.refresh(v.as_tensor_mut());
             Ok(())
         }
@@ -296,19 +283,19 @@ pub fn randomize_v(
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
             let mut filler = TensorRandFiller::new(
-                RandType::Normal { mean: 0.0, std: 1.0 },
+                RandType::Normal {
+                    mean: 0.0,
+                    std: 1.0,
+                },
                 None,
             );
             filler.refresh(v.as_tensor_mut());
 
-            v.as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .for_each(|row| {
-                    for k in 0..dim {
-                        row[k] = avg[k] + row[k] * sigma[k];
-                    }
-                });
+            v.as_tensor_mut().data.par_chunks_mut(dim).for_each(|row| {
+                for k in 0..dim {
+                    row[k] = avg[k] + row[k] * sigma[k];
+                }
+            });
 
             Ok(())
         }
@@ -351,15 +338,15 @@ pub fn randomize_v(
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
             if tau == 0.0 {
-                v.as_tensor_mut()
-                    .data
-                    .par_iter_mut()
-                    .for_each(|x| *x = 0.0);
+                v.as_tensor_mut().data.par_iter_mut().for_each(|x| *x = 0.0);
                 return Ok(());
             }
 
             let mut filler = TensorRandFiller::new(
-                RandType::Normal { mean: 0.0, std: 1.0 },
+                RandType::Normal {
+                    mean: 0.0,
+                    std: 1.0,
+                },
                 None,
             );
             filler.refresh(v.as_tensor_mut());

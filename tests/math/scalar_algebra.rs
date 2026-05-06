@@ -1,6 +1,4 @@
-use num_complex::Complex;
-
-use physics_in_parallel::math::scalar::{Scalar, ScalarCastError};
+use physics_in_parallel::math::scalar::{Complex, Scalar, ScalarCastError};
 
 fn assert_close_f64(actual: f64, expected: f64) {
     assert!(

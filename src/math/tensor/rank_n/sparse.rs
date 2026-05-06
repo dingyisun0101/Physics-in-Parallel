@@ -29,20 +29,19 @@ Thus every accessor deterministically targets a valid location; implicit zeros r
 
 use ahash::AHashMap;
 use ndarray::ArrayD;
-use num_traits::NumCast;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use std::ops::{Add, Sub, Mul, Div, BitAnd};
+use std::ops::{Add, BitAnd, Div, Mul, Sub};
 
+use super::dense::Tensor as TensorDense;
+use super::tensor_trait::TensorTrait;
 use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::ndarray_convert::NdarrayConvert;
-use crate::math::scalar::Scalar;
-use super::dense::Tensor as TensorDense;
-use super::tensor_trait::TensorTrait; // unified trait alias
+use crate::math::scalar::{Scalar, ScalarCastError};
 
 // ===================================================================
 // --------------------------- Struct Def ----------------------------
@@ -188,7 +187,9 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
     let mut m = idx % d;
-    if m < 0 { m += d; }
+    if m < 0 {
+        m += d;
+    }
     m as usize
 }
 
@@ -464,8 +465,7 @@ where
     fn bitand(self, rhs: Self) -> Self::Output {
         assert_eq!(self.shape, rhs.shape, "Tensor shape mismatch");
 
-        let mut keys: Vec<usize> =
-            Vec::with_capacity(self.data.len() + rhs.data.len());
+        let mut keys: Vec<usize> = Vec::with_capacity(self.data.len() + rhs.data.len());
         keys.extend(self.data.keys().copied());
         keys.extend(rhs.data.keys().copied());
         keys.par_sort_unstable();
@@ -477,11 +477,7 @@ where
                 let a = self.data.get(&k).copied().unwrap_or_else(T::zero);
                 let b = rhs.data.get(&k).copied().unwrap_or_else(T::zero);
                 let r = a & b;
-                if r == T::zero() {
-                    None
-                } else {
-                    Some((k, r))
-                }
+                if r == T::zero() { None } else { Some((k, r)) }
             })
             .collect();
 
@@ -546,25 +542,12 @@ impl<T: Scalar> Tensor<T> {
     Returns an error if any component cannot be represented in `U::Real`.
     */
 
-    /// Attempt a component-wise cast into `Tensor<U>`.
-    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, &'static str> {
-        #[inline(always)]
-        fn cast_scalar<T: Scalar, U: Scalar>(x: T) -> Result<U, &'static str> {
-            let r_t: T::Real = x.re();
-            let i_t: T::Real = x.im();
-
-            let r_u: U::Real =
-                NumCast::from(r_t).ok_or("real part out of range for target type")?;
-            let i_u: U::Real =
-                NumCast::from(i_t).ok_or("imag part out of range for target type")?;
-
-            Ok(U::from_re_im(r_u, i_u))
-        }
-
+    /// Attempt an elementwise cast into `Tensor<U>` through `Scalar::try_cast`.
+    pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
         let out_pairs: Result<Vec<(usize, U)>, _> = self
             .data
             .par_iter()
-            .map(|(&k, &v)| cast_scalar::<T, U>(v).map(|u| (k, u)))
+            .map(|(&k, &v)| v.try_cast::<U>().map(|u| (k, u)))
             .filter_map(|res| match res {
                 Ok((k, v)) if v != U::zero() => Some(Ok((k, v))), // drop zeros
                 Ok(_) => None,
@@ -624,7 +607,10 @@ impl<T: Scalar> Tensor<T> {
         }
 
         assert!(!shape.is_empty(), "Tensor rank must be >= 1");
-        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
+        assert!(
+            shape.iter().all(|&d| d > 0),
+            "All dimensions must be > 0; got {shape:?}"
+        );
 
         let mut map = AHashMap::default();
         for (idx, v) in triplets {
@@ -766,7 +752,10 @@ where
     ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
     fn empty(shape: &[usize]) -> Self {
         assert!(!shape.is_empty(), "Tensor rank must be >= 1");
-        assert!(shape.iter().all(|&d| d > 0), "All dimensions must be > 0; got {shape:?}");
+        assert!(
+            shape.iter().all(|&d| d > 0),
+            "All dimensions must be > 0; got {shape:?}"
+        );
         Self {
             shape: shape.to_vec(),
             data: AHashMap::default(),
@@ -778,7 +767,11 @@ where
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     fn get_sum(&self) -> T {
-        let result = self.data.values().copied().fold(T::zero(), |acc, x| acc + x);
+        let result = self
+            .data
+            .values()
+            .copied()
+            .fold(T::zero(), |acc, x| acc + x);
         result
     }
 
@@ -884,7 +877,7 @@ where
     #[inline]
     fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
     where
-        Rhs: TensorTrait<T> + ?Sized,
+        Rhs: TensorTrait<T>,
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
@@ -921,7 +914,7 @@ where
     #[inline]
     fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
     where
-        T: Scalar,
+        T: Copy + Send + Sync,
     {
         self.try_cast_to::<U>()
             .expect("sparse tensor cast failed: component out of range for target type")

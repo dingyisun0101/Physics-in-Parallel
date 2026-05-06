@@ -15,9 +15,9 @@ Concurrency
 - Uses Rayon with per-element `rand::rng()`—no shared mutable state.
 */
 
+use rand::{RngExt, rng};
 use rayon::prelude::*;
 use serde::Serialize;
-use rand::{rng, RngExt};
 
 // ======================================================================================
 // ------------------------------------ Kernel Trait ------------------------------------
@@ -61,7 +61,9 @@ impl Clone for Box<dyn Kernel> {
     /// - Purpose: Executes `clone` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn clone(&self) -> Self { self.boxed_clone() }
+    fn clone(&self) -> Self {
+        self.boxed_clone()
+    }
 }
 
 #[inline]
@@ -72,7 +74,7 @@ impl Clone for Box<dyn Kernel> {
 pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
     match kernel_type {
         KernelType::PowerLaw { l, c, mu } => Box::new(PowerLawKernel::new(l, c, mu)),
-        KernelType::Uniform { l, c }      => Box::new(UniformKernel::new(l, c)),
+        KernelType::Uniform { l, c } => Box::new(UniformKernel::new(l, c)),
         KernelType::NearestNeighbor { d } => Box::new(NearestNeighborKernel::new(d)),
     }
 }
@@ -84,10 +86,10 @@ pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
 /// Power-law `(c, l]` with exponent `μ > 0`.
 #[derive(Debug, Clone)]
 pub struct PowerLawKernel {
-    kind: KernelType,  // single source of truth
+    kind: KernelType, // single source of truth
     // cached, non-duplicative derived values:
-    l_pow: f64,        // l^{-μ}
-    c_pow: f64,        // c^{-μ}
+    l_pow: f64, // l^{-μ}
+    c_pow: f64, // c^{-μ}
 }
 
 impl PowerLawKernel {
@@ -141,14 +143,18 @@ impl Kernel for PowerLawKernel {
     /// - Purpose: Executes `kind` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn kind(&self) -> KernelType { self.kind }
+    fn kind(&self) -> KernelType {
+        self.kind
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `boxed_clone` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
+    fn boxed_clone(&self) -> Box<dyn Kernel> {
+        Box::new(self.clone())
+    }
 }
 
 /// Continuous uniform on `[c, l)`.
@@ -166,7 +172,9 @@ impl UniformKernel {
     ///   - `c` (`f64`): Parameter of type `f64` used by `new`.
     pub fn new(l: f64, c: f64) -> Self {
         assert!(l > c, "UniformKernel: require l > c");
-        Self { kind: KernelType::Uniform { l, c } }
+        Self {
+            kind: KernelType::Uniform { l, c },
+        }
     }
 }
 
@@ -196,20 +204,24 @@ impl Kernel for UniformKernel {
     /// - Purpose: Executes `kind` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn kind(&self) -> KernelType { self.kind }
+    fn kind(&self) -> KernelType {
+        self.kind
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `boxed_clone` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
+    fn boxed_clone(&self) -> Box<dyn Kernel> {
+        Box::new(self.clone())
+    }
 }
 
 /// Uniform over **2d** nearest-neighbor directions (returned as reals in `[0, 2d)`).
 #[derive(Debug, Clone)]
 pub struct NearestNeighborKernel {
-    kind: KernelType,  // single source of truth
+    kind: KernelType, // single source of truth
     // cached, non-duplicative derived value:
     num_neighbors: f64, // 2*d as f64
 }
@@ -224,7 +236,10 @@ impl NearestNeighborKernel {
         assert!(d > 0, "NearestNeighborKernel: require d >= 1");
         let kind = KernelType::NearestNeighbor { d };
         let num_neighbors = (2 * d) as f64;
-        Self { kind, num_neighbors }
+        Self {
+            kind,
+            num_neighbors,
+        }
     }
 }
 
@@ -255,12 +270,16 @@ impl Kernel for NearestNeighborKernel {
     /// - Purpose: Executes `kind` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn kind(&self) -> KernelType { self.kind }
+    fn kind(&self) -> KernelType {
+        self.kind
+    }
 
     #[inline]
     /// Annotation:
     /// - Purpose: Executes `boxed_clone` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn boxed_clone(&self) -> Box<dyn Kernel> { Box::new(self.clone()) }
+    fn boxed_clone(&self) -> Box<dyn Kernel> {
+        Box::new(self.clone())
+    }
 }

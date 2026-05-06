@@ -26,9 +26,9 @@ aggressive inlining, and rich documentation.
   - `coord_to_index([i0, …, i_{d-1}]) = (((i0 * l + i1) * l + …) * l + i_{d-1})`.
 - `Space<T>` trait: read/write cells, fill all, build adjacency, save (with optional downscale).
 
-> **Note**  
+> **Note**
 > This file assumes a project-wide `Scalar` trait and `serde`/`rayon` dependencies.
-> Random choice uses `rand::random_range` (available in `rand` ≥ 0.9).  
+> Random choice uses `rand::random_range` (available in `rand` ≥ 0.9).
 > If you’re on `rand` 0.8, replace with `thread_rng().gen_range(0..choices.len())`.
 
 */
@@ -37,16 +37,15 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
+use ndarray::{ArrayD, IxDyn};
+use rand::random_range;
+use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use rayon::prelude::*;
-use rand::random_range;
-use ndarray::{ArrayD, IxDyn};
 
 use crate::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::space_trait::Space;
-
 
 // ======================================================================================
 // --------------------------- Vacancy Sentinel (type-aware) -----------------------------
@@ -72,27 +71,52 @@ pub trait VacancyValue: Sized + Clone {
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     ///   - (none): This function takes no explicit parameters.
-    fn vacancy() -> Self { Self::VACANCY }
+    fn vacancy() -> Self {
+        Self::VACANCY
+    }
 }
 
 // Unsigned integers
-impl VacancyValue for usize { const VACANCY: usize = 0; }
-impl VacancyValue for u64  { const VACANCY: u64  = 0; }
-impl VacancyValue for u32  { const VACANCY: u32  = 0; }
-impl VacancyValue for u16  { const VACANCY: u16  = 0; }
-impl VacancyValue for u8   { const VACANCY: u8   = 0; }
+impl VacancyValue for usize {
+    const VACANCY: usize = 0;
+}
+impl VacancyValue for u64 {
+    const VACANCY: u64 = 0;
+}
+impl VacancyValue for u32 {
+    const VACANCY: u32 = 0;
+}
+impl VacancyValue for u16 {
+    const VACANCY: u16 = 0;
+}
+impl VacancyValue for u8 {
+    const VACANCY: u8 = 0;
+}
 
 // Signed integers
-impl VacancyValue for isize { const VACANCY: isize = 0; }
-impl VacancyValue for i64   { const VACANCY: i64   = 0; }
-impl VacancyValue for i32   { const VACANCY: i32   = 0; }
-impl VacancyValue for i16   { const VACANCY: i16   = 0; }
-impl VacancyValue for i8    { const VACANCY: i8    = 0; }
+impl VacancyValue for isize {
+    const VACANCY: isize = 0;
+}
+impl VacancyValue for i64 {
+    const VACANCY: i64 = 0;
+}
+impl VacancyValue for i32 {
+    const VACANCY: i32 = 0;
+}
+impl VacancyValue for i16 {
+    const VACANCY: i16 = 0;
+}
+impl VacancyValue for i8 {
+    const VACANCY: i8 = 0;
+}
 
 // Floats
-impl VacancyValue for f64 { const VACANCY: f64 = 0.0; }
-impl VacancyValue for f32 { const VACANCY: f32 = 0.0; }
-
+impl VacancyValue for f64 {
+    const VACANCY: f64 = 0.0;
+}
+impl VacancyValue for f32 {
+    const VACANCY: f32 = 0.0;
+}
 
 // ======================================================================================
 // --------------------------------- GridConfig -----------------------------------------
@@ -122,7 +146,10 @@ impl GridConfig {
     ///   - `l` (`usize`): Parameter of type `usize` used by `new`.
     ///   - `periodic` (`bool`): Parameter of type `bool` used by `new`.
     pub fn new(d: usize, l: usize, periodic: bool) -> Self {
-        assert!(d > 0 && l > 0, "GridConfig requires d>0 and l>0; got d={d}, l={l}");
+        assert!(
+            d > 0 && l > 0,
+            "GridConfig requires d>0 and l>0; got d={d}, l={l}"
+        );
         Self { d, l, periodic }
     }
 
@@ -142,10 +169,10 @@ impl GridConfig {
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn shape(&self) -> [usize; 2] { [self.d, self.l] }
+    pub fn shape(&self) -> [usize; 2] {
+        [self.d, self.l]
+    }
 }
-
-
 
 // ======================================================================================
 // -------------------------------- GridInitMethod --------------------------------------
@@ -166,8 +193,6 @@ pub enum GridInitMethod<T: Scalar> {
     RandomUniformChoices { choices: Vec<T> },
     SeededCenter { val: T },
 }
-
-
 
 // ======================================================================================
 // ------------------------------------ Grid --------------------------------------------
@@ -229,7 +254,10 @@ impl<T: Scalar> Grid<T> {
     pub fn from_ndarry(array: &ArrayD<T>, periodic: bool) -> Self {
         let owned = array.to_owned();
         let shape = owned.shape().to_vec();
-        assert!(!shape.is_empty(), "Grid::from_ndarry: shape must be non-empty");
+        assert!(
+            !shape.is_empty(),
+            "Grid::from_ndarry: shape must be non-empty"
+        );
         let l = shape[0];
         assert!(
             shape.iter().all(|&dim| dim == l),
@@ -237,10 +265,7 @@ impl<T: Scalar> Grid<T> {
         );
         let cfg = GridConfig::new(shape.len(), l, periodic);
         let (data, _) = owned.into_raw_vec_and_offset();
-        Self {
-            cfg,
-            data,
-        }
+        Self { cfg, data }
     }
 
     #[inline]
@@ -280,8 +305,6 @@ fn parse_grid_kind(kind: &str) -> Result<bool, String> {
     }
 }
 
-
-
 // ======================================================================================
 // --------------------- Vacancy operations (type-aware) --------------------------------
 // ======================================================================================
@@ -294,7 +317,9 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     ///   - (none): This function takes no explicit parameters.
-    pub fn vacancy() -> T { T::vacancy() }
+    pub fn vacancy() -> T {
+        T::vacancy()
+    }
 
     /// Mark a single coordinate as **vacant**.
     ///
@@ -335,9 +360,6 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     }
 }
 
-
-
-
 // ======================================================================================
 // ------------------------ Constructors & core helpers ---------------------------------
 // ======================================================================================
@@ -346,7 +368,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     /**
     Build a new grid with the given `cfg` and initialization `init_method`.
 
-    - `Empty`: leaves `data` at `T::default()`.  
+    - `Empty`: leaves `data` at `T::default()`.
       If you want **Empty → vacancy**, call `fill_vacancy()` after construction.
     - `Uniform { val }`: `val` everywhere (parallel).
     - `RandomUniform { choices }`: uniform random pick per site.
@@ -372,7 +394,10 @@ impl<T: Scalar + VacancyValue> Grid<T> {
                 data.par_iter_mut().for_each(|slot| *slot = val.clone());
             }
             GridInitMethod::RandomUniformChoices { choices } => {
-                assert!(!choices.is_empty(), "RandomUniform requires non-empty `choices`");
+                assert!(
+                    !choices.is_empty(),
+                    "RandomUniform requires non-empty `choices`"
+                );
                 data.par_iter_mut().for_each(|slot| {
                     let i = random_range(0..choices.len());
                     *slot = choices[i].clone();
@@ -382,7 +407,9 @@ impl<T: Scalar + VacancyValue> Grid<T> {
                 // Put a single non-vacant marker at the **center**.
                 // Center coordinate is (l/2, l/2, ..., l/2).
                 let mut idx = 0usize;
-                for _ in 0..cfg.d { idx = idx * cfg.l + cfg.l / 2; }
+                for _ in 0..cfg.d {
+                    idx = idx * cfg.l + cfg.l / 2;
+                }
                 data[idx] = val.clone();
                 // If desired, set all others to vacancy:
                 // let v = T::vacancy();
@@ -421,7 +448,13 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     /// - Parameters:
     ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
     fn coord_to_index(&self, coord: &[isize]) -> usize {
-        debug_assert_eq!(coord.len(), self.cfg.d, "rank mismatch: coord={:?}, d={}", coord, self.cfg.d);
+        debug_assert_eq!(
+            coord.len(),
+            self.cfg.d,
+            "rank mismatch: coord={:?}, d={}",
+            coord,
+            self.cfg.d
+        );
         let l = self.cfg.l;
         let mut flat = 0usize;
         for &c in coord {
@@ -431,9 +464,6 @@ impl<T: Scalar + VacancyValue> Grid<T> {
         flat
     }
 }
-
-
-
 
 // ======================================================================================
 // -------------------------- Space impl (core ops) -------------------------------------
@@ -445,21 +475,30 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     /// - Purpose: Executes `data` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn data(&self) -> &[T] { &self.data }
+    #[inline]
+    fn data(&self) -> &[T] {
+        &self.data
+    }
 
     /// Return metadata dims `[d, l]` (total sites is `l^d`).
     /// Annotation:
     /// - Purpose: Executes `dims` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn dims(&self) -> Vec<usize> { vec![self.cfg.d, self.cfg.l] }
+    #[inline]
+    fn dims(&self) -> Vec<usize> {
+        vec![self.cfg.d, self.cfg.l]
+    }
 
     /// Total site count `l^d`.
     /// Annotation:
     /// - Purpose: Executes `linear_size` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    #[inline] fn linear_size(&self) -> usize { self.data.len() }
+    #[inline]
+    fn linear_size(&self) -> usize {
+        self.data.len()
+    }
 
     /// Safe read at multi-index `coord`.
     #[inline]
@@ -525,8 +564,6 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for Grid<T> {
     }
 }
 
-
-
 // ======================================================================================
 // ------------------------------ Downscale & Save --------------------------------------
 // ======================================================================================
@@ -536,7 +573,7 @@ impl<T: Scalar + VacancyValue> Grid<T> {
     Create a **downsampled** copy with side length `l_new`.
 
     - If `l_new >= l`, this returns a **clone** (no upsampling).
-    - If `l_new < l`, each new coordinate `(i_new)` maps to  
+    - If `l_new < l`, each new coordinate `(i_new)` maps to
       `i_old = floor(i_new * (l / l_new))` **along each axis** (nearest-lower pick).
 
     This is **not an average**; it’s a point-sample mapping suitable for
@@ -654,11 +691,7 @@ where
 /// - `grid`: source grid
 /// - `l_target`: side length of the saved grid (use same value as `grid.cfg.l` to avoid scaling)
 /// - `output_file`: **file path** to write to (not a directory)
-pub fn save_grid<T>(
-    grid: &Grid<T>,
-    l_target: usize,
-    output_file: &PathBuf,
-) -> std::io::Result<()>
+pub fn save_grid<T>(grid: &Grid<T>, l_target: usize, output_file: &PathBuf) -> std::io::Result<()>
 where
     T: ScalarSerde + VacancyValue,
 {
@@ -671,8 +704,7 @@ where
         data: &grid_to_save.data,
     };
 
-    let json = serde_json::to_string_pretty(&json_data)
-        .expect("Failed to serialize grid to JSON");
+    let json = serde_json::to_string_pretty(&json_data).expect("Failed to serialize grid to JSON");
 
     let mut file = File::create(output_file)?;
     file.write_all(json.as_bytes())?;
