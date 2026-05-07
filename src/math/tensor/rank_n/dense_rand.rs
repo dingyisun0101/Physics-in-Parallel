@@ -15,8 +15,10 @@ Supported element/distribution pairs:
     - `usize`: `UniformInt`;
     - `isize`: `UniformInt`.
 
-The `try_*` APIs report configuration errors. The legacy convenience APIs
-`new`, `new_with_seed`, and `refresh` keep panic-on-invalid behavior.
+The `try_*` APIs report configuration errors. The shorter `new`,
+`new_with_seed`, and `refresh` APIs intentionally keep panic-on-invalid
+behavior for workflows where invalid random-fill configuration is a programmer
+error.
 */
 
 use rand::SeedableRng;
@@ -67,9 +69,9 @@ impl RandType {
 ///	  80 RNG chunks, release build, on the local Xeon Gold 6148 machine.
 ///
 /// Default behavior:
-///	- constructor `rng_kind == None` still maps to `Pcg64` for fastest generation,
-///	  familiar default behavior, even though it is not first in this measured
-///	  speed order.
+///	- constructor `rng_kind == None` maps to `SmallRng`, which is the concise
+///	  general-purpose default chosen for predictable user-facing behavior even
+///	  though the enum itself is ordered by measured fill speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RngKind {
     Pcg64,

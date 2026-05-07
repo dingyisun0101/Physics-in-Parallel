@@ -4,7 +4,7 @@ pub mod rank_n;
 pub use rank_2::{
     AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
     MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
-    StrictUpperTriangularMatrix, SymmetricMatrix, Tensor2D, UpperTriangularMatrix, VectorList,
+    StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix, VectorList,
     VectorListRand,
 };
 pub use rank_n::dense_rand::{RandType, RngKind, TensorRandError, TensorRandFiller};

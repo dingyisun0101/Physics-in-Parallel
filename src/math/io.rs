@@ -4,3 +4,4 @@ pub mod json;
 pub mod ndarray;
 pub mod string;
 pub mod tensor;
+pub mod vector_list;

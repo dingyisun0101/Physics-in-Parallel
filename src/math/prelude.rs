@@ -22,6 +22,6 @@ pub use crate::math::tensor::{
 pub use crate::math::tensor::rank_2::{
     AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
     MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
-    StrictUpperTriangularMatrix, SymmetricMatrix, Tensor2D, UpperTriangularMatrix, VectorList,
+    StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix, VectorList,
     VectorListRand,
 };

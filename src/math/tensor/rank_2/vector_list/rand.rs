@@ -34,7 +34,6 @@ use crate::math::ndarray_convert::NdarrayConvert;
 pub trait VectorListRand {
     type Elem;
 
-    /// Allocate an empty `[n, dim]` `VectorList` and any internal buffers.
     /// Allocate output storage and rank-N random-fill buffers.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self
     where
@@ -83,12 +82,12 @@ impl VectorListRand for HaarVectors {
 }
 
 impl HaarVectors {
-    /// Build a HaarVectors container from existing ndarray data (`[n, dim]`).
-    ///
-    /// The random filler is initialized to the standard Haar refresh distribution
-    /// (`Normal { mean: 0, std: 1 }`), so a subsequent `refresh()` remains valid.
-    #[inline]
     /// Build a Haar generator around existing `[n, dim]` vector-list data.
+    ///
+    /// The random filler is initialized with the standard-normal distribution
+    /// used by `refresh`, so callers can import data and later resume random
+    /// Haar generation with the same object.
+    #[inline]
     pub fn from_ndarray(array: &Array2<f64>) -> Self {
         let vl = VectorList::<f64>::from_ndarray(array);
         let dim = vl.dim();
@@ -105,7 +104,6 @@ impl HaarVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
-    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     pub fn to_ndarray(&self) -> Array2<f64> {
         self.vl.to_ndarray()
     }
@@ -199,11 +197,12 @@ fn decode_nearest_neighbor_code(code: usize, row: &mut [isize]) {
 }
 
 impl NNVectors {
-    /// Build an NNVectors container from existing ndarray data (`[n, dim]`).
-    ///
-    /// The random code buffer/filler are initialized with defaults so `refresh()` remains valid.
-    #[inline]
     /// Build a nearest-neighbor generator around existing `[n, dim]` rows.
+    ///
+    /// The integer-code filler is initialized with the same direction-code
+    /// range used by `refresh`, so imported data can later be replaced by new
+    /// random nearest-neighbor directions.
+    #[inline]
     pub fn from_ndarray(array: &Array2<isize>) -> Self {
         let vl = VectorList::<isize>::from_ndarray(array);
         let dim = vl.dim();
@@ -227,7 +226,6 @@ impl NNVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
-    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     pub fn to_ndarray(&self) -> Array2<isize> {
         self.vl.to_ndarray()
     }
