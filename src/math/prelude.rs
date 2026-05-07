@@ -20,5 +20,8 @@ pub use crate::math::tensor::{
 
 // Rank-2 tensor and matrix/vector abstractions
 pub use crate::math::tensor::rank_2::{
-    HaarVectors, Matrix, MatrixTrait, NNVectors, Tensor2D, VectorList, VectorListRand,
+    AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
+    MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
+    StrictUpperTriangularMatrix, SymmetricMatrix, Tensor2D, UpperTriangularMatrix, VectorList,
+    VectorListRand,
 };

@@ -71,9 +71,10 @@ impl<T: Scalar> Tensor<T> {
     /// Number of elements (a.k.a. linear size).
     #[inline(always)]
     /// Details:
-    /// - Purpose: Returns the current length/size.
+    /// - Purpose: Returns the total number of scalar entries stored in the
+    ///   dense row-major buffer.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Uses this tensor's stored shape and data buffer.
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -81,9 +82,11 @@ impl<T: Scalar> Tensor<T> {
     /// True iff there are zero elements (never true given our shape assertion).
     #[inline(always)]
     /// Details:
-    /// - Purpose: Checks whether `empty` condition is true.
+    /// - Purpose: Reports whether the dense backing buffer contains no scalar
+    ///   entries. For tensors constructed through validated constructors this
+    ///   is normally false because rank-zero and zero-axis shapes are rejected.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Uses this tensor's backing buffer length.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -126,10 +129,13 @@ impl<T: Scalar> Tensor<T> {
 /// Euclidean modulo for axis indices (supports negatives).
 #[inline(always)]
 /// Details:
-/// - Purpose: Executes `wrap_axis_index` logic for this module.
+/// - Purpose: Converts any signed coordinate on one axis into the valid
+///   periodic index range `[0, dim)`, so `-1` selects the last element and
+///   `dim` wraps to zero.
 /// - Parameters:
-///   - `idx` (`isize`): Index argument selecting an element or slot.
-///   - `dim` (`usize`): Parameter of type `usize` used by `wrap_axis_index`.
+///   - `idx` (`isize`): Caller-provided coordinate, possibly negative or
+///     larger than the axis length.
+///   - `dim` (`usize`): Positive axis length used as the wrapping period.
 fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     debug_assert!(dim > 0);
     let d = dim as isize;
@@ -160,9 +166,11 @@ where
     /// Panics if `shape` contains a zero dimension or if `product` overflows `usize`.
     #[inline]
     /// Details:
-    /// - Purpose: Executes `empty` logic for this module.
+    /// - Purpose: Allocates a dense tensor with the requested shape and fills
+    ///   every stored scalar entry with `T::default()`.
     /// - Parameters:
-    ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
+    ///   - `shape` (`&[usize]`): Non-empty list of positive axis lengths that
+    ///     defines the tensor rank and dense storage size.
     fn empty(shape: &[usize]) -> Self {
         assert!(
             shape.iter().all(|&d| d > 0),
@@ -176,9 +184,10 @@ where
     }
 
     /// Details:
-    /// - Purpose: Returns the `sum` value.
+    /// - Purpose: Computes the scalar sum of all entries in the dense buffer
+    ///   using a Rayon reduction.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Sums every logical tensor element.
     fn get_sum(&self) -> T {
         let result = self
             .data
@@ -191,9 +200,10 @@ where
     /// Shape vector.
     #[inline]
     /// Details:
-    /// - Purpose: Returns the logical shape metadata.
+    /// - Purpose: Returns the tensor's axis lengths without exposing mutable
+    ///   access to the internal shape vector.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this tensor's stored shape metadata.
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -204,9 +214,12 @@ where
     /// - Never panics due to out-of-bounds (only rank mismatch is debug-asserted).
     #[inline(always)]
     /// Details:
-    /// - Purpose: Computes an index mapping for input coordinates.
+    /// - Purpose: Converts a full multidimensional coordinate into the
+    ///   corresponding row-major flat buffer index, applying periodic wrapping
+    ///   independently on every axis.
     /// - Parameters:
-    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `index`.
+    ///   - `indices` (`&[isize]`): One signed coordinate per tensor axis; the
+    ///     slice length must match the tensor rank.
     fn index(&self, indices: &[isize]) -> usize {
         assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
 
@@ -226,9 +239,11 @@ where
     /// Get by (wrapped) multi-index. Returns a copy of T (Scalar assumed Copy).
     #[inline(always)]
     /// Details:
-    /// - Purpose: Executes `get` logic for this module.
+    /// - Purpose: Reads and returns a copy of the scalar at the wrapped
+    ///   multidimensional coordinate.
     /// - Parameters:
-    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get`.
+    ///   - `indices` (`&[isize]`): One signed coordinate per axis; negative and
+    ///     oversized coordinates wrap periodically.
     fn get(&self, indices: &[isize]) -> T {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -239,9 +254,11 @@ where
     /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
     /// Details:
-    /// - Purpose: Returns the `mut` value.
+    /// - Purpose: Returns a mutable reference to the scalar at the wrapped
+    ///   multidimensional coordinate so callers can update it in place.
     /// - Parameters:
-    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get_mut`.
+    ///   - `indices` (`&[isize]`): One signed coordinate per axis; negative and
+    ///     oversized coordinates wrap periodically.
     fn get_mut(&mut self, indices: &[isize]) -> &mut T {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -251,10 +268,12 @@ where
     /// Set value at (wrapped) multi-index.
     #[inline(always)]
     /// Details:
-    /// - Purpose: Executes `set` logic for this module.
+    /// - Purpose: Replaces the scalar stored at the wrapped multidimensional
+    ///   coordinate with the caller-provided value.
     /// - Parameters:
-    ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `set`.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
+    ///   - `indices` (`&[isize]`): One signed coordinate per axis; negative and
+    ///     oversized coordinates wrap periodically.
+    ///   - `val` (`T`): New scalar value to store at that coordinate.
     fn set(&mut self, indices: &[isize], val: T) {
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
@@ -264,9 +283,10 @@ where
     /// Parallel fill with a constant value.
     #[inline]
     /// Details:
-    /// - Purpose: Executes `par_fill` logic for this module.
+    /// - Purpose: Replaces every dense-buffer entry with the same scalar value
+    ///   using Rayon over the contiguous storage.
     /// - Parameters:
-    ///   - `value` (`T`): Value provided by caller for write/update behavior.
+    ///   - `value` (`T`): Scalar copied into every logical tensor element.
     fn par_fill(&mut self, value: T)
     where
         T: Copy + Send + Sync,
@@ -324,9 +344,10 @@ where
     }
 
     /// Details:
-    /// - Purpose: Prints a human-readable representation.
+    /// - Purpose: Satisfies the tensor trait printing contract by delegating to
+    ///   the dense tensor's inherent rank-aware terminal printer.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this tensor without modifying it.
     fn print(&self) {
         Tensor::<T>::print(self);
     }
@@ -457,9 +478,10 @@ impl<T: Scalar> Tensor<T> {
     /// Convert this **dense** tensor to a **sparse** one by skipping zeros.
     #[inline]
     /// Details:
-    /// - Purpose: Converts this value into `sparse` form.
+    /// - Purpose: Creates an equivalent sparse tensor by preserving the shape
+    ///   and storing only entries whose value is not `T::zero()`.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this dense tensor's full buffer.
     pub fn to_sparse(&self) -> TensorSparse<T> {
         TensorSparse::from_dense(self)
     }
@@ -467,9 +489,11 @@ impl<T: Scalar> Tensor<T> {
     /// Build a **dense** tensor from a **sparse** one (missing entries = zero).
     #[inline]
     /// Details:
-    /// - Purpose: Builds this value from `sparse` input.
+    /// - Purpose: Densifies a sparse tensor by allocating the full row-major
+    ///   buffer and writing sparse entries into a zero-filled tensor.
     /// - Parameters:
-    ///   - `sparse` (`&TensorSparse<T>`): Parameter of type `&TensorSparse<T>` used by `from_sparse`.
+    ///   - `sparse` (`&TensorSparse<T>`): Sparse tensor whose shape and stored
+    ///     nonzero values should be represented densely.
     pub fn from_sparse(sparse: &TensorSparse<T>) -> Self {
         let shape = sparse.shape().to_vec();
         let size = checked_num_elements(&shape, "dense tensor from sparse");
@@ -496,9 +520,11 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
     /// # Panics
     /// Panics if `rank > 2`.
     /// Details:
-    /// - Purpose: Prints a human-readable representation.
+    /// - Purpose: Prints a compact terminal representation chosen by rank:
+    ///   one-line output for rank 1, table output for rank 2, and structured
+    ///   nested output for higher ranks.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this tensor without modifying it.
     pub fn print(&self) {
         match self.shape.len() {
             1 => {

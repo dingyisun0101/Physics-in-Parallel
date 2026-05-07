@@ -12,16 +12,20 @@ pub trait NdarrayConvert: Sized {
 
     /// Construct `Self` from an ndarray value.
     /// Details:
-    /// - Purpose: Builds this value from `ndarray` input.
+    /// - Purpose: Converts an owned or borrowed ndarray representation into
+    ///   the corresponding PiP math container while preserving shape and
+    ///   row-major logical element order.
     /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
+    ///   - `array` (`&Self::NdArray`): ndarray value whose dimensions and
+    ///     scalar entries should be imported.
     fn from_ndarray(array: &Self::NdArray) -> Self;
 
     /// Convert `Self` into its ndarray representation.
     /// Details:
-    /// - Purpose: Converts this value into `ndarray` form.
+    /// - Purpose: Exports a PiP math container into an ndarray value with the
+    ///   same logical shape and scalar entries.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads the source container without modifying it.
     fn to_ndarray(&self) -> Self::NdArray;
 }
 

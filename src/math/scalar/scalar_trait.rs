@@ -112,9 +112,10 @@ pub trait Scalar:
 
     /// Complex conjugate (identity for reals).
     /// Purpose:
-    ///	Executes `conj` logic for this module.
+    ///	Return the complex conjugate while preserving the scalar type; real and
+    ///	integer implementations return themselves unchanged.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn conj(self) -> Self;
 
     /// Magnitude represented back in the same scalar category.
@@ -138,9 +139,10 @@ pub trait Scalar:
 
     /// Square root with type preserved.
     /// Purpose:
-    ///	Executes `sqrt` logic for this module.
+    ///	Compute the square root using this scalar category's own semantics,
+    ///	returning the same scalar type rather than automatically widening.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn sqrt(self) -> Self;
 
     // ---------------------------------------------------------------------
@@ -149,30 +151,34 @@ pub trait Scalar:
 
     /// Real part (`self` for reals).
     /// Purpose:
-    ///	Executes `re` logic for this module.
+    ///	Project the scalar into its real component so generic code can inspect
+    ///	real and complex values through one interface.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn re(self) -> Self::Real;
 
     /// Imaginary part (`0` for reals).
     /// Purpose:
-    ///	Executes `im` logic for this module.
+    ///	Project the scalar into its imaginary component; real and integer
+    ///	scalars return zero.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn im(self) -> Self::Real;
 
     /// Magnitude (Euclidean norm) as a real.
     /// Purpose:
-    ///	Executes `abs_real` logic for this module.
+    ///	Return the scalar magnitude in the associated real domain, making the
+    ///	real-valued projection explicit for complex inputs.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn abs_real(self) -> Self::Real;
 
     /// Squared magnitude as a real.
     /// Purpose:
-    ///	Executes `norm_sqr_real` logic for this module.
+    ///	Return the squared magnitude in the associated real domain; this is the
+    ///	projection counterpart to the type-preserving `norm_sqr`.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn norm_sqr_real(self) -> Self::Real;
 
     /// Fallibly cast this scalar into another scalar type.
@@ -243,9 +249,11 @@ pub trait Scalar:
 
     /// Finite check (integers are always finite).
     /// Purpose:
-    ///	Checks whether `finite` condition is true.
+    ///	Report whether the scalar is finite under its numeric category; integer
+    ///	scalars are always finite, while floating and complex scalars inspect
+    ///	their floating components.
     /// Parameters:
-    ///	- (none): This function has no documented non-receiver parameters.
+    ///	- (none): Operates on the scalar value passed as `self`.
     fn is_finite(self) -> bool;
 }
 

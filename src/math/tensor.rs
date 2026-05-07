@@ -2,7 +2,10 @@ pub mod rank_2;
 pub mod rank_n;
 
 pub use rank_2::{
-    HaarVectors, Matrix, MatrixTrait, NNVectors, Tensor2D, VectorList, VectorListRand,
+    AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
+    MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
+    StrictUpperTriangularMatrix, SymmetricMatrix, Tensor2D, UpperTriangularMatrix, VectorList,
+    VectorListRand,
 };
 pub use rank_n::dense_rand::{RandType, RngKind, TensorRandError, TensorRandFiller};
 pub use rank_n::tensor_trait::TensorTrait;

@@ -50,9 +50,11 @@ pub struct Tensor<T: Scalar, B: Backend<T> = Dense> {
 impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
     #[inline]
     /// Details:
-    /// - Purpose: Builds this value from `storage` input.
+    /// - Purpose: Wraps a backend-specific dense or sparse storage object in
+    ///   the public `Tensor<T, B>` facade while preserving the backend marker.
     /// - Parameters:
-    ///   - `inner` (`B::Storage`): Parameter of type `B::Storage` used by `from_storage`.
+    ///   - `inner` (`B::Storage`): Already-validated backend storage to expose
+    ///     through the generic tensor API.
     pub(crate) fn from_storage(inner: B::Storage) -> Self {
         Self {
             inner,
@@ -62,9 +64,11 @@ impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
 
     #[inline]
     /// Details:
-    /// - Purpose: Executes `storage` logic for this module.
+    /// - Purpose: Gives internal IO and conversion code read-only access to
+    ///   the backend storage without making storage details part of the public
+    ///   end-user API.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Borrows the facade's backend storage.
     pub(crate) fn storage(&self) -> &B::Storage {
         &self.inner
     }
@@ -76,9 +80,10 @@ where
 {
     #[inline]
     /// Details:
-    /// - Purpose: Executes `empty` logic for this module.
+    /// - Purpose: Creates a tensor of the selected backend with the requested
+    ///   shape and that backend's zero/default empty representation.
     /// - Parameters:
-    ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
+    ///   - `shape` (`&[usize]`): Non-empty list of positive axis lengths.
     pub fn empty(shape: &[usize]) -> Self {
         Self::from_storage(<B::Storage as TensorTrait<T>>::empty(shape))
     }
@@ -90,9 +95,10 @@ where
 
     #[inline]
     /// Details:
-    /// - Purpose: Returns the logical shape metadata.
+    /// - Purpose: Returns the logical axis lengths shared by every backend
+    ///   representation of this tensor.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Delegates to the backend storage shape.
     pub fn shape(&self) -> &[usize] {
         self.inner.shape()
     }
@@ -111,9 +117,10 @@ where
 
     #[inline]
     /// Details:
-    /// - Purpose: Returns the `sum` value.
+    /// - Purpose: Computes the scalar sum of all logical tensor entries using
+    ///   the backend's native reduction semantics.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads all logical entries represented by this tensor.
     pub fn get_sum(&self) -> T {
         self.inner.get_sum()
     }
@@ -126,9 +133,11 @@ where
 
     #[inline]
     /// Details:
-    /// - Purpose: Executes `get` logic for this module.
+    /// - Purpose: Reads a scalar at a multidimensional coordinate through the
+    ///   backend's indexing rules; dense returns stored values and sparse
+    ///   returns zero for implicit entries.
     /// - Parameters:
-    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
+    ///   - `idx` (`&[isize]`): One signed coordinate per tensor axis.
     pub fn get(&self, idx: &[isize]) -> T
     where
         T: Copy,
@@ -143,10 +152,11 @@ where
 
     #[inline]
     /// Details:
-    /// - Purpose: Executes `set` logic for this module.
+    /// - Purpose: Writes a scalar at a multidimensional coordinate through the
+    ///   backend's update rules; sparse zero writes remove explicit storage.
     /// - Parameters:
-    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
+    ///   - `idx` (`&[isize]`): One signed coordinate per tensor axis.
+    ///   - `val` (`T`): Scalar value to store at that logical coordinate.
     pub fn set(&mut self, idx: &[isize], val: T) {
         self.inner.set(idx, val);
     }
@@ -334,9 +344,10 @@ where
 
     #[inline]
     /// Details:
-    /// - Purpose: Prints a human-readable representation.
+    /// - Purpose: Delegates to the backend's terminal printer so users can
+    ///   quickly inspect tensor shape and representative values.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this tensor without modifying it.
     pub fn print(&self) {
         self.inner.print();
     }
@@ -380,18 +391,20 @@ impl<T: Scalar> Tensor<T, Dense> {
 
     #[inline]
     /// Details:
-    /// - Purpose: Converts this value into `sparse` form.
+    /// - Purpose: Converts a dense facade tensor into a sparse facade tensor by
+    ///   preserving shape and explicitly storing only nonzero entries.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this dense tensor.
     pub fn to_sparse(&self) -> Tensor<T, Sparse> {
         Tensor::<T, Sparse>::from_storage(self.inner.to_sparse())
     }
 
     #[inline]
     /// Details:
-    /// - Purpose: Builds this value from `sparse` input.
+    /// - Purpose: Builds a dense facade tensor by materializing every implicit
+    ///   sparse zero into a full dense buffer.
     /// - Parameters:
-    ///   - `s` (`&Tensor<T, Sparse>`): Parameter of type `&Tensor<T, Sparse>` used by `from_sparse`.
+    ///   - `s` (`&Tensor<T, Sparse>`): Sparse facade tensor to densify.
     pub fn from_sparse(s: &Tensor<T, Sparse>) -> Self {
         Self::from_storage(DenseStorage::<T>::from_sparse(&s.inner))
     }
@@ -420,36 +433,40 @@ impl<T: Scalar> Tensor<T, Sparse> {
 
     #[inline]
     /// Details:
-    /// - Purpose: Executes `nnz` logic for this module.
+    /// - Purpose: Returns how many entries are explicitly stored by the sparse
+    ///   backend; implicit zeros are excluded.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads the sparse backend's storage map length.
     pub fn nnz(&self) -> usize {
         self.inner.nnz()
     }
 
     #[inline]
     /// Details:
-    /// - Purpose: Returns the current length/size.
+    /// - Purpose: Returns the number of logical positions in the sparse tensor's
+    ///   dense domain, equal to the product of shape axes.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Uses the sparse tensor's shape metadata.
     pub fn len_dense(&self) -> usize {
         self.inner.len_dense()
     }
 
     #[inline]
     /// Details:
-    /// - Purpose: Converts this value into `dense` form.
+    /// - Purpose: Converts a sparse facade tensor into a dense facade tensor by
+    ///   allocating the full dense buffer and filling implicit zeros.
     /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    ///   - (none): Reads this sparse tensor.
     pub fn to_dense(&self) -> Tensor<T, Dense> {
         Tensor::<T, Dense>::from_storage(self.inner.to_dense())
     }
 
     #[inline]
     /// Details:
-    /// - Purpose: Builds this value from `dense` input.
+    /// - Purpose: Builds a sparse facade tensor by scanning a dense tensor and
+    ///   keeping only entries that are not `T::zero()`.
     /// - Parameters:
-    ///   - `d` (`&Tensor<T, Dense>`): Parameter of type `&Tensor<T, Dense>` used by `from_dense`.
+    ///   - `d` (`&Tensor<T, Dense>`): Dense facade tensor to compress.
     pub fn from_dense(d: &Tensor<T, Dense>) -> Self {
         Self::from_storage(SparseStorage::<T>::from_dense(&d.inner))
     }

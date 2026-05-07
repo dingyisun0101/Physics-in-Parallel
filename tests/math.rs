@@ -1,3 +1,11 @@
+#[path = "math/matrix_basic.rs"]
+mod matrix_basic;
+#[path = "math/matrix_ops.rs"]
+mod matrix_ops;
+#[path = "math/matrix_structured.rs"]
+mod matrix_structured;
+#[path = "math/matrix_support.rs"]
+mod matrix_support;
 #[path = "math/scalar_algebra.rs"]
 mod scalar_algebra;
 #[path = "math/tensor_access.rs"]
