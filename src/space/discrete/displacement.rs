@@ -151,7 +151,7 @@ fn gen_random_idx_pairs_by_kernel(
     if source_coords_filler.is_some() {
         if let Some(filler) = source_coords_filler.as_mut() {
             // Fills the **flat** SoA buffer.
-            filler.refresh(&mut source_coords.as_tensor_mut());
+            filler.refresh(source_coords.as_tensor_mut());
         }
     }
 

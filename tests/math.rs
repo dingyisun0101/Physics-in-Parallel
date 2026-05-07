@@ -16,3 +16,9 @@ mod tensor_basic;
 mod tensor_linalg;
 #[path = "math/tensor_rand.rs"]
 mod tensor_rand;
+#[path = "math/vector_list_basic.rs"]
+mod vector_list_basic;
+#[path = "math/vector_list_ops.rs"]
+mod vector_list_ops;
+#[path = "math/vector_list_rand.rs"]
+mod vector_list_rand;

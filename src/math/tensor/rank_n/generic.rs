@@ -72,6 +72,11 @@ impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
     pub(crate) fn storage(&self) -> &B::Storage {
         &self.inner
     }
+
+    #[inline]
+    pub(crate) fn storage_mut(&mut self) -> &mut B::Storage {
+        &mut self.inner
+    }
 }
 
 impl<T: Scalar, B: Backend<T>> Tensor<T, B>

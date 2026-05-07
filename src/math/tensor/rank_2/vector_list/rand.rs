@@ -1,29 +1,24 @@
-// src/math/tensor/rank_2/vector_list/rand.rs
 /*!
-Random fillers and utilities that work **in-place** on `VectorList<T>`.
+Random vector-list generators.
 
-This file defines a small trait `VectorListRand` (requires `new` and `refresh`)
-and two implementers:
-- `HaarVectors`: unit vectors sampled uniformly on `S^{D-1}` (Haar).
-- `NNVectors`: nearest-neighbor one-hot +/-1 direction vectors.
+Purpose:
+    This module provides reusable random fillers for `VectorList` values while
+    keeping random-number generation inside the rank-N tensor random
+    infrastructure. The generators own their `VectorList` output and call
+    `TensorRandFiller` to refresh dense buffers in-place.
 
-Notes:
-- It uses a dense backend by default.
-- `HaarVectors::refresh` draws i.i.d. `Normal(0,1)` and L2-normalizes each vector.
-- `NNVectors::refresh` samples integer codes in `[0, 2D)` and decodes them:
-  `axis = code / 2`, `sign = +1` if even else `-1`.
-
-Both implement `VectorListRand`:
-```ignore
-let mut hv = HaarVectors::new(dim, n, None);
-hv.refresh();
-
-let mut nn = NNVectors::new(dim, n, None);
-nn.refresh();
-```
+Design:
+    - `HaarVectors`:
+        Fills the dense `[n, dim]` buffer with independent standard-normal
+        values using `TensorRandFiller`, then asks `VectorList` to normalize
+        each row. Each retrieved row is one Haar-distributed unit vector in
+        `dim` dimensions.
+    - `NNVectors`:
+        Fills a rank-N dense code tensor with integer direction codes using
+        `TensorRandFiller`, then decodes those codes through the vector-level
+        row API. The stored rows are one-hot nearest-neighbor directions.
 */
 use ndarray::Array2;
-use rayon::prelude::*;
 use serde_json::Value;
 
 use crate::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense::Tensor};
@@ -40,21 +35,12 @@ pub trait VectorListRand {
     type Elem;
 
     /// Allocate an empty `[n, dim]` `VectorList` and any internal buffers.
-    /// Annotation:
-    /// - Purpose: Constructs and returns a new instance.
-    /// - Parameters:
-    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
+    /// Allocate output storage and rank-N random-fill buffers.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self
     where
         Self: Sized;
 
     /// Refill the internal `VectorList` in-place, keeping shape `[n, dim]`.
-    /// Annotation:
-    /// - Purpose: Executes `refresh` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
     fn refresh(&mut self);
 }
 
@@ -72,12 +58,7 @@ pub struct HaarVectors {
 impl VectorListRand for HaarVectors {
     type Elem = f64;
 
-    /// Annotation:
-    /// - Purpose: Constructs and returns a new instance.
-    /// - Parameters:
-    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
+    /// Allocate a vector list and a rank-N normal random filler.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
@@ -94,15 +75,9 @@ impl VectorListRand for HaarVectors {
     }
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `refresh` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Refresh the dense buffer with rank-N normal random values and normalize rows.
     fn refresh(&mut self) {
-        // 1) i.i.d. Gaussian entries on internal flat storage
-        self.filler.refresh(&mut self.vl.as_tensor_mut());
-
-        // 2) in-place L2 normalization per vector
+        self.filler.refresh(self.vl.as_tensor_mut());
         self.vl.normalize();
     }
 }
@@ -113,10 +88,7 @@ impl HaarVectors {
     /// The random filler is initialized to the standard Haar refresh distribution
     /// (`Normal { mean: 0, std: 1 }`), so a subsequent `refresh()` remains valid.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Array2<f64>`): ndarray input used for conversion/interoperability.
+    /// Build a Haar generator around existing `[n, dim]` vector-list data.
     pub fn from_ndarray(array: &Array2<f64>) -> Self {
         let vl = VectorList::<f64>::from_ndarray(array);
         let dim = vl.dim();
@@ -133,26 +105,19 @@ impl HaarVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     pub fn to_ndarray(&self) -> Array2<f64> {
         self.vl.to_ndarray()
     }
 
     #[inline]
-    /// - Purpose: Converts this Haar vector batch into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Convert this Haar vector batch into a structured JSON value.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
         self.vl.serialize_value()
     }
 
     #[inline]
-    /// - Purpose: Converts this Haar vector batch into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Convert this Haar vector batch into pretty JSON text.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.vl.serialize()
     }
@@ -162,19 +127,11 @@ impl NdarrayConvert for HaarVectors {
     type NdArray = Array2<f64>;
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         HaarVectors::from_ndarray(array)
     }
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         HaarVectors::to_ndarray(self)
     }
@@ -196,20 +153,12 @@ pub struct NNVectors {
 impl VectorListRand for NNVectors {
     type Elem = isize;
 
-    /// Annotation:
-    /// - Purpose: Constructs and returns a new instance.
-    /// - Parameters:
-    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `n` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
+    /// Allocate output rows and a rank-N integer-code random filler.
     fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
         assert!(dim > 0, "NNVectors::new: dim must be > 0");
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
-        // vector list storage
         let vl = VectorList::<isize>::empty(dim, n);
-
-        // codes in [0, 2*dim)
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
 
         let code_filler = TensorRandFiller::new(
@@ -229,33 +178,23 @@ impl VectorListRand for NNVectors {
         }
     }
 
-    /// Randomize codes and decode into one-hot ±1 vectors.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `refresh` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Refresh rank-N integer codes and decode them into vector-list rows.
     fn refresh(&mut self) {
-        // 1) sample codes in [0, 2*dim)
         self.code_filler.refresh(&mut self.code_buf);
 
-        let codes: &[usize] = &self.code_buf.data;
+        self.vl.par_for_each_vec_mut(|i, row| {
+            decode_nearest_neighbor_code(self.code_buf.get(&[i as isize]), row);
+        });
+    }
+}
 
-        // 2) rewrite all vectors in parallel.
-        // VectorList stores physical shape [n, dim], so each vector is one contiguous row.
-        self.vl
-            .as_tensor_mut()
-            .data
-            .par_chunks_mut(self.dim)
-            .enumerate()
-            .for_each(|(i, row)| {
-                let code = codes[i];
-                for (axis, x) in row.iter_mut().enumerate() {
-                    let a = code / 2;
-                    let sign = if code % 2 == 0 { 1isize } else { -1isize };
-                    *x = if a == axis { sign } else { 0 };
-                }
-            });
+#[inline]
+fn decode_nearest_neighbor_code(code: usize, row: &mut [isize]) {
+    let axis = code / 2;
+    let sign = if code % 2 == 0 { 1isize } else { -1isize };
+    for (k, x) in row.iter_mut().enumerate() {
+        *x = if k == axis { sign } else { 0 };
     }
 }
 
@@ -264,10 +203,7 @@ impl NNVectors {
     ///
     /// The random code buffer/filler are initialized with defaults so `refresh()` remains valid.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Array2<isize>`): ndarray input used for conversion/interoperability.
+    /// Build a nearest-neighbor generator around existing `[n, dim]` rows.
     pub fn from_ndarray(array: &Array2<isize>) -> Self {
         let vl = VectorList::<isize>::from_ndarray(array);
         let dim = vl.dim();
@@ -291,26 +227,19 @@ impl NNVectors {
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
     pub fn to_ndarray(&self) -> Array2<isize> {
         self.vl.to_ndarray()
     }
 
     #[inline]
-    /// - Purpose: Converts this nearest-neighbor vector batch into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Convert this nearest-neighbor vector batch into a structured JSON value.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
         self.vl.serialize_value()
     }
 
     #[inline]
-    /// - Purpose: Converts this nearest-neighbor vector batch into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Convert this nearest-neighbor vector batch into pretty JSON text.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.vl.serialize()
     }
@@ -320,19 +249,11 @@ impl NdarrayConvert for NNVectors {
     type NdArray = Array2<isize>;
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
     fn from_ndarray(array: &Self::NdArray) -> Self {
         NNVectors::from_ndarray(array)
     }
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
     fn to_ndarray(&self) -> Self::NdArray {
         NNVectors::to_ndarray(self)
     }
