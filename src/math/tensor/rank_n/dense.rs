@@ -42,6 +42,7 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use rayon::prelude::*;
 
+use super::errors;
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
@@ -140,15 +141,7 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
 }
 
 pub(crate) fn checked_num_elements(shape: &[usize], context: &str) -> usize {
-    assert!(
-        !shape.is_empty() && shape.iter().all(|&dim| dim > 0),
-        "{context} shape must contain only nonzero dimensions; got {shape:?}"
-    );
-
-    shape.iter().copied().fold(1usize, |acc, dim| {
-        acc.checked_mul(dim)
-            .unwrap_or_else(|| panic!("{context} shape product overflow: {shape:?}"))
-    })
+    errors::checked_num_elements(shape).unwrap_or_else(|error| panic!("{context}: {error}"))
 }
 
 //===================================================================
@@ -321,15 +314,13 @@ where
         });
     }
 
-    /// Eager, element-wise type cast (panics on failure).
+    /// Fallible, element-wise type cast.
     #[inline]
-    fn cast_to<U: Scalar>(&self) -> Self::Repr<U>
+    fn try_cast_to<U: Scalar>(&self) -> Result<Self::Repr<U>, ScalarCastError>
     where
         T: Copy + Send + Sync,
     {
-        // Call the inherent `try_cast_to` to avoid trait recursion.
-        self.try_cast_to::<U>()
-            .expect("tensor cast failed: component out of range for target type")
+        Tensor::<T>::try_cast_to::<U>(self)
     }
 
     /// Details:

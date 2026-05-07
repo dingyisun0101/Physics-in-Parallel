@@ -27,8 +27,9 @@ Indexing contract
 - `get` returns by value. Sparse tensors synthesize `T::zero()` for implicit
   zeros.
 - `get_mut` returns a mutable value at the normalized index. Sparse tensors
-  materialize an implicit zero if needed; callers can prune explicit zeros with
-  backend-specific APIs after direct mutation.
+  materialize an implicit zero if needed. If a sparse mutable reference is
+  changed back to zero, that explicit zero may remain until a later `set` or
+  sparse operation prunes it.
 
 Sparse semantics
 - Methods whose name starts with `par_` operate according to backend traversal
@@ -37,9 +38,14 @@ Sparse semantics
 - Fully mathematical sparse operations that would densify implicit zeros should
   either return a dense representation or use an explicit method name in later
   API layers.
+
+Conversion contract
+- `try_cast_to` is the explicit scalar type-conversion boundary and reports
+  component cast failures.
+- `cast_to` is the convenience wrapper for workflows where a panic is acceptable.
 */
 
-use crate::math::scalar::Scalar;
+use crate::math::scalar::{Scalar, ScalarCastError};
 
 use super::ops;
 
@@ -101,8 +107,8 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send;
 
-    /// Cast element type to another scalar `U`.
-    fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
+    /// Try to cast the element type to another scalar `U`.
+    fn try_cast_to<U: Scalar>(&self) -> Result<Self::Repr<U>, ScalarCastError>
     where
         T: Copy + Send + Sync;
 
@@ -322,5 +328,15 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
         T: Copy + Send + Sync,
     {
         ops::matmul::<T, Self, Rhs>(self, rhs)
+    }
+
+    /// Cast element type to another scalar `U`, panicking if conversion fails.
+    #[inline]
+    fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
+    where
+        T: Copy + Send + Sync,
+    {
+        self.try_cast_to::<U>()
+            .expect("tensor cast failed: component out of range for target type")
     }
 }

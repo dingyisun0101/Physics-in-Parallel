@@ -7,20 +7,13 @@ use crate::math::scalar::Scalar;
 use num_traits::Zero;
 use rayon::prelude::*;
 
+use super::errors;
 use super::tensor_trait::TensorTrait;
 
 /// Dense logical size implied by a shape.
 #[inline]
 pub fn size(shape: &[usize]) -> usize {
-    assert!(
-        !shape.is_empty() && shape.iter().all(|&dim| dim > 0),
-        "tensor shape must contain only nonzero dimensions; got {shape:?}"
-    );
-
-    shape.iter().copied().fold(1usize, |acc, dim| {
-        acc.checked_mul(dim)
-            .unwrap_or_else(|| panic!("tensor shape product overflow: {shape:?}"))
-    })
+    errors::checked_num_elements(shape).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Panic if two tensor shapes differ.
@@ -31,7 +24,7 @@ where
     Lhs: TensorTrait<T>,
     Rhs: TensorTrait<T>,
 {
-    assert_eq!(lhs.shape(), rhs.shape(), "Tensor shape mismatch");
+    errors::ensure_same_shape(lhs.shape(), rhs.shape()).unwrap_or_else(|error| panic!("{error}"));
 }
 
 /// Build a tensor by mapping every logical element.

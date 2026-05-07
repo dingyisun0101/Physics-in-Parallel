@@ -739,14 +739,13 @@ where
         }
     }
 
-    /// Cast elementwise to another scalar type (panics on failure).
+    /// Fallible, element-wise type cast.
     #[inline]
-    fn cast_to<U: Scalar + Send + Sync>(&self) -> Self::Repr<U>
+    fn try_cast_to<U: Scalar>(&self) -> Result<Self::Repr<U>, ScalarCastError>
     where
         T: Copy + Send + Sync,
     {
-        self.try_cast_to::<U>()
-            .expect("sparse tensor cast failed: component out of range for target type")
+        Tensor::<T>::try_cast_to::<U>(self)
     }
 
     /// Details:
