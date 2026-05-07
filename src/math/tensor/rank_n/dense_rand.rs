@@ -83,7 +83,7 @@ pub enum RngKind {
 impl Default for RngKind {
     #[inline]
     fn default() -> Self {
-        Self::Pcg64
+        Self::SmallRng
     }
 }
 
@@ -441,7 +441,7 @@ impl TensorRandElement for f64 {
         filler: &mut TensorRandFiller,
         tensor: &mut Tensor<f64>,
     ) -> Result<(), TensorRandError> {
-        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data.len()) else {
+        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data().len()) else {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
@@ -451,7 +451,7 @@ impl TensorRandElement for f64 {
                 let dist = Uniform::new(low, high)
                     .map_err(|_| TensorRandError::InvalidUniformBounds { low, high })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
@@ -463,7 +463,7 @@ impl TensorRandElement for f64 {
                 let dist = Normal::new(mean, std)
                     .map_err(|_| TensorRandError::InvalidNormalStd { std })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
@@ -472,7 +472,7 @@ impl TensorRandElement for f64 {
                 let dist = Bernoulli::new(p)
                     .map_err(|_| TensorRandError::InvalidBernoulliProbability { p })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| {
@@ -492,7 +492,7 @@ impl TensorRandElement for i64 {
         filler: &mut TensorRandFiller,
         tensor: &mut Tensor<i64>,
     ) -> Result<(), TensorRandError> {
-        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data.len()) else {
+        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data().len()) else {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
@@ -502,7 +502,7 @@ impl TensorRandElement for i64 {
                 let dist = Uniform::new_inclusive(low, high)
                     .map_err(|_| TensorRandError::InvalidUniformIntBounds { low, high })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
@@ -511,7 +511,7 @@ impl TensorRandElement for i64 {
                 let dist = Bernoulli::new(p)
                     .map_err(|_| TensorRandError::InvalidBernoulliProbability { p })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| {
@@ -531,7 +531,7 @@ impl TensorRandElement for usize {
         filler: &mut TensorRandFiller,
         tensor: &mut Tensor<usize>,
     ) -> Result<(), TensorRandError> {
-        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data.len()) else {
+        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data().len()) else {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
@@ -551,7 +551,7 @@ impl TensorRandElement for usize {
                 let dist = Uniform::new_inclusive(low_u, high_u)
                     .map_err(|_| TensorRandError::InvalidUniformIntBounds { low, high })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
@@ -569,7 +569,7 @@ impl TensorRandElement for isize {
         filler: &mut TensorRandFiller,
         tensor: &mut Tensor<isize>,
     ) -> Result<(), TensorRandError> {
-        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data.len()) else {
+        let Some((slices, chunk_len)) = filler.chunk_plan(tensor.data().len()) else {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
@@ -586,7 +586,7 @@ impl TensorRandElement for isize {
                 let dist = Uniform::<i64>::new_inclusive(low, high)
                     .map_err(|_| TensorRandError::InvalidUniformIntBounds { low, high })?;
                 tensor
-                    .data
+                    .data_mut()
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
                     .for_each(|(chunk, rng)| rng.fill_mapped_sample(chunk, &dist, |x| x as isize));

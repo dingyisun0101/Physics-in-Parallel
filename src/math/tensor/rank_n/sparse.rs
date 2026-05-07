@@ -9,38 +9,33 @@ A **hash-backed sparse N-D tensor** where only nonzeros are stored.
   become zero are dropped (sparseness preserved).
 - **Parallelism:** `rayon` used for binary ops and many transforms; when
   `AHashMap` must be consumed, we use `.into_iter().par_bridge()`.
+- **Computation-only scope:** JSON, ndarray, and string interop live under
+  `math::io`.
 
 This module mirrors the dense tensor API where it makes sense, and defers to
 `dense::Tensor` for convenient interop via `to_dense()` / `from_dense()`.
 
 # Update — Access Semantics (Important!)
 
-Multi-index accessors (`index`, `get_opt`, `get`, `set`, `add_assign_at`) now accept `&[isize]`
+Multi-index accessors (`index`, `get`, `set`, and trait-level `get_mut`) accept `&[isize]`
 and apply **toroidal (periodic) wrapping** on each axis:
 
 - Axis index `a` maps to `((a % dim) + dim) % dim` (Euclidean modulo).
 - Negative indices are allowed (`-1` = last, `-2` = second last, ...).
 - **No out-of-bounds panics** from indexing (rank mismatch remains a debug assert).
 
-Flat-index helpers (`get_by_flat`, `set_by_flat`) also **wrap linearly** by `size = ∏ shape`.
-Thus every accessor deterministically targets a valid location; implicit zeros remain zero unless set.
+Every multi-index accessor deterministically targets a valid location; implicit zeros remain zero unless set.
 
 */
 
 use ahash::AHashMap;
-use ndarray::ArrayD;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 use std::ops::{Add, BitAnd, Div, Mul, Sub};
 
-use super::dense::Tensor as TensorDense;
+use super::dense::{Tensor as TensorDense, checked_num_elements};
 use super::tensor_trait::TensorTrait;
-use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
-use crate::math::ndarray_convert::NdarrayConvert;
 use crate::math::scalar::{Scalar, ScalarCastError};
 
 // ===================================================================
@@ -61,61 +56,6 @@ pub struct Tensor<T: Scalar> {
     data: AHashMap<usize, T>, // flat index -> value (non-zero)
 }
 
-impl<T> Serialize for Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.to_json_payload()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Tensor<T>
-where
-    T: Scalar + DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let payload = FlatPayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
-    }
-}
-
-impl<T> ToJsonPayload for Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = FlatPayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        let dense = self.to_dense();
-        Ok(FlatPayload::new("tensor_sparse", dense.shape, dense.data))
-    }
-}
-
-impl<T> FromJsonPayload for Tensor<T>
-where
-    T: Scalar + DeserializeOwned,
-{
-    type Payload = FlatPayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate_dense("tensor_sparse")?;
-        let dense = TensorDense {
-            shape: payload.shape,
-            data: payload.data,
-        };
-        Ok(Self::from_dense(&dense))
-    }
-}
-
 // ===================================================================
 // ------------------------- Size & Helpers --------------------------
 // ===================================================================
@@ -123,17 +63,17 @@ where
 impl<T: Scalar> Tensor<T> {
     /// Total number of sites (dense size) = product of dimensions.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the current length/size.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn len_dense(&self) -> usize {
-        self.shape.iter().product::<usize>()
+        checked_num_elements(&self.shape, "sparse tensor")
     }
 
     /// Rank (number of dimensions).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `rank` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -143,7 +83,7 @@ impl<T: Scalar> Tensor<T> {
 
     /// Shape slice.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -153,7 +93,7 @@ impl<T: Scalar> Tensor<T> {
 
     /// Number of **explicit** nonzeros (`nnz`).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `nnz` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -163,7 +103,7 @@ impl<T: Scalar> Tensor<T> {
 
     /// True if the tensor stores no explicit nonzeros.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Checks whether `empty` condition is true.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -178,7 +118,7 @@ impl<T: Scalar> Tensor<T> {
 
 /// Euclidean modulo for axis indices (supports negatives).
 #[inline(always)]
-/// Annotation:
+/// Details:
 /// - Purpose: Executes `wrap_axis_index` logic for this module.
 /// - Parameters:
 ///   - `idx` (`isize`): Index argument selecting an element or slot.
@@ -191,18 +131,6 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
         m += d;
     }
     m as usize
-}
-
-/// Wrap linear flat index into `[0, size)`.
-#[inline(always)]
-/// Annotation:
-/// - Purpose: Executes `wrap_linear_index` logic for this module.
-/// - Parameters:
-///   - `k` (`usize`): Tertiary index/axis argument.
-///   - `size` (`usize`): Parameter of type `usize` used by `wrap_linear_index`.
-fn wrap_linear_index(k: usize, size: usize) -> usize {
-    debug_assert!(size > 0);
-    k % size
 }
 
 // ===================================================================
@@ -218,12 +146,12 @@ impl<T: Scalar> Tensor<T> {
     /// # Panics
     /// - Only if `idx.len() != self.shape.len()` (debug assertion).
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Computes an index mapping for input coordinates.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
     pub fn index(&self, idx: &[isize]) -> usize {
-        debug_assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
+        assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
         let mut flat = 0usize;
         let mut stride = 1usize;
         for (&dim, &a_raw) in self.shape.iter().rev().zip(idx.iter().rev()) {
@@ -236,18 +164,18 @@ impl<T: Scalar> Tensor<T> {
 
     /// Get `Option<&T>` at multi-index (`None` if implicit zero).
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `opt` value.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
-    pub fn get_opt(&self, idx: &[isize]) -> Option<&T> {
+    pub(crate) fn get_opt(&self, idx: &[isize]) -> Option<&T> {
         let k = self.index(idx);
         self.data.get(&k)
     }
 
     /// Get the value at multi-index, returning **zero** if absent.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `get` logic for this module.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
@@ -256,32 +184,21 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `mut_or_insert_zero` value.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
-    pub fn get_mut_or_insert_zero(&mut self, idx: &[isize]) -> &mut T {
+    pub(crate) fn get_mut_or_insert_zero(&mut self, idx: &[isize]) -> &mut T {
         let k = self.index(idx);
         // Insert zero on miss, then return &mut to the stored value.
         self.data.entry(k).or_insert_with(T::zero)
-    }
-
-    /// Remove any explicit zeros currently stored.
-    /// Useful after a series of `get_mut` calls where the value may have been left as zero.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `prune_zeros` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn prune_zeros(&mut self) {
-        self.data.retain(|_, v| *v != T::zero());
     }
 
     /// Set value at multi-index. Inserting `0` **removes** the entry.
     ///
     /// This keeps the sparse invariant (no explicit zeros).
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `set` logic for this module.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
@@ -295,92 +212,31 @@ impl<T: Scalar> Tensor<T> {
         }
     }
 
-    /// Add (accumulate) `delta` into entry at multi-index, then prune zero.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `add_assign_at` logic for this module.
-    /// - Parameters:
-    ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
-    ///   - `delta` (`T`): Parameter of type `T` used by `add_assign_at`.
-    pub fn add_assign_at(&mut self, idx: &[isize], delta: T)
-    where
-        T: Add<Output = T>,
-    {
-        if delta == T::zero() {
-            return;
-        }
-        let k = self.index(idx);
-        let newv = match self.data.get(&k).copied() {
-            Some(v) => v + delta,
-            None => delta,
-        };
-        if newv == T::zero() {
-            self.data.remove(&k);
-        } else {
-            self.data.insert(k, newv);
-        }
-    }
-
     /// Iterate over `(flat_index, &value)` of nonzeros.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `iter` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn iter(&self) -> impl Iterator<Item = (&usize, &T)> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&usize, &T)> {
         self.data.iter()
-    }
-
-    /// **Unsafe (no bounds check)** set by flat index. Writing `0` removes the key.
-    ///
-    /// Caller must guarantee that `k` is a valid row-major flat index.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Sets the `by_flat_unchecked` value.
-    /// - Parameters:
-    ///   - `k` (`usize`): Tertiary index/axis argument.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
-    pub fn set_by_flat_unchecked(&mut self, k: usize, val: T) {
-        if val == T::zero() {
-            self.data.remove(&k);
-        } else {
-            self.data.insert(k, val);
-        }
-    }
-
-    /// Set by flat index with **wrap-around** modulo total dense size.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Sets the `by_flat` value.
-    /// - Parameters:
-    ///   - `k` (`usize`): Tertiary index/axis argument.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
-    pub fn set_by_flat(&mut self, k: usize, val: T) {
-        let kk = wrap_linear_index(k, self.len_dense());
-        self.set_by_flat_unchecked(kk, val);
-    }
-
-    /// Get by flat index with zero default (wrapped modulo total dense size).
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Returns the `by_flat` value.
-    /// - Parameters:
-    ///   - `k` (`usize`): Tertiary index/axis argument.
-    pub fn get_by_flat(&self, k: usize) -> T {
-        let kk = wrap_linear_index(k, self.len_dense());
-        self.data.get(&kk).copied().unwrap_or_else(T::zero)
     }
 
     /// **Internal helper**: build from `(flat_index, value)` pairs, dropping zeros.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `flat_pairs` input.
     /// - Parameters:
     ///   - `shape` (`Vec<usize>`): Shape metadata defining tensor/grid dimensions.
     ///   - `pairs` (`Vec<(usize, T)>`): Parameter of type `Vec<(usize, T)>` used by `from_flat_pairs`.
     fn from_flat_pairs(shape: Vec<usize>, pairs: Vec<(usize, T)>) -> Self {
+        let size = checked_num_elements(&shape, "sparse tensor from flat pairs");
         let mut map = AHashMap::with_capacity(pairs.len());
         for (k, v) in pairs {
+            assert!(
+                k < size,
+                "sparse flat index out of bounds: {k} >= dense size {size}"
+            );
             if v != T::zero() {
                 map.insert(k, v);
             }
@@ -458,7 +314,7 @@ where
     type Output = Self;
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `bitand` logic for this module.
     /// - Parameters:
     ///   - `rhs` (`Self`): Parameter of type `Self` used by `bitand`.
@@ -576,11 +432,11 @@ impl<T: Scalar> Tensor<T> {
     /// Note: The constructor is strict on bounds (no wrapping) to catch
     /// authoring mistakes; use runtime `set()` if you want wrapping.
     ///
+    /// ```text
+    /// 2x3 example, with entries at (0,1)=2, (1,2)=3:
+    /// Tensor::<f64>::from_triplets(vec![2, 3], vec![(vec![0, 1], 2.0), (vec![1, 2], 3.0)])
     /// ```
-    /// // 2×3 example, with entries at (0,1)=2, (1,2)=3
-    /// // let s = Tensor::<f64>::from_triplets(vec![2,3], vec![(vec![0,1],2.0),(vec![1,2],3.0)]);
-    /// ```
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `triplets` input.
     /// - Parameters:
     ///   - `shape` (`Vec<usize>`): Shape metadata defining tensor/grid dimensions.
@@ -589,7 +445,7 @@ impl<T: Scalar> Tensor<T> {
         shape: Vec<usize>,
         triplets: impl IntoIterator<Item = (Vec<usize>, T)>,
     ) -> Self {
-        /// Annotation:
+        /// Details:
         /// - Purpose: Computes an index mapping for input coordinates.
         /// - Parameters:
         ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
@@ -611,6 +467,7 @@ impl<T: Scalar> Tensor<T> {
             shape.iter().all(|&d| d > 0),
             "All dimensions must be > 0; got {shape:?}"
         );
+        checked_num_elements(&shape, "sparse tensor from triplets");
 
         let mut map = AHashMap::default();
         for (idx, v) in triplets {
@@ -627,7 +484,7 @@ impl<T: Scalar> Tensor<T> {
     ///
     /// Useful for debugging or interop with dense algorithms.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Converts this value into `dense` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -637,26 +494,23 @@ impl<T: Scalar> Tensor<T> {
         for (&k, &v) in &self.data {
             out[k] = v;
         }
-        TensorDense {
-            shape: self.shape.clone(),
-            data: out,
-        }
+        TensorDense::from_parts_unchecked(self.shape.clone(), out)
     }
 
     /// Build a sparse tensor from a **dense** tensor by skipping zeros.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `dense` input.
     /// - Parameters:
     ///   - `dense` (`&TensorDense<T>`): Parameter of type `&TensorDense<T>` used by `from_dense`.
     pub fn from_dense(dense: &TensorDense<T>) -> Self {
-        let shape = dense.shape.clone();
-        let size: usize = shape.iter().product();
-        debug_assert_eq!(size, dense.data.len(), "Dense size/shape mismatch");
+        let shape = dense.shape().to_vec();
+        let size = checked_num_elements(&shape, "sparse tensor from dense");
+        assert_eq!(size, dense.data().len(), "Dense size/shape mismatch");
 
         // Keep only nonzeros (indices are already row-major).
         let pairs: Vec<(usize, T)> = dense
-            .data
+            .data()
             .iter()
             .copied()
             .enumerate()
@@ -666,68 +520,47 @@ impl<T: Scalar> Tensor<T> {
         Self::from_flat_pairs(shape, pairs)
     }
 
-    /// Build a sparse tensor from an ndarray by skipping zeros.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
-    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
-        let dense = TensorDense::<T>::from_ndarray(array);
-        Self::from_dense(&dense)
+    /// Print a compact sparse summary and stored entries for direct sanity checks.
+    pub fn print(&self) {
+        println!(
+            "Sparse tensor: shape={:?}, dense_size={}, nnz={}",
+            self.shape,
+            self.len_dense(),
+            self.nnz()
+        );
+
+        if self.data.is_empty() {
+            println!("  all entries are implicit zero");
+            return;
+        }
+
+        let mut entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
+        entries.par_sort_unstable_by_key(|&(k, _)| k);
+
+        let shown = entries.len().min(32);
+        for (k, value) in entries.iter().take(shown) {
+            println!(
+                "  [{:?}] flat={} value={}",
+                self.unravel_index(*k),
+                k,
+                value
+            );
+        }
+
+        if entries.len() > shown {
+            println!("  ... {} more stored entries", entries.len() - shown);
+        }
     }
 
-    /// Convert sparse tensor to ndarray by densifying missing entries to zero.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_ndarray(&self) -> ArrayD<T> {
-        self.to_dense().to_ndarray()
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Tensor<T> {
-    type NdArray = ArrayD<T>;
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Tensor::<T>::from_ndarray(array)
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn to_ndarray(&self) -> Self::NdArray {
-        Tensor::<T>::to_ndarray(self)
-    }
-}
-
-impl<T> Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    #[inline]
-    /// - Purpose: Converts this sparse tensor into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.to_json_value()
-    }
-
-    #[inline]
-    /// - Purpose: Converts this sparse tensor into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
+    fn unravel_index(&self, flat: usize) -> Vec<usize> {
+        let mut rem = flat;
+        let mut idx = vec![0usize; self.shape.len()];
+        for axis in (0..self.shape.len()).rev() {
+            let dim = self.shape[axis];
+            idx[axis] = rem % dim;
+            rem /= dim;
+        }
+        idx
     }
 }
 
@@ -746,38 +579,32 @@ where
     /// # Panics
     /// Panics if `shape` is empty (rank 0) or contains a zero dimension.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `empty` logic for this module.
     /// - Parameters:
     ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
     fn empty(shape: &[usize]) -> Self {
-        assert!(!shape.is_empty(), "Tensor rank must be >= 1");
-        assert!(
-            shape.iter().all(|&d| d > 0),
-            "All dimensions must be > 0; got {shape:?}"
-        );
+        checked_num_elements(shape, "sparse tensor");
         Self {
             shape: shape.to_vec(),
             data: AHashMap::default(),
         }
     }
 
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `sum` value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     fn get_sum(&self) -> T {
-        let result = self
-            .data
-            .values()
-            .copied()
-            .fold(T::zero(), |acc, x| acc + x);
-        result
+        self.data
+            .par_iter()
+            .map(|(_, &x)| x)
+            .reduce(|| T::zero(), |acc, x| acc + x)
     }
 
     /// Shape vector.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -787,7 +614,7 @@ where
 
     /// Row-major flat index with **per-axis periodic wrapping**.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Computes an index mapping for input coordinates.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `index`.
@@ -797,7 +624,7 @@ where
 
     /// Get by (wrapped) multi-index, returning zero if absent.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `get` logic for this module.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get`.
@@ -807,7 +634,7 @@ where
 
     /// Sparse backend cannot safely yield `&mut T` via multi-index; Panic.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `mut` value.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get_mut`.
@@ -817,7 +644,7 @@ where
 
     /// Set value at (wrapped) multi-index (zero removes the entry).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `set` logic for this module.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `set`.
@@ -829,7 +656,7 @@ where
     /// Parallel "fill": if `value == 0`, clears all entries; else sets all **existing**
     /// entries to `value` (keeps support but makes values uniform).
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `par_fill` logic for this module.
     /// - Parameters:
     ///   - `value` (`T`): Value provided by caller for write/update behavior.
@@ -881,6 +708,8 @@ where
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
+        assert_eq!(self.shape(), other.shape(), "Tensor shape mismatch");
+
         // Only iterate over current nonzeros in `self`.
         let rank = self.shape.len();
         let dims = self.shape.clone();
@@ -920,11 +749,13 @@ where
             .expect("sparse tensor cast failed: component out of range for target type")
     }
 
-    /// Annotation:
+    /// Details:
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    fn print(&self) {}
+    fn print(&self) {
+        Tensor::<T>::print(self);
+    }
 }
 
 // ===================================================================
@@ -932,7 +763,7 @@ where
 // ===================================================================
 //
 // • Semantics:
-//   - All axis/linear indices are wrapped (toroidal); no OOB panics during access.
+//   - All axis indices are wrapped (toroidal); no OOB panics during access.
 //   - Implicit zeros remain zero unless set; writing zero deletes the key.
 //   - `get_mut()` by multi-index is unsupported for sparse and returns `None`.
 //
@@ -943,13 +774,10 @@ where
 //
 // • Determinism:
 //   - Wrapping semantics are deterministic for any `isize` (incl. large negatives).
-//   - Flat wrapping uses `k % (∏ shape)`.
-//
 // • Interop:
 //   - `to_dense()` / `from_dense()` share the same row-major convention as `dense::Tensor`.
 //
 // • Testing hints:
 //   - With shape [3,4], ensure `get([-1, -1]) == get([2, 3])`.
 //   - Ensure `set([3, 0], v)` wraps to `[0, 0]`.
-//   - Linear: `get_by_flat(size) == get_by_flat(0)`; large `k` wraps.
 //

@@ -213,8 +213,13 @@ fn rand_pair_generator_public_surface() {
     pl_gen.refresh();
     assert_eq!(pl_gen.sources().shape(), [16, 3]);
     assert_eq!(pl_gen.targets().shape(), [16, 3]);
-    assert!(
-        pl_gen.sources().as_tensor().data.iter().all(|&x| x == 0),
-        "with source filler = None, sources should remain at default zeros"
-    );
+    for i in 0..16 {
+        for axis in 0..3 {
+            assert_eq!(
+                pl_gen.sources().get(i, axis),
+                0,
+                "with source filler = None, sources should remain at default zeros"
+            );
+        }
+    }
 }

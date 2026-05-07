@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::io::json::{AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload};
+use crate::math::io::json::{AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload};
 use crate::math::{
     scalar::Scalar,
     tensor::rank_2::vector_list::{DynVectorList, VectorList},

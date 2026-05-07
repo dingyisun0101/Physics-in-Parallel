@@ -62,7 +62,7 @@ human-facing documentation only after code behavior is settled.
         allocation of `Vec<isize>`.
     [ ] Add tests for rank mismatch, zero dimensions, overflow, and wrapping.
 
-[ ] Review `src/math/tensor/core/dense_rand.rs`.
+[ ] Review `src/math/tensor/rank_n/dense_rand.rs`.
     [ ] Replace panic-based validation with explicit validation or documented
         constructor failures where practical.
     [ ] Use `usize::div_ceil` where applicable.
@@ -72,9 +72,9 @@ human-facing documentation only after code behavior is settled.
     [ ] Add tests for invalid distributions and deterministic seeded output.
 
 
-3. Sparse and unified tensors
+3. Sparse and generic tensors
 -----------------------------
-[ ] Review `src/math/tensor/core/sparse.rs`.
+[ ] Review `src/math/tensor/rank_n/sparse.rs`.
     [ ] Verify sparse arithmetic semantics for addition, subtraction,
         multiplication, division, and bit-and.
     [ ] Check whether scalar addition should affect implicit zeros; current
@@ -86,7 +86,7 @@ human-facing documentation only after code behavior is settled.
         enough, especially multiplication and bit-and.
     [ ] Add tests documenting sparse scalar-op and `par_fill` behavior.
 
-[ ] Review `src/math/tensor/core/unified.rs`.
+[ ] Review `src/math/tensor/rank_n/generic.rs`.
     [ ] Verify dense/sparse dispatch preserves backend identity.
     [ ] Confirm conversion and serde behavior match public API expectations.
     [ ] Add tests for mixed conversion paths and error cases.

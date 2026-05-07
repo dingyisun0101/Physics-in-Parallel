@@ -83,7 +83,7 @@ fn benchmark_tensor_fill(
     Timing {
         best: *timings.iter().min().expect("at least one repeat"),
         average: average(&timings),
-        checksum: checksum(&tensor.data),
+        checksum: black_box(tensor.get_sum()),
     }
 }
 

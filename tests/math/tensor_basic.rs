@@ -1,7 +1,7 @@
 use ndarray::{Array2, array};
 
 use physics_in_parallel::math::scalar::{Complex, ScalarCastError};
-use physics_in_parallel::math::tensor::{Dense, Sparse, Tensor};
+use physics_in_parallel::math::tensor::{Dense, Sparse, Tensor, rank_n::ops};
 
 fn assert_tensor_eq_array2(tensor: &Tensor<f64, Dense>, expected: &Array2<f64>) {
     assert_eq!(tensor.shape(), expected.shape());
@@ -33,6 +33,14 @@ fn dense_tensor_basic_metadata_access_and_wrapping() {
 
     assert_eq!(t.get(&[-1, -1]), expected[[1, 2]]);
     assert_eq!(t.get(&[2, 3]), expected[[0, 0]]);
+}
+
+#[test]
+fn tensor_shape_size_validation_rejects_invalid_shapes() {
+    assert_eq!(ops::size(&[2, 3, 4]), 24);
+    assert!(std::panic::catch_unwind(|| ops::size(&[])).is_err());
+    assert!(std::panic::catch_unwind(|| ops::size(&[2, 0])).is_err());
+    assert!(std::panic::catch_unwind(|| ops::size(&[usize::MAX, 2])).is_err());
 }
 
 #[test]
@@ -96,4 +104,27 @@ fn sparse_tensor_basic_elementwise_semantics_match_stored_entries() {
     assert_eq!(squared.get(&[0, 0]), 4);
     assert_eq!(squared.get(&[1, 1]), 9);
     assert_eq!(squared.nnz(), 2);
+}
+
+#[test]
+fn dense_and_sparse_facades_interoperate_for_common_math_ops() {
+    let dense = Tensor::<i64, Dense>::from_vec(&[3], vec![2, 3, 4]);
+    let sparse = Tensor::<i64, Sparse>::from_triplets(
+        vec![3],
+        vec![(vec![0], 10), (vec![2], -1), (vec![1], 0)],
+    );
+
+    assert_eq!(dense.dot(&sparse), 16);
+    assert_eq!(sparse.dot(&dense), 16);
+
+    let dense_product = dense.elem_mul(&sparse);
+    assert_eq!(dense_product.get(&[0]), 20);
+    assert_eq!(dense_product.get(&[1]), 0);
+    assert_eq!(dense_product.get(&[2]), -4);
+
+    let sparse_product = sparse.elem_mul(&dense);
+    assert_eq!(sparse_product.get(&[0]), 20);
+    assert_eq!(sparse_product.get(&[1]), 0);
+    assert_eq!(sparse_product.get(&[2]), -4);
+    assert_eq!(sparse_product.nnz(), 2);
 }

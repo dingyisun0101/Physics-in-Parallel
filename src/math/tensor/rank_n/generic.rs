@@ -13,15 +13,7 @@ on PiP scalar values rather than backend-specific primitive assumptions.
 
 use core::marker::PhantomData;
 
-use ndarray::ArrayD;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
-
-use crate::math::{
-    ndarray_convert::NdarrayConvert,
-    scalar::{Scalar, ScalarCastError},
-};
+use crate::math::scalar::{Scalar, ScalarCastError};
 
 use super::{
     dense::Tensor as DenseStorage, sparse::Tensor as SparseStorage, tensor_trait::TensorTrait,
@@ -55,67 +47,13 @@ pub struct Tensor<T: Scalar, B: Backend<T> = Dense> {
     _backend: PhantomData<B>,
 }
 
-impl<T> Serialize for Tensor<T, Dense>
-where
-    T: Scalar + Serialize + Copy,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.serialize_value()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Tensor<T, Dense>
-where
-    T: Scalar + DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let inner = DenseStorage::<T>::deserialize(deserializer)?;
-        Ok(Self::from_storage(inner))
-    }
-}
-
-impl<T> Serialize for Tensor<T, Sparse>
-where
-    T: Scalar + Serialize + Copy,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.serialize_value()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Tensor<T, Sparse>
-where
-    T: Scalar + DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let inner = SparseStorage::<T>::deserialize(deserializer)?;
-        Ok(Self::from_storage(inner))
-    }
-}
-
 impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `storage` input.
     /// - Parameters:
     ///   - `inner` (`B::Storage`): Parameter of type `B::Storage` used by `from_storage`.
-    pub fn from_storage(inner: B::Storage) -> Self {
+    pub(crate) fn from_storage(inner: B::Storage) -> Self {
         Self {
             inner,
             _backend: PhantomData,
@@ -123,30 +61,12 @@ impl<T: Scalar, B: Backend<T>> Tensor<T, B> {
     }
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `into_storage` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn into_storage(self) -> B::Storage {
-        self.inner
-    }
-
-    #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `storage` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn storage(&self) -> &B::Storage {
+    pub(crate) fn storage(&self) -> &B::Storage {
         &self.inner
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `storage_mut` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn storage_mut(&mut self) -> &mut B::Storage {
-        &mut self.inner
     }
 }
 
@@ -155,7 +75,7 @@ where
     B::Storage: TensorTrait<T>,
 {
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `empty` logic for this module.
     /// - Parameters:
     ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
@@ -164,7 +84,12 @@ where
     }
 
     #[inline]
-    /// Annotation:
+    pub fn zeros(shape: &[usize]) -> Self {
+        Self::empty(shape)
+    }
+
+    #[inline]
+    /// Details:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -185,7 +110,7 @@ where
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `sum` value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -200,7 +125,7 @@ where
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `get` logic for this module.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
@@ -212,7 +137,12 @@ where
     }
 
     #[inline]
-    /// Annotation:
+    pub fn get_mut(&mut self, idx: &[isize]) -> &mut T {
+        self.inner.get_mut(idx)
+    }
+
+    #[inline]
+    /// Details:
     /// - Purpose: Executes `set` logic for this module.
     /// - Parameters:
     ///   - `idx` (`&[isize]`): Index argument selecting an element or slot.
@@ -222,32 +152,11 @@ where
     }
 
     #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `par_fill` logic for this module.
-    /// - Parameters:
-    ///   - `value` (`T`): Value provided by caller for write/update behavior.
-    pub fn par_fill(&mut self, value: T)
-    where
-        T: Copy + Send + Sync,
-    {
-        self.inner.par_fill(value);
-    }
-
-    #[inline]
     pub fn fill(&mut self, value: T)
     where
         T: Copy + Send + Sync,
     {
         self.inner.fill(value);
-    }
-
-    #[inline]
-    pub fn par_map_in_place<F>(&mut self, f: F)
-    where
-        T: Copy + Send + Sync,
-        F: Fn(T) -> T + Sync + Send,
-    {
-        self.inner.par_map_in_place(f);
     }
 
     #[inline]
@@ -269,17 +178,10 @@ where
     }
 
     #[inline]
-    pub fn par_zip_with_inplace<F>(&mut self, other: &Self, f: F)
+    pub fn zip_with<RhsBackend, F>(&self, other: &Tensor<T, RhsBackend>, f: F) -> Self
     where
-        T: Copy + Send + Sync,
-        F: Fn(T, T) -> T + Sync + Send,
-    {
-        self.inner.par_zip_with_inplace(&other.inner, f);
-    }
-
-    #[inline]
-    pub fn zip_with<F>(&self, other: &Self, f: F) -> Self
-    where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
@@ -327,16 +229,20 @@ where
     }
 
     #[inline]
-    pub fn elem_mul(&self, other: &Self) -> Self
+    pub fn elem_mul<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> Self
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         Self::from_storage(self.inner.elem_mul(&other.inner))
     }
 
     #[inline]
-    pub fn elem_div(&self, other: &Self) -> Self
+    pub fn elem_div<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> Self
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         Self::from_storage(self.inner.elem_div(&other.inner))
@@ -359,16 +265,20 @@ where
     }
 
     #[inline]
-    pub fn dot(&self, other: &Self) -> T
+    pub fn dot<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> T
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         self.inner.dot(&other.inner)
     }
 
     #[inline]
-    pub fn hermitian_dot(&self, other: &Self) -> T
+    pub fn hermitian_dot<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> T
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         self.inner.hermitian_dot(&other.inner)
@@ -393,31 +303,37 @@ where
     }
 
     #[inline]
-    pub fn cross(&self, other: &Self) -> Self
+    pub fn cross<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> Self
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         Self::from_storage(self.inner.cross(&other.inner))
     }
 
     #[inline]
-    pub fn wedge(&self, other: &Self) -> Self
+    pub fn wedge<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> Self
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         Self::from_storage(self.inner.wedge(&other.inner))
     }
 
     #[inline]
-    pub fn matmul(&self, other: &Self) -> Self
+    pub fn matmul<RhsBackend>(&self, other: &Tensor<T, RhsBackend>) -> Self
     where
+        RhsBackend: Backend<T>,
+        RhsBackend::Storage: TensorTrait<T>,
         T: Copy + Send + Sync,
     {
         Self::from_storage(self.inner.matmul(&other.inner))
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -427,6 +343,29 @@ where
 }
 
 impl<T: Scalar> Tensor<T, Dense> {
+    #[inline]
+    pub fn from_vec(shape: &[usize], data: Vec<T>) -> Self {
+        Self::from_storage(DenseStorage::<T>::from_vec(shape, data))
+    }
+
+    pub fn from_fn<F>(shape: &[usize], mut f: F) -> Self
+    where
+        F: FnMut(&[isize]) -> T,
+    {
+        let mut out = Self::empty(shape);
+        let rank = shape.len();
+        for k in 0..out.size() {
+            let mut rem = k;
+            let mut idx = vec![0isize; rank];
+            for axis in (0..rank).rev() {
+                idx[axis] = (rem % shape[axis]) as isize;
+                rem /= shape[axis];
+            }
+            out.set(&idx, f(&idx));
+        }
+        out
+    }
+
     #[inline]
     pub fn cast_to<U: Scalar + Send + Sync>(&self) -> Tensor<U, Dense> {
         Tensor::<U, Dense>::from_storage(self.inner.cast_to::<U>())
@@ -440,7 +379,7 @@ impl<T: Scalar> Tensor<T, Dense> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Converts this value into `sparse` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -449,55 +388,24 @@ impl<T: Scalar> Tensor<T, Dense> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `sparse` input.
     /// - Parameters:
     ///   - `s` (`&Tensor<T, Sparse>`): Parameter of type `&Tensor<T, Sparse>` used by `from_sparse`.
     pub fn from_sparse(s: &Tensor<T, Sparse>) -> Self {
         Self::from_storage(DenseStorage::<T>::from_sparse(&s.inner))
     }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
-    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
-        Self::from_storage(DenseStorage::<T>::from_ndarray(array))
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_ndarray(&self) -> ArrayD<T> {
-        self.inner.to_ndarray()
-    }
-}
-
-impl<T> Tensor<T, Dense>
-where
-    T: Scalar + Serialize + Copy,
-{
-    #[inline]
-    /// - Purpose: Converts this generic dense tensor into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.inner.serialize_value()
-    }
-
-    #[inline]
-    /// - Purpose: Converts this generic dense tensor into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.inner.serialize()
-    }
 }
 
 impl<T: Scalar> Tensor<T, Sparse> {
+    #[inline]
+    pub fn from_triplets(
+        shape: Vec<usize>,
+        triplets: impl IntoIterator<Item = (Vec<usize>, T)>,
+    ) -> Self {
+        Self::from_storage(SparseStorage::<T>::from_triplets(shape, triplets))
+    }
+
     #[inline]
     pub fn cast_to<U: Scalar + Send + Sync>(&self) -> Tensor<U, Sparse> {
         Tensor::<U, Sparse>::from_storage(self.inner.cast_to::<U>())
@@ -511,7 +419,7 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `nnz` logic for this module.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -520,7 +428,7 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the current length/size.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -529,7 +437,7 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Converts this value into `dense` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -538,94 +446,11 @@ impl<T: Scalar> Tensor<T, Sparse> {
     }
 
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `dense` input.
     /// - Parameters:
     ///   - `d` (`&Tensor<T, Dense>`): Parameter of type `&Tensor<T, Dense>` used by `from_dense`.
     pub fn from_dense(d: &Tensor<T, Dense>) -> Self {
         Self::from_storage(SparseStorage::<T>::from_dense(&d.inner))
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
-    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
-        Self::from_storage(SparseStorage::<T>::from_ndarray(array))
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_ndarray(&self) -> ArrayD<T> {
-        self.inner.to_ndarray()
-    }
-}
-
-impl<T> Tensor<T, Sparse>
-where
-    T: Scalar + Serialize + Copy,
-{
-    #[inline]
-    /// - Purpose: Converts this generic sparse tensor into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.inner.serialize_value()
-    }
-
-    #[inline]
-    /// - Purpose: Converts this generic sparse tensor into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.inner.serialize()
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Tensor<T, Dense> {
-    type NdArray = ArrayD<T>;
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Tensor::<T, Dense>::from_ndarray(array)
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn to_ndarray(&self) -> Self::NdArray {
-        Tensor::<T, Dense>::to_ndarray(self)
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Tensor<T, Sparse> {
-    type NdArray = ArrayD<T>;
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Tensor::<T, Sparse>::from_ndarray(array)
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn to_ndarray(&self) -> Self::NdArray {
-        Tensor::<T, Sparse>::to_ndarray(self)
     }
 }

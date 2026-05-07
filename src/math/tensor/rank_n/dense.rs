@@ -4,23 +4,21 @@ A **general-purpose N-dimensional dense tensor** backed by a flat `Vec<T>`.
 
 Goals:
 - **Performance-first**: contiguous memory layout with cache-friendly linear indexing.
-- **Ergonomics**: safe multidimensional accessors, explicit raw/unsafe alternatives.
+- **Ergonomics**: safe multidimensional accessors through the tensor facade.
 - **Parallelism**: `rayon`-powered in-place maps/zips and elementwise arithmetic.
 - **Type-agnostic**: generic over the crate-wide `Scalar` trait (real or complex).
-- **Interoperability**: round-trip conversions to/from a sparse tensor type.
+- **Computation-only scope**: JSON, ndarray, and string interop live under `math::io`.
 
 # Highlights
 
-- `Tensor<T>::new(shape)`: zero-initialized tensor of shape `shape`.
+- `Tensor<T>::empty(shape)`: zero-initialized tensor of shape `shape`.
 - `index`, `get`, `get_mut`, `set`: multi-index access with **periodic wrapping** on each axis.
 - **Negative indices are allowed** and are wrapped to the corresponding positive location.
-- `get_by_idx*`, `set_by_idx`: linear-index access with **wrap-around** (toroidal) semantics.
 - `par_fill`, `par_map_inplace`, `par_zip_with_inplace`: parallel in-place transforms.
 - `Add/Sub/Mul/Div/BitAnd`: parallel elementwise binary ops with shape checks.
 - `try_cast_to::<U>()` / `cast_to::<U>()`: whole-tensor scalar type conversion.
 - `to_sparse()` / `from_sparse()`: dense↔sparse bridging.
-- `ToString` + `from_string()`: simple textual roundtrip for small matrices.
-- `print_2d()`: quick terminal visualization for 1D/2D tensors.
+- `print()`: quick terminal visualization, choosing a compact presentation by rank.
 
 > **Note**
 > This file assumes a project-wide `Scalar` trait providing:
@@ -34,25 +32,18 @@ Goals:
 > - All accessors use **toroidal wrapping**:
 >   - Axis index `a` maps to `((a % dim) + dim) % dim` (Euclidean modulo).
 >   - Linear index `k` maps to `k % len`.
-> - Therefore, **no accessor ever panics on index** (except rank-mismatch in `index()` via debug-assert).
+> - Therefore, **no accessor ever panics on bounds**; rank mismatches panic explicitly.
 > - These semantics are ideal for lattice/periodic-boundary simulations.
 
 */
 
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
-use std::str::FromStr;
 
-use ndarray::{ArrayD, IxDyn};
 use rayon::prelude::*;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
-use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
-use crate::math::ndarray_convert::NdarrayConvert;
 use crate::math::scalar::{Scalar, ScalarCastError};
 
 //===================================================================
@@ -70,73 +61,15 @@ use crate::math::scalar::{Scalar, ScalarCastError};
 #[derive(Debug, Clone)]
 pub struct Tensor<T: Scalar> {
     /// The extents along each axis. Example: `[rows, cols]` for 2D.
-    pub shape: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
     /// Flat, row-major storage of all elements.
-    pub data: Vec<T>,
-}
-
-impl<T> Serialize for Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.to_json_payload()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Tensor<T>
-where
-    T: Scalar + DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let payload = FlatPayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
-    }
-}
-
-impl<T> ToJsonPayload for Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = FlatPayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        Ok(FlatPayload::new(
-            "tensor",
-            self.shape.clone(),
-            self.data.clone(),
-        ))
-    }
-}
-
-impl<T> FromJsonPayload for Tensor<T>
-where
-    T: Scalar + DeserializeOwned,
-{
-    type Payload = FlatPayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate_dense("tensor")?;
-
-        Ok(Self {
-            shape: payload.shape,
-            data: payload.data,
-        })
-    }
+    pub(crate) data: Vec<T>,
 }
 
 impl<T: Scalar> Tensor<T> {
     /// Number of elements (a.k.a. linear size).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the current length/size.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -146,12 +79,42 @@ impl<T: Scalar> Tensor<T> {
 
     /// True iff there are zero elements (never true given our shape assertion).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Checks whether `empty` condition is true.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    #[inline]
+    pub(crate) fn from_parts_unchecked(shape: Vec<usize>, data: Vec<T>) -> Self {
+        Self { shape, data }
+    }
+
+    #[inline]
+    pub(crate) fn from_vec(shape: &[usize], data: Vec<T>) -> Self {
+        let expected = checked_num_elements(shape, "dense tensor from vector");
+        assert_eq!(
+            data.len(),
+            expected,
+            "dense tensor data length mismatch: expected {expected}, got {}",
+            data.len()
+        );
+        Self {
+            shape: shape.to_vec(),
+            data,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn data(&self) -> &[T] {
+        &self.data
+    }
+
+    #[inline]
+    pub(crate) fn data_mut(&mut self) -> &mut [T] {
+        &mut self.data
     }
 }
 
@@ -161,7 +124,7 @@ impl<T: Scalar> Tensor<T> {
 
 /// Euclidean modulo for axis indices (supports negatives).
 #[inline(always)]
-/// Annotation:
+/// Details:
 /// - Purpose: Executes `wrap_axis_index` logic for this module.
 /// - Parameters:
 ///   - `idx` (`isize`): Index argument selecting an element or slot.
@@ -176,58 +139,16 @@ fn wrap_axis_index(idx: isize, dim: usize) -> usize {
     m as usize
 }
 
-/// Wrap linear index into `[0, len)`.
-#[inline(always)]
-/// Annotation:
-/// - Purpose: Executes `wrap_linear_index` logic for this module.
-/// - Parameters:
-///   - `idx` (`usize`): Index argument selecting an element or slot.
-///   - `len` (`usize`): Parameter of type `usize` used by `wrap_linear_index`.
-fn wrap_linear_index(idx: usize, len: usize) -> usize {
-    debug_assert!(len > 0);
-    idx % len
-}
+pub(crate) fn checked_num_elements(shape: &[usize], context: &str) -> usize {
+    assert!(
+        !shape.is_empty() && shape.iter().all(|&dim| dim > 0),
+        "{context} shape must contain only nonzero dimensions; got {shape:?}"
+    );
 
-//===================================================================
-// ------------------------- Raw Accessors --------------------------
-//===================================================================
-// These methods operate on **linear** indices and always return
-// a valid reference by wrapping the index into range.
-
-impl<T: Scalar> Tensor<T> {
-    #[inline(always)]
-    /// Annotation:
-    /// - Purpose: Returns the `by_idx` value.
-    /// - Parameters:
-    ///   - `idx` (`usize`): Index argument selecting an element or slot.
-    pub fn get_by_idx(&self, idx: usize) -> &T {
-        let k = wrap_linear_index(idx, self.data.len());
-        // SAFETY: k < len by construction
-        unsafe { self.data.get_unchecked(k) }
-    }
-
-    #[inline(always)]
-    /// Annotation:
-    /// - Purpose: Returns the `by_idx_mut` value.
-    /// - Parameters:
-    ///   - `idx` (`usize`): Index argument selecting an element or slot.
-    pub fn get_by_idx_mut(&mut self, idx: usize) -> &mut T {
-        let k = wrap_linear_index(idx, self.data.len());
-        // SAFETY: k < len by construction
-        unsafe { self.data.get_unchecked_mut(k) }
-    }
-
-    #[inline(always)]
-    /// Annotation:
-    /// - Purpose: Sets the `by_idx` value.
-    /// - Parameters:
-    ///   - `idx` (`usize`): Index argument selecting an element or slot.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
-    pub fn set_by_idx(&mut self, idx: usize, val: T) {
-        let k = wrap_linear_index(idx, self.data.len());
-        // SAFETY: k < len by construction
-        unsafe { *self.data.get_unchecked_mut(k) = val }
-    }
+    shape.iter().copied().fold(1usize, |acc, dim| {
+        acc.checked_mul(dim)
+            .unwrap_or_else(|| panic!("{context} shape product overflow: {shape:?}"))
+    })
 }
 
 //===================================================================
@@ -245,7 +166,7 @@ where
     /// # Panics
     /// Panics if `shape` contains a zero dimension or if `product` overflows `usize`.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `empty` logic for this module.
     /// - Parameters:
     ///   - `shape` (`&[usize]`): Shape metadata defining tensor/grid dimensions.
@@ -254,14 +175,14 @@ where
             shape.iter().all(|&d| d > 0),
             "All dimensions must be > 0; got {shape:?}"
         );
-        let size = shape.iter().product::<usize>();
+        let size = checked_num_elements(shape, "dense tensor");
         Self {
             shape: shape.to_vec(),
             data: vec![T::default(); size],
         }
     }
 
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `sum` value.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -276,7 +197,7 @@ where
 
     /// Shape vector.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the logical shape metadata.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -289,12 +210,12 @@ where
     /// - Accepts negative indices and arbitrarily large/small signed values.
     /// - Never panics due to out-of-bounds (only rank mismatch is debug-asserted).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Computes an index mapping for input coordinates.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `index`.
     fn index(&self, indices: &[isize]) -> usize {
-        debug_assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
+        assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
 
         // Compute flat index by accumulating a * stride.
         // We iterate from the last axis to the first to build the stride.
@@ -311,7 +232,7 @@ where
 
     /// Get by (wrapped) multi-index. Returns a copy of T (Scalar assumed Copy).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `get` logic for this module.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get`.
@@ -324,7 +245,7 @@ where
     /// Get mutable reference by (wrapped) multi-index.
     /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Returns the `mut` value.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `get_mut`.
@@ -336,7 +257,7 @@ where
 
     /// Set value at (wrapped) multi-index.
     #[inline(always)]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `set` logic for this module.
     /// - Parameters:
     ///   - `indices` (`&[isize]`): Parameter of type `&[isize]` used by `set`.
@@ -349,7 +270,7 @@ where
 
     /// Parallel fill with a constant value.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Executes `par_fill` logic for this module.
     /// - Parameters:
     ///   - `value` (`T`): Value provided by caller for write/update behavior.
@@ -381,6 +302,7 @@ where
         T: Copy + Send + Sync,
         F: Fn(T, T) -> T + Sync + Send,
     {
+        assert_eq!(self.shape(), other.shape(), "Tensor shape mismatch");
         let rank = self.shape.len();
         let dims = self.shape.clone();
 
@@ -410,12 +332,12 @@ where
             .expect("tensor cast failed: component out of range for target type")
     }
 
-    /// Annotation:
+    /// Details:
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     fn print(&self) {
-        self.print_2d();
+        Tensor::<T>::print(self);
     }
 }
 
@@ -540,101 +462,10 @@ impl<T: Scalar> Tensor<T> {
 // ---------------------- Convenience Constructors -------------------
 // ===================================================================
 
-impl<T: Scalar + Display> ToString for Tensor<T> {
-    /// Serializes as nested bracket blocks with `;` separators, e.g.:
-    /// `[[1;2;3];[4;5;6]]` for a 2×3 tensor.
-    /// Annotation:
-    /// - Purpose: Converts this value into `string` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn to_string(&self) -> String {
-        fn format_recursive<T: Display>(data: &[T], shape: &[usize]) -> String {
-            if shape.len() == 1 {
-                let mut line = String::new();
-                for i in 0..shape[0] {
-                    line.push_str(&format!("{}", data[i]));
-                    if i + 1 != shape[0] {
-                        line.push(';');
-                    }
-                }
-                line
-            } else {
-                let stride = shape[1..].iter().product::<usize>();
-                let mut result = String::new();
-                for i in 0..shape[0] {
-                    let start = i * stride;
-                    let end = start + stride;
-                    let nested = format_recursive(&data[start..end], &shape[1..]);
-                    result.push('[');
-                    result.push_str(&nested);
-                    result.push(']');
-                    if i + 1 != shape[0] {
-                        result.push(';');
-                    }
-                }
-                result
-            }
-        }
-
-        format!("[{}]", format_recursive(&self.data, &self.shape))
-    }
-}
-
-impl<T: Scalar + FromStr> Tensor<T> {
-    /// Parse a small tensor from a bracketed `;`-separated string produced by `ToString`.
-    ///
-    /// # Panics
-    /// Panics on malformed input or inconsistent row lengths.
-    /// Annotation:
-    /// - Purpose: Builds this value from `string` input.
-    /// - Parameters:
-    ///   - `s` (`&str`): Parameter of type `&str` used by `from_string`.
-    pub fn from_string(s: &str) -> Self {
-        let normalized = s
-            .trim()
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .replace("];", "]|");
-
-        let rows: Vec<Vec<T>> = normalized
-            .split('|')
-            .map(|row| {
-                row.replace('[', "")
-                    .replace(']', "")
-                    .split(';')
-                    .filter(|x| !x.trim().is_empty())
-                    .map(|num| {
-                        let cleaned = num.trim();
-                        cleaned
-                            .parse::<T>()
-                            .unwrap_or_else(|_| panic!("Invalid number in tensor: '{}'", cleaned))
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let num_rows = rows.len();
-        assert!(num_rows > 0, "Tensor cannot be empty");
-
-        let num_cols = rows[0].len();
-        assert!(
-            rows.iter().all(|r| r.len() == num_cols),
-            "All rows must have the same number of columns"
-        );
-
-        let flat = rows.into_iter().flatten().collect();
-
-        Tensor {
-            shape: vec![num_rows, num_cols],
-            data: flat,
-        }
-    }
-}
-
 impl<T: Scalar> Tensor<T> {
     /// Convert this **dense** tensor to a **sparse** one by skipping zeros.
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Converts this value into `sparse` form.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
@@ -644,13 +475,13 @@ impl<T: Scalar> Tensor<T> {
 
     /// Build a **dense** tensor from a **sparse** one (missing entries = zero).
     #[inline]
-    /// Annotation:
+    /// Details:
     /// - Purpose: Builds this value from `sparse` input.
     /// - Parameters:
     ///   - `sparse` (`&TensorSparse<T>`): Parameter of type `&TensorSparse<T>` used by `from_sparse`.
     pub fn from_sparse(sparse: &TensorSparse<T>) -> Self {
         let shape = sparse.shape().to_vec();
-        let size: usize = shape.iter().product();
+        let size = checked_num_elements(&shape, "dense tensor from sparse");
         let mut data = vec![T::zero(); size];
 
         for (&k, &v) in sparse.iter() {
@@ -661,81 +492,6 @@ impl<T: Scalar> Tensor<T> {
         }
 
         Self { shape, data }
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
-    pub fn from_ndarray(array: &ArrayD<T>) -> Self {
-        let owned = array.to_owned();
-        let shape = owned.shape().to_vec();
-        let (data, _) = owned.into_raw_vec_and_offset();
-        Self { shape, data }
-    }
-
-    #[deprecated(note = "use from_ndarray")]
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarry` input.
-    /// - Parameters:
-    ///   - `array` (`&ArrayD<T>`): ndarray input used for conversion/interoperability.
-    pub fn from_ndarry(array: &ArrayD<T>) -> Self {
-        Self::from_ndarray(array)
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn to_ndarray(&self) -> ArrayD<T> {
-        ArrayD::from_shape_vec(IxDyn(&self.shape), self.data.clone())
-            .expect("Tensor::to_ndarray: shape/data length mismatch")
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Tensor<T> {
-    type NdArray = ArrayD<T>;
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Builds this value from `ndarray` input.
-    /// - Parameters:
-    ///   - `array` (`&Self::NdArray`): ndarray input used for conversion/interoperability.
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Tensor::<T>::from_ndarray(array)
-    }
-
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Converts this value into `ndarray` form.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    fn to_ndarray(&self) -> Self::NdArray {
-        Tensor::<T>::to_ndarray(self)
-    }
-}
-
-impl<T> Tensor<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    #[inline]
-    /// - Purpose: Converts this dense tensor into a structured JSON value.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.to_json_value()
-    }
-
-    #[inline]
-    /// - Purpose: Converts this dense tensor into pretty JSON text.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
     }
 }
 
@@ -748,11 +504,11 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
     ///
     /// # Panics
     /// Panics if `rank > 2`.
-    /// Annotation:
+    /// Details:
     /// - Purpose: Prints a human-readable representation.
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
-    pub fn print_2d(&self) {
+    pub fn print(&self) {
         match self.shape.len() {
             1 => {
                 for i in 0..self.shape[0] {
@@ -770,20 +526,14 @@ impl<T: Scalar + Display + Copy> Tensor<T> {
                     println!();
                 }
             }
-            _ => panic!("print_2d only supports rank 1 or 2 tensors"),
+            _ => {
+                println!(
+                    "Tensor shape {:?}, {} elements",
+                    self.shape,
+                    self.data.len()
+                );
+                println!("{}", crate::math::io::string::format_dense_storage(self));
+            }
         }
-    }
-}
-
-impl<T> Tensor<T>
-where
-    T: Scalar + Copy + Send + Sync,
-{
-    #[inline]
-    pub fn par_map_inplace<F>(&mut self, f: F)
-    where
-        F: Fn(T) -> T + Sync + Send,
-    {
-        <Self as TensorTrait<T>>::par_map_in_place(self, f);
     }
 }

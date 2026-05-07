@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,
@@ -326,7 +326,7 @@ impl<T: Scalar> Tensor2D<T> {
     /// - Parameters:
     ///   - (none): This function has no documented non-receiver parameters.
     pub fn to_string(&self) {
-        self.backend.to_string();
+        self.backend.print();
     }
 }
 

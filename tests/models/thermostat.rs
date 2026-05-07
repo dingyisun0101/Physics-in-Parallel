@@ -24,10 +24,12 @@ fn langevin_deterministic_for_same_seed_and_state() {
     ta.apply(&mut a, 0.05).unwrap();
     tb.apply(&mut b, 0.05).unwrap();
 
-    assert_eq!(
-        a.core.get::<f64>(ATTR_V).unwrap().as_tensor().data,
-        b.core.get::<f64>(ATTR_V).unwrap().as_tensor().data
-    );
+    for i in 0..2 {
+        assert_eq!(
+            a.core.vector_of::<f64>(ATTR_V, i).unwrap(),
+            b.core.vector_of::<f64>(ATTR_V, i).unwrap()
+        );
+    }
 }
 
 #[test]

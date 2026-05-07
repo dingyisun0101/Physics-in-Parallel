@@ -12,7 +12,15 @@ use super::tensor_trait::TensorTrait;
 /// Dense logical size implied by a shape.
 #[inline]
 pub fn size(shape: &[usize]) -> usize {
-    shape.iter().product()
+    assert!(
+        !shape.is_empty() && shape.iter().all(|&dim| dim > 0),
+        "tensor shape must contain only nonzero dimensions; got {shape:?}"
+    );
+
+    shape.iter().copied().fold(1usize, |acc, dim| {
+        acc.checked_mul(dim)
+            .unwrap_or_else(|| panic!("tensor shape product overflow: {shape:?}"))
+    })
 }
 
 /// Panic if two tensor shapes differ.
@@ -135,13 +143,13 @@ where
     assert_eq!(tensor.rank(), 2, "transpose requires a rank-2 tensor");
     let rows = tensor.shape()[0];
     let cols = tensor.shape()[1];
-    let entries: Vec<(Vec<isize>, T)> = (0..rows * cols)
+    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
         .into_par_iter()
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
             (
-                vec![j as isize, i as isize],
+                (j as isize, i as isize),
                 tensor.get(&[i as isize, j as isize]),
             )
         })
@@ -149,7 +157,7 @@ where
 
     let mut out = A::empty(&[cols, rows]);
     for (idx, value) in entries {
-        out.set(&idx, value);
+        out.set(&[idx.0, idx.1], value);
     }
     out
 }
@@ -167,13 +175,13 @@ where
     );
     let rows = tensor.shape()[0];
     let cols = tensor.shape()[1];
-    let entries: Vec<(Vec<isize>, T)> = (0..rows * cols)
+    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
         .into_par_iter()
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
             (
-                vec![j as isize, i as isize],
+                (j as isize, i as isize),
                 tensor.get(&[i as isize, j as isize]).conj(),
             )
         })
@@ -181,7 +189,7 @@ where
 
     let mut out = A::empty(&[cols, rows]);
     for (idx, value) in entries {
-        out.set(&idx, value);
+        out.set(&[idx.0, idx.1], value);
     }
     out
 }
@@ -295,20 +303,20 @@ where
     let n = lhs.shape()[0];
     assert_eq!(rhs.shape()[0], n, "wedge vector length mismatch");
 
-    let entries: Vec<(Vec<isize>, T)> = (0..n * n)
+    let entries: Vec<((isize, isize), T)> = (0..size(&[n, n]))
         .into_par_iter()
         .map(|k| {
             let i = k / n;
             let j = k % n;
             let value = lhs.get(&[i as isize]) * rhs.get(&[j as isize])
                 - lhs.get(&[j as isize]) * rhs.get(&[i as isize]);
-            (vec![i as isize, j as isize], value)
+            ((i as isize, j as isize), value)
         })
         .collect();
 
     let mut out = Lhs::empty(&[n, n]);
     for (idx, value) in entries {
-        out.set(&idx, value);
+        out.set(&[idx.0, idx.1], value);
     }
     out
 }
@@ -327,22 +335,21 @@ where
     assert_eq!(rhs.shape()[0], inner, "matmul inner dimensions mismatch");
     let cols = rhs.shape()[1];
 
-    let entries: Vec<(Vec<isize>, T)> = (0..rows * cols)
+    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
         .into_par_iter()
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
-            let value = (0..inner)
-                .into_par_iter()
-                .map(|m| lhs.get(&[i as isize, m as isize]) * rhs.get(&[m as isize, j as isize]))
-                .reduce(|| T::zero(), |a, b| a + b);
-            (vec![i as isize, j as isize], value)
+            let value = (0..inner).fold(T::zero(), |acc, m| {
+                acc + lhs.get(&[i as isize, m as isize]) * rhs.get(&[m as isize, j as isize])
+            });
+            ((i as isize, j as isize), value)
         })
         .collect();
 
     let mut out = Lhs::empty(&[rows, cols]);
     for (idx, value) in entries {
-        out.set(&idx, value);
+        out.set(&[idx.0, idx.1], value);
     }
     out
 }

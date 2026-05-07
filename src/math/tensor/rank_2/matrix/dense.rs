@@ -17,7 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use super::matrix_trait::MatrixTrait;
-use crate::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
 use crate::math::{
     ndarray_convert::NdarrayConvert,
     scalar::Scalar,

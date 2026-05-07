@@ -2,6 +2,15 @@ use physics_in_parallel::math::tensor::{
     RandType, RngKind, TensorRandError, TensorRandFiller, TensorTrait, dense,
 };
 
+fn values<T>(tensor: &dense::Tensor<T>) -> Vec<T>
+where
+    T: physics_in_parallel::math::Scalar + Copy,
+{
+    (0..tensor.size())
+        .map(|i| tensor.get(&[i as isize]))
+        .collect()
+}
+
 #[test]
 fn seeded_filler_is_deterministic_across_refresh_sequences() {
     let kind = RandType::Uniform {
@@ -15,11 +24,11 @@ fn seeded_filler_is_deterministic_across_refresh_sequences() {
 
     filler_a.refresh(&mut a);
     filler_b.refresh(&mut b);
-    assert_eq!(a.data, b.data);
+    assert_eq!(values(&a), values(&b));
 
     filler_a.refresh(&mut a);
     filler_b.refresh(&mut b);
-    assert_eq!(a.data, b.data);
+    assert_eq!(values(&a), values(&b));
 }
 
 #[test]
@@ -40,7 +49,7 @@ fn rng_kind_none_defaults_to_small_rng() {
 
     assert_eq!(default_filler.rng_kind(), RngKind::SmallRng);
     assert_eq!(explicit_filler.rng_kind(), RngKind::SmallRng);
-    assert_eq!(default_tensor.data, explicit_tensor.data);
+    assert_eq!(values(&default_tensor), values(&explicit_tensor));
 }
 
 #[test]
@@ -60,7 +69,7 @@ fn selected_rng_kind_is_recorded_and_deterministic() {
     filler_b.refresh(&mut b);
 
     assert_eq!(filler_a.rng_kind(), RngKind::Pcg64Mcg);
-    assert_eq!(a.data, b.data);
+    assert_eq!(values(&a), values(&b));
 }
 
 #[test]
@@ -75,13 +84,13 @@ fn uniform_float_and_integer_ranges_are_respected() {
         7,
     );
     float_filler.refresh(&mut floats);
-    assert!(floats.data.iter().all(|&x| (2.0..3.0).contains(&x)));
+    assert!(values(&floats).iter().all(|&x| (2.0..3.0).contains(&x)));
 
     let mut ints = dense::Tensor::<i64>::empty(&[128]);
     let mut int_filler =
         TensorRandFiller::new_with_seed(RandType::UniformInt { low: -2, high: 2 }, Some(8), 7);
     int_filler.refresh(&mut ints);
-    assert!(ints.data.iter().all(|&x| (-2..=2).contains(&x)));
+    assert!(values(&ints).iter().all(|&x| (-2..=2).contains(&x)));
 }
 
 #[test]
@@ -90,13 +99,13 @@ fn bernoulli_outputs_are_binary_for_float_and_integer_tensors() {
     let mut float_filler =
         TensorRandFiller::new_with_seed(RandType::Bernoulli { p: 0.25 }, Some(4), 11);
     float_filler.refresh(&mut floats);
-    assert!(floats.data.iter().all(|&x| x == 0.0 || x == 1.0));
+    assert!(values(&floats).iter().all(|&x| x == 0.0 || x == 1.0));
 
     let mut ints = dense::Tensor::<i64>::empty(&[128]);
     let mut int_filler =
         TensorRandFiller::new_with_seed(RandType::Bernoulli { p: 0.25 }, Some(4), 11);
     int_filler.refresh(&mut ints);
-    assert!(ints.data.iter().all(|&x| x == 0 || x == 1));
+    assert!(values(&ints).iter().all(|&x| x == 0 || x == 1));
 }
 
 #[test]

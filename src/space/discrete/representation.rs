@@ -43,7 +43,7 @@ use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::space_trait::Space;
 
