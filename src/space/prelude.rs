@@ -11,8 +11,9 @@ pub use crate::space::kernel::{
     Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
 };
 
-pub use crate::space::discrete::representation::{
-    Grid, GridConfig, GridInitMethod, VacancyValue, save_grid,
+pub use crate::space::discrete::square_lattice::{
+    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, VacancyValue,
 };
 
-pub use crate::space::discrete::displacement::RandPairGenerator;
+pub use crate::space::discrete::square_lattice::RandPairGenerator;
+pub use crate::space::io::square_lattice::save_square_lattice;

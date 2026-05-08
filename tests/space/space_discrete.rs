@@ -7,20 +7,17 @@ use ndarray::{ArrayD, IxDyn};
 
 use physics_in_parallel::math::prelude::{RandType, TensorRandFiller, VectorList};
 use physics_in_parallel::space::{
-    discrete::{
-        displacement::RandPairGenerator,
-        representation::{Grid, GridConfig, GridInitMethod, save_grid},
+    discrete::square_lattice::{
+        BoundaryCondition, RandPairGenerator, SquareLattice, SquareLatticeConfig,
+        SquareLatticeInitMethod,
     },
+    io::square_lattice::save_square_lattice,
     kernel::{
         Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
     },
     space_trait::Space,
 };
 
-/// Annotation:
-/// - Purpose: Executes `unique_tmp_json` logic.
-/// - Parameters:
-///   - `name` (`&str`): Parameter of type `&str` used by `unique_tmp_json`.
 fn unique_tmp_json(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -30,118 +27,105 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 }
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `grid_config_and_init_public_surface` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
-fn grid_config_and_init_public_surface() {
-    let cfg = GridConfig::new(2, 4, true);
-    assert_eq!(cfg.shape(), [2, 4]);
+fn lattice_config_and_init_public_surface() {
+    let cfg = SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic);
+    assert_eq!(cfg.shape(), [4, 4]);
+    assert_eq!(cfg.tensor_shape(), vec![4, 4]);
     assert_eq!(cfg.num_sites(), 16);
 
-    let g_empty = Grid::<usize>::new(cfg.clone(), GridInitMethod::Empty);
-    assert!(g_empty.data.iter().all(|&x| x == 0));
+    let empty = SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Empty);
+    assert!(empty.data().iter().all(|&x| x == 0));
 
-    let g_uniform = Grid::<usize>::new(cfg.clone(), GridInitMethod::Uniform { val: 3 });
-    assert!(g_uniform.data.iter().all(|&x| x == 3));
+    let uniform =
+        SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Uniform { val: 3 });
+    assert!(uniform.data().iter().all(|&x| x == 3));
 
-    let g_random = Grid::<usize>::new(
+    let random = SquareLattice::<usize>::new(
         cfg.clone(),
-        GridInitMethod::RandomUniformChoices {
+        SquareLatticeInitMethod::RandomUniformChoices {
             choices: vec![11, 22, 33],
         },
     );
-    assert!(g_random.data.iter().all(|x| [11, 22, 33].contains(x)));
+    assert!(random.data().iter().all(|x| [11, 22, 33].contains(x)));
 
-    let cfg_1d = GridConfig::new(1, 7, false);
-    let g_seeded = Grid::<usize>::new(cfg_1d.clone(), GridInitMethod::SeededCenter { val: 9 });
-    assert_eq!(g_seeded.data[cfg_1d.l / 2], 9);
+    let cfg_1d = SquareLatticeConfig::new(&vec![7; 1], BoundaryCondition::Reflective);
+    let seeded = SquareLattice::<usize>::new(
+        cfg_1d.clone(),
+        SquareLatticeInitMethod::SeededCenter { val: 9 },
+    );
+    assert_eq!(seeded.data()[cfg_1d.shape()[0] / 2], 9);
 }
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `grid_space_trait_vacancy_and_rescale_surface` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
-fn grid_space_trait_vacancy_and_rescale_surface() {
-    let cfg = GridConfig::new(1, 5, true);
-    let mut g = Grid::<usize>::new(cfg, GridInitMethod::Uniform { val: 1 });
+fn lattice_space_trait_vacancy_boundary_and_rescale_surface() {
+    let cfg = SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Periodic);
+    let mut lattice = SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 });
 
-    assert_eq!(Space::dims(&g), vec![1, 5]);
-    assert_eq!(Space::linear_size(&g), 5);
-    assert_eq!(Space::data(&g).len(), 5);
+    assert_eq!(Space::dims(&lattice), vec![5]);
+    assert_eq!(Space::linear_size(&lattice), 5);
+    assert_eq!(Space::data(&lattice).len(), 5);
 
-    Space::set(&mut g, &[-1], 7);
-    assert_eq!(*Space::get(&g, &[4]), 7);
-    *Space::get_mut(&mut g, &[4]) = 8;
-    assert_eq!(*Space::get(&g, &[-1]), 8);
+    Space::set(&mut lattice, &[-1], 7);
+    assert_eq!(*Space::get(&lattice, &[4]), 7);
+    *Space::get_mut(&mut lattice, &[4]) = 8;
+    assert_eq!(*Space::get(&lattice, &[-1]), 8);
 
-    Space::set_all(&mut g, 2);
-    assert!(g.data.iter().all(|&x| x == 2));
+    Space::set_all(&mut lattice, 2);
+    assert!(lattice.data().iter().all(|&x| x == 2));
 
-    assert_eq!(Grid::<usize>::vacancy(), 0);
-    g.set_vacant(&[2]);
-    assert!(g.is_vacant(&[2]));
-    g.fill_vacancy();
-    assert!(g.data.iter().all(|&x| x == 0));
+    assert_eq!(SquareLattice::<usize>::vacancy(), 0);
+    lattice.set_vacant(&[2]);
+    assert!(lattice.is_vacant(&[2]));
+    lattice.fill_vacancy();
+    assert!(lattice.data().iter().all(|&x| x == 0));
 
-    let mut g_non_periodic = Grid::<usize>::new(
-        GridConfig::new(1, 5, false),
-        GridInitMethod::Uniform { val: 1 },
+    let mut reflective = SquareLattice::<usize>::new(
+        SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Reflective),
+        SquareLatticeInitMethod::Uniform { val: 1 },
     );
-    Space::set(&mut g_non_periodic, &[-9], 77);
-    assert_eq!(*Space::get(&g_non_periodic, &[0]), 77);
+    Space::set(&mut reflective, &[-1], 77);
+    assert_eq!(*Space::get(&reflective, &[1]), 77);
+    Space::set(&mut reflective, &[5], 88);
+    assert_eq!(*Space::get(&reflective, &[3]), 88);
 
-    let g2 = Grid::<usize>::new(
-        GridConfig::new(2, 4, true),
-        GridInitMethod::Uniform { val: 5 },
+    let lattice_2d = SquareLattice::<usize>::new(
+        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic),
+        SquareLatticeInitMethod::Uniform { val: 5 },
     );
-    let g2_small = g2.rescale(2);
-    assert_eq!(g2_small.cfg.shape(), [2, 2]);
-    assert_eq!(g2_small.data.len(), 4);
+    let small = lattice_2d.rescale(&vec![2; lattice_2d.cfg.rank()]);
+    assert_eq!(small.cfg.shape(), [2, 2]);
+    assert_eq!(small.data().len(), 4);
 
-    let g2_clone = g2.rescale(8);
-    assert_eq!(g2_clone.cfg.l, 4);
-    assert_eq!(g2_clone.data, g2.data);
+    let clone = lattice_2d.rescale(&vec![4; lattice_2d.cfg.rank()]);
+    assert_eq!(clone.cfg.shape(), [4, 4]);
+    assert_eq!(clone.data(), lattice_2d.data());
 }
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `grid_ndarray_and_save_surface` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
-fn grid_ndarray_and_save_surface() {
+fn lattice_ndarray_and_save_surface() {
     let arr = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1usize, 2, 3, 4])
         .expect("ndarray shape should match data length");
 
-    let g = Grid::<usize>::from_ndarry(&arr, true);
-    assert_eq!(g.cfg.d, 2);
-    assert_eq!(g.cfg.l, 2);
-    assert_eq!(g.to_ndarray(), arr);
+    let lattice = SquareLattice::<usize>::from_ndarray(&arr, BoundaryCondition::Periodic);
+    assert_eq!(lattice.cfg.shape(), [2, 2]);
+    assert_eq!(lattice.to_ndarray(), arr);
 
-    let out_1 = unique_tmp_json("save_grid_fn");
-    save_grid(&g, 2, &out_1).expect("save_grid should write json");
+    let out_1 = unique_tmp_json("save_square_lattice_fn");
+    save_square_lattice(&lattice, &vec![2; lattice.cfg.rank()], &out_1)
+        .expect("save_square_lattice should write json");
     let raw_1 = fs::read_to_string(&out_1).expect("saved json should be readable");
     assert!(raw_1.contains("\"shape\""));
     assert!(raw_1.contains("\"data\""));
-    fs::remove_file(&out_1).expect("cleanup for save_grid output should succeed");
+    fs::remove_file(&out_1).expect("cleanup for save_square_lattice output should succeed");
 
     let out_2 = unique_tmp_json("space_save");
-    Space::save(&g, &out_2, 2).expect("Space::save should write json");
+    Space::save(&lattice, &out_2, 2).expect("Space::save should write json");
     let raw_2 = fs::read_to_string(&out_2).expect("saved json should be readable");
     assert!(raw_2.contains("\"shape\""));
     fs::remove_file(&out_2).expect("cleanup for Space::save output should succeed");
 }
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `kernel_public_surface` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
 fn kernel_public_surface() {
     let p = PowerLawKernel::new(10.0, 1.0, 2.0);
     assert!(matches!(p.kind(), KernelType::PowerLaw { .. }));
@@ -169,11 +153,6 @@ fn kernel_public_surface() {
 }
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `rand_pair_generator_public_surface` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
 fn rand_pair_generator_public_surface() {
     let filler = TensorRandFiller::new(RandType::UniformInt { low: -5, high: 5 }, Some(2));
     let mut nn_gen = RandPairGenerator::new(
@@ -195,7 +174,7 @@ fn rand_pair_generator_public_surface() {
         let dx = tgt.get(i as isize, 0) - src.get(i as isize, 0);
         let dy = tgt.get(i as isize, 1) - src.get(i as isize, 1);
         let l1 = dx.abs() + dy.abs();
-        assert_eq!(l1, 1, "nearest-neighbor displacement must be one-hot ±1");
+        assert_eq!(l1, 1, "nearest-neighbor displacement must be one-hot +/-1");
     }
 
     let mut pl_gen = RandPairGenerator::new(

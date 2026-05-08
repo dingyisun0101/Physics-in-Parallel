@@ -1,14 +1,9 @@
 use physics_in_parallel::space::prelude::*;
 
 #[test]
-/// Annotation:
-/// - Purpose: Executes `space_prelude_compiles_for_common_types` logic.
-/// - Parameters:
-///   - (none): This function has no documented non-receiver parameters.
-///   - (none): This function takes no explicit parameters.
 fn space_prelude_compiles_for_common_types() {
-    let cfg = GridConfig::new(1, 4, true);
-    let mut g = Grid::<usize>::new(cfg, GridInitMethod::Uniform { val: 1 });
+    let cfg = SquareLatticeConfig::new(&vec![4; 1], BoundaryCondition::Periodic);
+    let mut g = SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 });
     g.set_vacant(&[1]);
     assert!(g.is_vacant(&[1]));
 

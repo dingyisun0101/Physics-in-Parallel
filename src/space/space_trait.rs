@@ -1,70 +1,61 @@
-use crate::math::prelude::ScalarSerde;
+/*!
+Shared interface for physical spaces.
+
+Purpose:
+    This trait gives higher-level simulation code one consistent way to read,
+    update, fill, and save a spatial container without knowing the container's
+    concrete geometry. A discrete cubic lattice, a future triangular lattice,
+    and a future continuous-space discretization can all expose the same basic
+    operations while keeping their own boundary rules and storage choices
+    private.
+
+Coordinate contract:
+    Coordinates are passed as `isize` slices so callers can naturally express
+    physically meaningful out-of-domain locations such as `-1` or `l`. The
+    concrete space decides how those coordinates are interpreted. For example,
+    a lattice with periodic boundary conditions wraps them, while a reflective
+    lattice mirrors them at the wall.
+
+Data contract:
+    The returned slice is a read-only view of the space's compact backing data.
+    It is useful for inspection, serialization, or aggregate calculations. It
+    does not promise a universal geometric layout across all future space
+    types; coordinate methods remain the stable way to address physical sites.
+*/
+
 use std::path::PathBuf;
 
-// ======================================================================================
-/*                                   Space Trait                                       */
-// ======================================================================================
-/*
-Only the signatures relevant to this grid are shown.
-Coordinates are `isize`; negatives are handled by **wrap** (periodic) or **clamp** (non-periodic).
+use crate::math::prelude::ScalarSerde;
 
-- `dims()` returns `[d, l]` (rank and per-axis length). The total site count is `l^d`.
-- `linear_size()` equals `cfg.num_sites()`.
-*/
 pub trait Space<T: ScalarSerde> {
-    /// Borrow the backing slice.
-    /// Annotation:
-    /// - Purpose: Executes `data` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    /// Borrow the compact backing data for inspection or serialization.
     fn data(&self) -> &[T];
-    /// Return `[d, l]`. (Total sites is **not** stored here; it’s `l^d`.)
-    /// Annotation:
-    /// - Purpose: Executes `dims` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+
+    /// Return the shape metadata needed to understand this space.
+    ///
+    /// For a square lattice this is the tensor-style shape, such as `[128]`,
+    /// `[64, 64]`, or `[32, 64, 16]`.
     fn dims(&self) -> Vec<usize>;
-    /// `l^d`: total number of sites in the grid.
-    /// Annotation:
-    /// - Purpose: Executes `linear_size` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+
+    /// Return the number of physical sites represented by this space.
     fn linear_size(&self) -> usize;
 
-    /// Safe read at multi-index `coord`.
-    /// Annotation:
-    /// - Purpose: Executes `get` logic for this module.
-    /// - Parameters:
-    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
+    /// Borrow the value at a physical coordinate after this space applies its
+    /// boundary condition or coordinate normalization rule.
     fn get(&self, coord: &[isize]) -> &T;
-    /// Safe mutable read at multi-index `coord`.
-    /// Annotation:
-    /// - Purpose: Returns the `mut` value.
-    /// - Parameters:
-    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
+
+    /// Mutably borrow the value at a physical coordinate after this space
+    /// applies its boundary condition or coordinate normalization rule.
     fn get_mut(&mut self, coord: &[isize]) -> &mut T;
-    /// Safe write at multi-index `coord`.
-    /// Annotation:
-    /// - Purpose: Executes `set` logic for this module.
-    /// - Parameters:
-    ///   - `coord` (`&[isize]`): Coordinate input used for spatial addressing.
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
+
+    /// Store a value at a physical coordinate after this space applies its
+    /// boundary condition or coordinate normalization rule.
     fn set(&mut self, coord: &[isize], val: T);
 
-    /// Save the grid after **optional downscaling** to side length `l_target`.
-    ///
-    /// The `output_dir` is treated as a **file path** here (not a directory).
-    /// Annotation:
-    /// - Purpose: Executes `save` logic for this module.
-    /// - Parameters:
-    ///   - `output_file` (`&PathBuf`): Parameter of type `&PathBuf` used by `save`.
-    ///   - `l_target` (`usize`): Parameter of type `usize` used by `save`.
+    /// Save this space to an external file, optionally reducing the side length
+    /// for formats that support lattice-style downsampling.
     fn save(&self, output_file: &PathBuf, l_target: usize) -> std::io::Result<()>;
 
-    /// Fill the entire grid with a single value (parallel).
-    /// Annotation:
-    /// - Purpose: Sets the `all` value.
-    /// - Parameters:
-    ///   - `val` (`T`): Value provided by caller for write/update behavior.
+    /// Fill every represented site with the same value.
     fn set_all(&mut self, val: T);
 }

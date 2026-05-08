@@ -75,10 +75,10 @@ pub enum RandPosMethod<'a> {
     Uniform {
         box_size: &'a [f64],
     }, // truly random asignment for each particle
-    JitteredGrid {
+    JitteredLattice {
         spacings: &'a [f64],
         sigmas: &'a [f64],
-    }, // Grid site + random jitter
+    }, // Lattice site + random jitter
 }
 
 #[inline]
@@ -139,7 +139,7 @@ pub fn randomize_r(
                 }
             });
         }
-        RandPosMethod::JitteredGrid { spacings, sigmas } => {
+        RandPosMethod::JitteredLattice { spacings, sigmas } => {
             if spacings.len() != dim {
                 return Err(MassiveParticlesError::Distribution {
                     msg: format!(
