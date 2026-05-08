@@ -12,6 +12,7 @@ Current documentation focus:
 
 - `math`: scalar, tensor, matrix, vector-list, random generation, and math IO.
 - `space`: square-lattice spaces, coordinate-pair generation, square-lattice kernels, and space IO.
+- `engines`: structure-of-arrays object storage, interaction topology, and neighbor-list infrastructure.
 
 The easiest import for common usage is:
 
@@ -45,6 +46,14 @@ src/space/
             displacement.rs
             kernel.rs
     io/
+
+src/engines/
+    mod.rs
+    soa/
+        mod.rs
+        phys_obj.rs
+        interaction.rs
+        neighbor_list.rs
 ```
 
 ## Math
@@ -677,14 +686,227 @@ let lattice = SquareLattice::<usize>::new(
 let json = serde_json::to_string_pretty(&lattice).unwrap();
 ```
 
+## Engines
+
+Purpose:
+
+`engines` provides model-agnostic runtime infrastructure. The ready backend is `soa`, a structure-of-arrays layout for object attributes and interaction payloads.
+
+Common import:
+
+```rust
+use physics_in_parallel::engines::prelude::*;
+```
+
+### AttrsMeta
+
+Purpose:
+
+`AttrsMeta` stores human-facing metadata for a `PhysObj`.
+
+Core API:
+
+```rust
+AttrsMeta::empty()
+AttrsMeta::new(id, label, comment)
+meta.serialize()
+```
+
+### AttrsCore
+
+Purpose:
+
+`AttrsCore` stores named typed attribute columns. Each column is a `VectorList<T>` with shape `[n_objects, dim]`. Different labels may store different scalar types, but all labels in one core must have the same `n_objects`.
+
+Core structs and enums:
+
+- `AttrsCore`
+- `AttrsError`
+- `AttrId`
+
+Core API:
+
+```rust
+AttrsCore::empty()
+core.len()
+core.is_empty()
+core.contains(label)
+core.n_objects()
+core.labels()
+core.allocate::<T>(label, dim, n_objects)
+core.insert(label, vector_list)
+core.remove(label)
+core.rename(from, to)
+core.get::<T>(label)
+core.get_mut::<T>(label)
+core.vector_of::<T>(label, obj)
+core.vector_of_mut::<T>(label, obj)
+core.set_vector_of::<T>(label, obj, value)
+core.dim_of(label)
+core.type_name_of(label)
+core.serialize()
+```
+
+Usage:
+
+```rust
+use physics_in_parallel::engines::prelude::*;
+
+let mut core = AttrsCore::empty();
+core.allocate::<f64>("r", 3, 1_000).unwrap();
+core.set_vector_of::<f64>("r", 0, &[1.0, 2.0, 3.0]).unwrap();
+let r0 = core.vector_of::<f64>("r", 0).unwrap();
+```
+
+### PhysObj
+
+Purpose:
+
+`PhysObj` bundles `AttrsMeta` and `AttrsCore` into one serializable object collection.
+
+Core API:
+
+```rust
+PhysObj::empty()
+PhysObj::new(meta, core)
+obj.serialize()
+obj.save_to_json(output_dir, filename)
+```
+
+Usage:
+
+```rust
+use physics_in_parallel::engines::prelude::*;
+
+let meta = AttrsMeta::new(0, "particles", "particle state");
+let mut core = AttrsCore::empty();
+core.allocate::<f64>("v", 3, 100).unwrap();
+
+let obj = PhysObj::new(meta, core);
+let json = obj.serialize().unwrap();
+```
+
+### Topology
+
+Purpose:
+
+`Topology` maps interaction keys to stable slot IDs. It supports mixed arity, so keys can be pairs, triples, or longer lists of object indices.
+
+Core structs and enums:
+
+- `Topology`
+- `InteractionKey`
+- `DirectionMode`
+- `ObjId`
+- `EdgeId`
+
+Core API:
+
+```rust
+Topology::new(n_objects)
+Topology::with_mode(n_objects, mode)
+topology.n_objects()
+topology.mode()
+topology.set_mode(mode)
+topology.set_n_objects(n_objects)
+topology.len_slots()
+topology.active_count()
+topology.free_count()
+topology.edge_key(edge)
+topology.index_of(nodes)
+topology.contains_key(nodes)
+topology.insert(nodes)
+topology.remove(nodes)
+topology.delete(nodes)
+topology.clear()
+topology.iter_active()
+topology.index_of_pair(i, j)
+topology.insert_pair(i, j)
+topology.remove_pair(i, j)
+```
+
+Direction modes:
+
+```rust
+DirectionMode::Directed
+DirectionMode::Undirected
+```
+
+### Interaction
+
+Purpose:
+
+`Interaction<T>` combines a `Topology` with slot-indexed payload storage for one uniform payload type.
+
+Core API:
+
+```rust
+Interaction::<T>::new(n_objects, mode)
+Interaction::<T>::with_topology(topology)
+interaction.topology()
+interaction.topology_mut()
+interaction.contains_key(nodes)
+interaction.insert(nodes, payload)
+interaction.remove(nodes)
+interaction.get(nodes)
+interaction.get_mut(nodes)
+interaction.clear()
+interaction.iter_active()
+interaction.par_for_each_active_payload(...)
+interaction.par_for_each_active_payload_mut(...)
+interaction.par_for_each_active(...)
+```
+
+Usage:
+
+```rust
+use physics_in_parallel::engines::prelude::*;
+
+let mut springs = Interaction::<f64>::new(10, DirectionMode::Undirected);
+let edge = springs.insert(&[0, 1], 1.5).unwrap();
+assert_eq!(*springs.get(&[1, 0]).unwrap().unwrap(), 1.5);
+```
+
+### NeighborList
+
+Purpose:
+
+`NeighborList` is a cell-linked candidate-pair generator for bounded particle systems. It partitions a continuous box into cells and emits nearby candidate object pairs.
+
+Core structs and enums:
+
+- `NeighborList`
+- `NeighborListError`
+
+Core API:
+
+```rust
+NeighborList::new(min, max, cell_size)
+neighbor_list.clear()
+neighbor_list.rebuild(positions, n_particles)
+neighbor_list.for_each_candidate_pair(|i, j| { ... })
+```
+
+Usage:
+
+```rust
+use physics_in_parallel::engines::prelude::*;
+
+let mut list = NeighborList::new(&[0.0, 0.0], &[10.0, 10.0], 1.0).unwrap();
+let positions = vec![0.1, 0.2, 0.4, 0.5];
+list.rebuild(&positions, 2).unwrap();
+list.for_each_candidate_pair(|i, j| {
+    println!("{i} {j}");
+});
+```
+
 ## Higher-Level Modules
 
 The crate also contains:
 
-- `engines`: simulation runtime infrastructure.
 - `models`: concrete model packages.
 
-These modules are outside the current README focus and should be documented after their next correctness and API review.
+`models` is outside the current README focus and should be documented after its next correctness and API review.
 
 ## Examples
 
@@ -699,10 +921,10 @@ cargo run --example vector_list_haar_benchmark --release
 
 ## Verification
 
-The current reviewed math and space APIs are covered by:
+The current reviewed math, space, and engines APIs are covered by:
 
 ```bash
-cargo test --test math --test space
+cargo test --test math --test space --test engines
 cargo test
 cargo doc --no-deps
 ```

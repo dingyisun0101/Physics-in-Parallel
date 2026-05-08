@@ -1,5 +1,4 @@
 use physics_in_parallel::engines::prelude::*;
-use physics_in_parallel::engines::soa::interaction::DirectionMode;
 
 #[test]
 fn engines_prelude_exports_core_soa_types() {
