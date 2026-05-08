@@ -1,185 +1,230 @@
 /*!
-    Random **source–target** pair generation for lattice-based simulations.
-    Note that a DENSE backend is used.
+Random source-target pair generation for square lattices.
 
-    Pipeline:
-        1) (optional) randomize sources
-        2) sample displacements from `kernel`
-        3) compose: targets = sources + displacements
+Purpose:
+    This module generates batches of lattice-coordinate pairs for Monte Carlo,
+    stochastic dynamics, graph construction, and other algorithms that repeatedly
+    choose a source site and a displacement. It is deliberately shape-aware but
+    not boundary-aware.
+
+Responsibility split:
+    - This module guarantees that generated source coordinates are valid indices
+      inside the square-lattice shape.
+    - This module stores raw displacements and raw targets, where
+      `target = source + displacement`.
+    - `SquareLattice` decides how a raw coordinate is interpreted under
+      `Periodic` or `Reflective` boundary conditions when callers later read or
+      write lattice values.
+
+Storage model:
+    Sources, displacements, and targets are `VectorList<isize>` values with
+    logical shape `[num_pairs, rank]`. Each row is one coordinate or vector.
 */
 
-use crate::math::prelude::{HaarVectors, NNVectors, TensorRandFiller, VectorList, VectorListRand};
-use crate::space::kernel::*;
+use rand::random_range;
 
-// ================================================================================================
-// ---------------------------- Displacement cache (enum) -----------------------------------------
-// ================================================================================================
+use crate::math::prelude::{HaarVectors, NNVectors, TensorRandFiller, VectorList, VectorListRand};
+use crate::space::discrete::square_lattice::kernel::{Kernel, KernelType, create_kernel};
 
 #[derive(Clone)]
 enum DispCache {
-    Haar(HaarVectors), // f64 unit dirs (scaled later, then cast)
-    NN(NNVectors),     // isize one-hot ±1
+    Haar(HaarVectors),
+    NN(NNVectors),
 }
 
-// ================================================================================================
-// -------------------- Random Displacement Source - Target Pair Generator ------------------------
-// ================================================================================================
+#[derive(Clone)]
+pub enum SourceMode {
+    Origin,
+    RandomUniform,
+    CustomFiller(TensorRandFiller),
+}
 
 #[derive(Clone)]
 pub struct RandPairGenerator {
+    shape: Vec<usize>,
     kernel: Box<dyn Kernel>,
-    source_coords_filler: Option<TensorRandFiller>,
-    pub source_coords_cache: VectorList<isize>,
-    pub target_coords_cache: VectorList<isize>,
+    kernel_type: KernelType,
+    source_mode: SourceMode,
+    source_coords_cache: VectorList<isize>,
     displacement_cache: DispCache,
+    displacement_coords_cache: VectorList<isize>,
+    target_coords_cache: VectorList<isize>,
 }
 
 impl RandPairGenerator {
-    /// Build a generator by constructing the kernel and allocating caches.
-    #[inline]
-    /// Annotation:
-    /// - Purpose: Constructs and returns a new instance.
-    /// - Parameters:
-    ///   - `kernel_type` (`KernelType`): Parameter of type `KernelType` used by `new`.
-    ///   - `dim` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `num_pairs` (`usize`): Parameter of type `usize` used by `new`.
-    ///   - `source_coords_filler` (`Option<TensorRandFiller>`): Parameter of type `Option<TensorRandFiller>` used by `new`.
-    ///   - `num_rngs` (`Option<usize>`): Parameter of type `Option<usize>` used by `new`.
     pub fn new(
+        shape: &[usize],
         kernel_type: KernelType,
-        dim: usize,
         num_pairs: usize,
-        source_coords_filler: Option<TensorRandFiller>,
+        source_mode: SourceMode,
         num_rngs: Option<usize>,
     ) -> Self {
-        let kernel = create_kernel(kernel_type);
-        let source_coords_cache: VectorList<isize> = VectorList::empty(dim, num_pairs);
-        let target_coords_cache = source_coords_cache.clone();
+        validate_shape(shape);
+        assert!(
+            num_pairs > 0,
+            "RandPairGenerator::new: num_pairs must be > 0"
+        );
 
-        // Choose displacement cache based on kernel type
+        let rank = shape.len();
+        validate_kernel_rank(kernel_type, rank);
+
+        let kernel = create_kernel(kernel_type);
+        let source_coords_cache = VectorList::empty(rank, num_pairs);
+        let displacement_coords_cache = VectorList::empty(rank, num_pairs);
+        let target_coords_cache = VectorList::empty(rank, num_pairs);
         let displacement_cache = match kernel_type {
             KernelType::NearestNeighbor { .. } => {
-                DispCache::NN(NNVectors::new(dim, num_pairs, num_rngs))
+                DispCache::NN(NNVectors::new(rank, num_pairs, num_rngs))
             }
-            _ => DispCache::Haar(HaarVectors::new(dim, num_pairs, num_rngs)),
+            KernelType::PowerLaw { .. } | KernelType::Uniform { .. } => {
+                DispCache::Haar(HaarVectors::new(rank, num_pairs, num_rngs))
+            }
         };
 
         Self {
+            shape: shape.to_vec(),
             kernel,
+            kernel_type,
+            source_mode,
             source_coords_cache,
-            source_coords_filler,
-            target_coords_cache,
             displacement_cache,
+            displacement_coords_cache,
+            target_coords_cache,
         }
     }
 
-    /// Populate the internal caches with a new random batch.
     #[inline]
-    /// Annotation:
-    /// - Purpose: Executes `refresh` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
     pub fn refresh(&mut self) {
-        gen_random_idx_pairs_by_kernel(
-            self.kernel.as_ref(),
-            &mut self.source_coords_cache,
-            &mut self.source_coords_filler,
-            &mut self.target_coords_cache,
-            &mut self.displacement_cache,
-        );
+        self.refresh_sources();
+        self.refresh_displacements();
+        self.refresh_targets();
     }
 
-    /// Accessors if needed downstream
-    /// Annotation:
-    /// - Purpose: Executes `sources` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+    pub fn refresh_sources(&mut self) {
+        match &mut self.source_mode {
+            SourceMode::Origin => self.source_coords_cache.fill(0),
+            SourceMode::RandomUniform => {
+                let shape = self.shape.clone();
+                self.source_coords_cache.par_for_each_vec_mut(|_, row| {
+                    for (axis, coord) in row.iter_mut().enumerate() {
+                        *coord = random_range(0..shape[axis]) as isize;
+                    }
+                });
+            }
+            SourceMode::CustomFiller(filler) => {
+                filler.refresh(self.source_coords_cache.as_tensor_mut());
+                normalize_sources_into_shape(&self.shape, &mut self.source_coords_cache);
+            }
+        }
+    }
+
+    pub fn refresh_displacements(&mut self) {
+        let num_pairs = self.num_pairs();
+        match (&self.kernel_type, &mut self.displacement_cache) {
+            (KernelType::NearestNeighbor { .. }, DispCache::NN(nn)) => {
+                nn.refresh();
+                self.displacement_coords_cache = nn.vl.clone();
+            }
+            (KernelType::PowerLaw { .. } | KernelType::Uniform { .. }, DispCache::Haar(haar)) => {
+                haar.refresh();
+                let norms = self.kernel.sample(num_pairs);
+                haar.vl.scale_vectors_by_list(&norms);
+                self.displacement_coords_cache = haar.vl.cast_to::<isize>();
+            }
+            (kind, _) => panic!("kernel/cache mismatch in square-lattice pair generator: {kind:?}"),
+        }
+    }
+
+    #[inline]
+    pub fn refresh_targets(&mut self) {
+        self.target_coords_cache = &self.source_coords_cache + &self.displacement_coords_cache;
+    }
+
+    #[inline]
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    #[inline]
+    pub fn rank(&self) -> usize {
+        self.shape.len()
+    }
+
+    #[inline]
+    pub fn num_pairs(&self) -> usize {
+        self.source_coords_cache.num_vectors()
+    }
+
+    #[inline]
+    pub fn kernel_type(&self) -> KernelType {
+        self.kernel_type
+    }
+
     #[inline]
     pub fn sources(&self) -> &VectorList<isize> {
         &self.source_coords_cache
     }
-    /// Annotation:
-    /// - Purpose: Executes `targets` logic for this module.
-    /// - Parameters:
-    ///   - (none): This function has no documented non-receiver parameters.
+
+    #[inline]
+    pub fn displacements(&self) -> &VectorList<isize> {
+        &self.displacement_coords_cache
+    }
+
     #[inline]
     pub fn targets(&self) -> &VectorList<isize> {
         &self.target_coords_cache
     }
-}
 
-// ================================================================================================
-// ----------------------------------- Generator Helpers ------------------------------------------
-// ================================================================================================
-
-/// Core routine: optional source randomization → displacement sampling → compose.
-#[inline]
-/// Annotation:
-/// - Purpose: Executes `gen_random_idx_pairs_by_kernel` logic for this module.
-/// - Parameters:
-///   - `kernel` (`&dyn Kernel`): Parameter of type `&dyn Kernel` used by `gen_random_idx_pairs_by_kernel`.
-///   - `source_coords` (`&mut VectorList<isize>`): Coordinate collection used for spatial addressing.
-///   - `source_coords_filler` (`&mut Option<TensorRandFiller>`): Parameter of type `&mut Option<TensorRandFiller>` used by `gen_random_idx_pairs_by_kernel`.
-///   - `target_coords` (`&mut VectorList<isize>`): Coordinate collection used for spatial addressing.
-///   - `displacement_cache` (`&mut DispCache`): Parameter of type `&mut DispCache` used by `gen_random_idx_pairs_by_kernel`.
-fn gen_random_idx_pairs_by_kernel(
-    kernel: &dyn Kernel,
-    source_coords: &mut VectorList<isize>,
-    source_coords_filler: &mut Option<TensorRandFiller>,
-    target_coords: &mut VectorList<isize>,
-    displacement_cache: &mut DispCache,
-) {
-    // ----------------------- Shape checks -----------------------
-    let dim = source_coords.dim();
-    let num_vectors = source_coords.num_vectors();
-    assert_eq!(
-        target_coords.dim(),
-        dim,
-        "dim mismatch: sources are {}-D, targets are {}-D",
-        dim,
-        target_coords.dim()
-    );
-    assert_eq!(
-        target_coords.num_vectors(),
-        num_vectors,
-        "batch mismatch: sources have {}, targets have {}",
-        num_vectors,
-        target_coords.num_vectors()
-    );
-
-    // ----------------------- (1) Sources ------------------------
-    if source_coords_filler.is_some() {
-        if let Some(filler) = source_coords_filler.as_mut() {
-            // Fills the **flat** SoA buffer.
-            filler.refresh(source_coords.as_tensor_mut());
-        }
+    #[inline]
+    pub fn source(&self, i: isize) -> &[isize] {
+        self.source_coords_cache.get_vec(i)
     }
 
-    // -------------------- (2) Displacements ---------------------
-    let displacements: &VectorList<isize> = match (kernel.kind(), displacement_cache) {
-        // Continuous kernels: Haar directions × scalar norms → cast to isize steps.
-        (KernelType::PowerLaw { .. } | KernelType::Uniform { .. }, DispCache::Haar(hc)) => {
-            // a) sample unit directions (Normal + normalize)
-            hc.refresh();
-            // b) sample step lengths (scalar per vector)
-            let norms: Vec<f64> = kernel.sample(num_vectors);
-            // c) scale columns by per-vector norms and cast to integer steps
-            hc.vl.scale_vectors_by_list(&norms);
-            &hc.vl.cast_to::<isize>()
+    #[inline]
+    pub fn displacement(&self, i: isize) -> &[isize] {
+        self.displacement_coords_cache.get_vec(i)
+    }
+
+    #[inline]
+    pub fn target(&self, i: isize) -> &[isize] {
+        self.target_coords_cache.get_vec(i)
+    }
+}
+
+fn validate_shape(shape: &[usize]) {
+    assert!(
+        !shape.is_empty(),
+        "RandPairGenerator::new: shape must have at least one axis"
+    );
+    assert!(
+        shape.iter().all(|&axis_len| axis_len > 0),
+        "RandPairGenerator::new: shape must contain only nonzero axis lengths; got {shape:?}"
+    );
+}
+
+fn validate_kernel_rank(kernel_type: KernelType, rank: usize) {
+    if let KernelType::NearestNeighbor { d } = kernel_type {
+        assert_eq!(
+            d, rank,
+            "NearestNeighbor kernel rank mismatch: kernel has d={d}, lattice shape has rank={rank}"
+        );
+    }
+}
+
+fn normalize_sources_into_shape(shape: &[usize], sources: &mut VectorList<isize>) {
+    sources.par_for_each_vec_mut(|_, row| {
+        for (axis, coord) in row.iter_mut().enumerate() {
+            *coord = wrap_into_axis(*coord, shape[axis]);
         }
+    });
+}
 
-        // Discrete NN kernels: decode encoded neighbor IDs to ±1 one-hot steps.
-        (KernelType::NearestNeighbor { .. }, DispCache::NN(nn)) => {
-            nn.refresh(); // fills nn.vl with one-hot ±1 (isize)
-            &nn.vl
-        }
-
-        // Mismatch protection (e.g., someone swapped kernel after construction)
-        (kt, _) => panic!("Kernel/cache mismatch: got {kt:?}"),
-    };
-
-    // ---------------------- (3) Compose -------------------------
-    // NOTE: `&*source_coords` coerces `&mut VectorList<_>` to `&VectorList<_>`.
-    let sum = &*source_coords + displacements;
-    *target_coords = sum;
+#[inline]
+fn wrap_into_axis(coord: isize, axis_len: usize) -> isize {
+    let axis_len = axis_len as isize;
+    let mut wrapped = coord % axis_len;
+    if wrapped < 0 {
+        wrapped += axis_len;
+    }
+    wrapped
 }

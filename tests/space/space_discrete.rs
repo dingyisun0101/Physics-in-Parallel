@@ -5,16 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ndarray::{ArrayD, IxDyn};
 
-use physics_in_parallel::math::prelude::{RandType, TensorRandFiller, VectorList};
+use physics_in_parallel::math::prelude::VectorList;
 use physics_in_parallel::space::{
     discrete::square_lattice::{
-        BoundaryCondition, RandPairGenerator, SquareLattice, SquareLatticeConfig,
-        SquareLatticeInitMethod,
+        BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PowerLawKernel,
+        RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod,
+        UniformKernel, create_kernel,
     },
     io::square_lattice::save_square_lattice,
-    kernel::{
-        Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
-    },
     space_trait::Space,
 };
 
@@ -154,43 +152,53 @@ fn kernel_public_surface() {
 
 #[test]
 fn rand_pair_generator_public_surface() {
-    let filler = TensorRandFiller::new(RandType::UniformInt { low: -5, high: 5 }, Some(2));
     let mut nn_gen = RandPairGenerator::new(
+        &[5, 7],
         KernelType::NearestNeighbor { d: 2 },
-        2,
         32,
-        Some(filler),
+        SourceMode::RandomUniform,
         Some(2),
     );
 
     nn_gen.refresh();
     let src: &VectorList<isize> = nn_gen.sources();
+    let disp: &VectorList<isize> = nn_gen.displacements();
     let tgt: &VectorList<isize> = nn_gen.targets();
 
     assert_eq!(src.shape(), [32, 2]);
+    assert_eq!(disp.shape(), [32, 2]);
     assert_eq!(tgt.shape(), [32, 2]);
+    assert_eq!(nn_gen.shape(), [5, 7]);
+    assert_eq!(nn_gen.rank(), 2);
+    assert_eq!(nn_gen.num_pairs(), 32);
 
     for i in 0..32 {
-        let dx = tgt.get(i as isize, 0) - src.get(i as isize, 0);
-        let dy = tgt.get(i as isize, 1) - src.get(i as isize, 1);
+        assert!((0..5).contains(&src.get(i as isize, 0)));
+        assert!((0..7).contains(&src.get(i as isize, 1)));
+
+        let dx = disp.get(i as isize, 0);
+        let dy = disp.get(i as isize, 1);
         let l1 = dx.abs() + dy.abs();
         assert_eq!(l1, 1, "nearest-neighbor displacement must be one-hot +/-1");
+        assert_eq!(tgt.get(i as isize, 0), src.get(i as isize, 0) + dx);
+        assert_eq!(tgt.get(i as isize, 1), src.get(i as isize, 1) + dy);
     }
 
     let mut pl_gen = RandPairGenerator::new(
+        &[4, 5, 6],
         KernelType::PowerLaw {
             l: 20.0,
             c: 1.0,
             mu: 2.0,
         },
-        3,
         16,
-        None,
+        SourceMode::Origin,
         Some(2),
     );
 
     pl_gen.refresh();
     assert_eq!(pl_gen.sources().shape(), [16, 3]);
+    assert_eq!(pl_gen.displacements().shape(), [16, 3]);
     assert_eq!(pl_gen.targets().shape(), [16, 3]);
     for i in 0..16 {
         for axis in 0..3 {

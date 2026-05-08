@@ -10,9 +10,13 @@ Purpose:
 */
 
 pub mod displacement;
+pub mod kernel;
 pub mod representation;
 
-pub use displacement::RandPairGenerator;
+pub use displacement::{RandPairGenerator, SourceMode};
+pub use kernel::{
+    Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
+};
 pub use representation::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, VacancyValue,
 };

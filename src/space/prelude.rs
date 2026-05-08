@@ -7,13 +7,9 @@ Import with:
 
 pub use crate::space::space_trait::Space;
 
-pub use crate::space::kernel::{
-    Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
-};
-
 pub use crate::space::discrete::square_lattice::{
-    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, VacancyValue,
+    BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PowerLawKernel,
+    RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod,
+    UniformKernel, VacancyValue, create_kernel,
 };
-
-pub use crate::space::discrete::square_lattice::RandPairGenerator;
 pub use crate::space::io::square_lattice::save_square_lattice;
