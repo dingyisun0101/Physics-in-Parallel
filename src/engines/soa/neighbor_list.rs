@@ -1,30 +1,75 @@
 /*!
-Cell-linked neighbor-list backend for bounded particle systems.
+Cell-linked candidate-pair generator for structure-of-arrays particle data.
+
+Purpose:
+`NeighborList` divides a finite rectangular domain into cells and stores object
+indices in those cells. It then emits unique unordered candidate pairs from the
+same or adjacent cells. Candidate pairs are useful because they greatly reduce
+the number of pair distances a particle model must check.
+
+Important semantics:
+This module does not apply a physical cutoff distance. It only says that two
+objects live in nearby cells and therefore may be close enough for a downstream
+model to inspect. Particle-level wrappers should perform the actual distance
+test and apply domain-specific filters such as alive masks.
+
+Positions outside the configured bounds are clipped to the nearest valid cell.
+The list is non-periodic; periodic or reflective boundary policies belong in
+space or model-level code.
 */
 
+/// Errors returned by neighbor-list construction and rebuild operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NeighborListError {
-    InvalidCellSize { cell_size: f64 },
-    InvalidBounds { axis: usize, min: f64, max: f64 },
-    InvalidPositionShape { expected_len: usize, got_len: usize },
+    /// Cell width is not finite or is not strictly positive.
+    InvalidCellWidth {
+        /// Requested cell width.
+        cell_width: f64,
+    },
+    /// Domain bounds are malformed on one axis.
+    InvalidBounds {
+        /// Axis where bounds failed validation.
+        axis: usize,
+        /// Lower bound value.
+        min: f64,
+        /// Upper bound value.
+        max: f64,
+    },
+    /// Flat position array length does not match `dim * n_objects`.
+    InvalidPositionShape {
+        /// Required flat length.
+        expected_len: usize,
+        /// Supplied flat length.
+        got_len: usize,
+    },
 }
 
+/// Cell-linked list that emits candidate object pairs from neighboring cells.
 #[derive(Debug, Clone)]
 pub struct NeighborList {
+    /// Spatial dimension inferred from `min`/`max`.
     dim: usize,
+    /// Lower bound of each axis.
     min: Vec<f64>,
+    /// Upper bound of each axis.
     max: Vec<f64>,
-    cell_size: f64,
+    /// Width of one cell along each axis.
+    cell_width: f64,
+    /// Number of cells along each axis.
     cells_per_axis: Vec<usize>,
+    /// Row-major-like strides for converting cell coordinates to ids.
     strides: Vec<usize>,
+    /// Offsets of every same/adjacent cell in `[-1, 0, 1]^dim`.
     neighbor_offsets: Vec<Vec<isize>>,
+    /// Object ids stored in each cell.
     buckets: Vec<Vec<usize>>,
 }
 
 impl NeighborList {
-    pub fn new(min: &[f64], max: &[f64], cell_size: f64) -> Result<Self, NeighborListError> {
-        if !cell_size.is_finite() || cell_size <= 0.0 {
-            return Err(NeighborListError::InvalidCellSize { cell_size });
+    /// Builds an empty cell-linked list over a rectangular domain.
+    pub fn new(min: &[f64], max: &[f64], cell_width: f64) -> Result<Self, NeighborListError> {
+        if !cell_width.is_finite() || cell_width <= 0.0 {
+            return Err(NeighborListError::InvalidCellWidth { cell_width });
         }
         if min.len() != max.len() || min.is_empty() {
             return Err(NeighborListError::InvalidBounds {
@@ -46,7 +91,7 @@ impl NeighborList {
                     max: hi,
                 });
             }
-            let n_cells = ((hi - lo) / cell_size).ceil() as usize;
+            let n_cells = ((hi - lo) / cell_width).ceil() as usize;
             cells_per_axis[axis] = n_cells.max(1);
         }
 
@@ -62,7 +107,7 @@ impl NeighborList {
             dim,
             min: min.to_vec(),
             max: max.to_vec(),
-            cell_size,
+            cell_width,
             cells_per_axis,
             strides,
             neighbor_offsets,
@@ -70,6 +115,42 @@ impl NeighborList {
         })
     }
 
+    /// Returns spatial dimension.
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// Returns lower domain bounds.
+    pub fn min(&self) -> &[f64] {
+        self.min.as_slice()
+    }
+
+    /// Returns upper domain bounds.
+    pub fn max(&self) -> &[f64] {
+        self.max.as_slice()
+    }
+
+    /// Returns configured cell width.
+    pub fn cell_width(&self) -> f64 {
+        self.cell_width
+    }
+
+    /// Returns number of cells along each axis.
+    pub fn cells_per_axis(&self) -> &[usize] {
+        self.cells_per_axis.as_slice()
+    }
+
+    /// Returns total number of cells.
+    pub fn num_cells(&self) -> usize {
+        self.buckets.len()
+    }
+
+    /// Returns number of objects currently stored across all cells.
+    pub fn num_objects(&self) -> usize {
+        self.buckets.iter().map(Vec::len).sum()
+    }
+
+    /// Removes all stored object ids while preserving bucket allocation.
     #[inline]
     pub fn clear(&mut self) {
         for bucket in self.buckets.iter_mut() {
@@ -77,12 +158,16 @@ impl NeighborList {
         }
     }
 
+    /// Rebuilds cell buckets from flat row-major position data.
+    ///
+    /// `positions` must have length `dim * n_objects`, with object `i` stored at
+    /// `positions[i * dim .. (i + 1) * dim]`.
     pub fn rebuild(
         &mut self,
         positions: &[f64],
-        n_particles: usize,
+        n_objects: usize,
     ) -> Result<(), NeighborListError> {
-        let expected_len = self.dim.saturating_mul(n_particles);
+        let expected_len = self.dim.saturating_mul(n_objects);
         if positions.len() != expected_len {
             return Err(NeighborListError::InvalidPositionShape {
                 expected_len,
@@ -92,7 +177,7 @@ impl NeighborList {
 
         self.clear();
         let mut coord = vec![0usize; self.dim];
-        for i in 0..n_particles {
+        for i in 0..n_objects {
             let i0 = i * self.dim;
             for axis in 0..self.dim {
                 coord[axis] = self.coord_along_axis(positions[i0 + axis], axis);
@@ -103,7 +188,11 @@ impl NeighborList {
         Ok(())
     }
 
-    pub fn for_each_candidate_pair<F>(&self, mut f: F)
+    /// Visits unique unordered candidate pairs `(i, j)` with `i < j`.
+    ///
+    /// The callback receives candidates from the same or adjacent cells. The
+    /// result is not distance-filtered.
+    pub fn for_each_pair_candidate<F>(&self, mut f: F)
     where
         F: FnMut(usize, usize),
     {
@@ -112,8 +201,8 @@ impl NeighborList {
 
         for cell_id in 0..self.buckets.len() {
             self.coord_from_linear_id(cell_id, coord.as_mut_slice());
-            let cell_particles = &self.buckets[cell_id];
-            if cell_particles.is_empty() {
+            let cell_objects = &self.buckets[cell_id];
+            if cell_objects.is_empty() {
                 continue;
             }
 
@@ -126,20 +215,20 @@ impl NeighborList {
                     continue;
                 }
 
-                let nbr_particles = &self.buckets[nbr_id];
-                if nbr_particles.is_empty() {
+                let nbr_objects = &self.buckets[nbr_id];
+                if nbr_objects.is_empty() {
                     continue;
                 }
 
                 if nbr_id == cell_id {
-                    for a in 0..cell_particles.len() {
-                        for b in (a + 1)..cell_particles.len() {
-                            f(cell_particles[a], cell_particles[b]);
+                    for a in 0..cell_objects.len() {
+                        for b in (a + 1)..cell_objects.len() {
+                            f(cell_objects[a], cell_objects[b]);
                         }
                     }
                 } else {
-                    for &i in cell_particles {
-                        for &j in nbr_particles {
+                    for &i in cell_objects {
+                        for &j in nbr_objects {
                             let (a, b) = if i < j { (i, j) } else { (j, i) };
                             if a != b {
                                 f(a, b);
@@ -151,6 +240,13 @@ impl NeighborList {
         }
     }
 
+    /// Collects unique unordered candidate pairs into a vector.
+    pub fn collect_pair_candidates(&self) -> Vec<(usize, usize)> {
+        let mut pairs = Vec::new();
+        self.for_each_pair_candidate(|i, j| pairs.push((i, j)));
+        pairs
+    }
+
     #[inline]
     fn coord_along_axis(&self, x: f64, axis: usize) -> usize {
         let lo = self.min[axis];
@@ -160,7 +256,7 @@ impl NeighborList {
             return 0;
         }
         let clipped = x.clamp(lo, hi - f64::EPSILON.min(span * 1e-12));
-        let t = ((clipped - lo) / self.cell_size).floor() as isize;
+        let t = ((clipped - lo) / self.cell_width).floor() as isize;
         t.clamp(0, (self.cells_per_axis[axis] as isize) - 1) as usize
     }
 

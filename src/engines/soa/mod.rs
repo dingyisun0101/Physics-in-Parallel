@@ -14,7 +14,8 @@ pub mod phys_obj;
 
 // Canonical SoA exports.
 pub use interaction::{
-    DirectionMode, EdgeId, Interaction, InteractionError, InteractionKey, ObjId, Topology,
+    Interaction, InteractionError, InteractionId, InteractionNodes, InteractionOrder,
+    InteractionTopology, ObjId,
 };
 pub use neighbor_list::{NeighborList, NeighborListError};
 pub use phys_obj::{AttrId, AttrsCore, AttrsError, AttrsMeta, PhysObj};

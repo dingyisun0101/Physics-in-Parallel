@@ -3,8 +3,8 @@ Spring-network interaction wrapper for particle models.
 */
 
 use crate::engines::soa::PhysObj;
-use crate::engines::soa::interaction::DirectionMode;
-use crate::engines::soa::{EdgeId, Interaction, InteractionError};
+use crate::engines::soa::interaction::InteractionOrder;
+use crate::engines::soa::{Interaction, InteractionError, InteractionId};
 use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_M_INV, ATTR_R, ATTR_RIGID};
 
 /// Optional distance window `(min, max)` where this spring is active.
@@ -37,13 +37,13 @@ impl SpringNetwork {
     /// Creates an empty spring network.
     pub fn empty() -> Self {
         Self {
-            springs: Interaction::new(0, DirectionMode::Undirected),
+            springs: Interaction::new(0, InteractionOrder::Unordered),
         }
     }
 
     /// Number of active springs.
     pub fn len(&self) -> usize {
-        self.springs.topology().active_count()
+        self.springs.len()
     }
 
     /// Returns true if the network has no springs.
@@ -58,7 +58,7 @@ impl SpringNetwork {
         k: f64,
         l_0: f64,
         cutoff: Option<SpringCutoff>,
-    ) -> Result<EdgeId, InteractionError> {
+    ) -> Result<InteractionId, InteractionError> {
         self.add_spring_payload(pair, Spring { k, l_0, cutoff })
     }
 
@@ -67,9 +67,9 @@ impl SpringNetwork {
         &mut self,
         pair: (usize, usize),
         spring: Spring,
-    ) -> Result<EdgeId, InteractionError> {
+    ) -> Result<InteractionId, InteractionError> {
         self.ensure_n_objects_for(pair);
-        self.springs.insert(&[pair.0, pair.1], spring)
+        self.springs.set_pair(pair.0, pair.1, spring)
     }
 
     /// Removes one spring by particle pair.
@@ -82,7 +82,7 @@ impl SpringNetwork {
         }
         Ok(self
             .springs
-            .remove(&[pair.0, pair.1])?
+            .remove_pair(pair.0, pair.1)?
             .map(|(_, spring)| spring))
     }
 
@@ -91,7 +91,7 @@ impl SpringNetwork {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
-        self.springs.get(&[pair.0, pair.1])
+        self.springs.get_pair(pair.0, pair.1)
     }
 
     /// Returns a mutable spring payload by particle pair.
@@ -102,7 +102,7 @@ impl SpringNetwork {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
-        self.springs.get_mut(&[pair.0, pair.1])
+        self.springs.get_pair_mut(pair.0, pair.1)
     }
 
     /// Clears all springs while preserving allocated capacity.
@@ -125,15 +125,15 @@ impl SpringNetwork {
     where
         F: Fn(usize, usize, &Spring) + Send + Sync,
     {
-        self.springs.par_for_each_active(|_edge, key, spring| {
+        self.springs.par_for_each(|_id, nodes, spring| {
             debug_assert_eq!(
-                key.nodes.len(),
+                nodes.nodes.len(),
                 2,
-                "SpringNetwork expects pairwise edges (arity=2)"
+                "SpringNetwork expects pairwise interactions (arity=2)"
             );
 
-            if key.nodes.len() == 2 {
-                f(key.nodes[0], key.nodes[1], spring);
+            if nodes.nodes.len() == 2 {
+                f(nodes.nodes[0], nodes.nodes[1], spring);
             }
         });
     }
@@ -211,12 +211,12 @@ impl SpringNetwork {
         let mut accum = vec![0.0f64; n * dim];
         let mut dr = vec![0.0f64; dim];
 
-        for (_edge, key, spring) in self.springs.iter_active() {
-            if key.nodes.len() != 2 {
+        for (_id, nodes, spring) in self.springs.iter() {
+            if nodes.nodes.len() != 2 {
                 continue;
             }
-            let i = key.nodes[0];
-            let j = key.nodes[1];
+            let i = nodes.nodes[0];
+            let j = nodes.nodes[1];
             if i >= n || j >= n || i == j {
                 continue;
             }
@@ -274,7 +274,7 @@ impl SpringNetwork {
     fn ensure_n_objects_for(&mut self, pair: (usize, usize)) {
         let needed = pair.0.max(pair.1).saturating_add(1);
         if needed > self.springs.topology().n_objects() {
-            self.springs.topology_mut().set_n_objects(needed);
+            let _ = self.springs.set_n_objects(needed);
         }
     }
 }

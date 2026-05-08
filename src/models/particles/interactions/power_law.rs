@@ -2,8 +2,8 @@
 Power-law interaction wrapper for particle models.
 */
 
-use crate::engines::soa::interaction::DirectionMode;
-use crate::engines::soa::{EdgeId, Interaction, InteractionError};
+use crate::engines::soa::interaction::InteractionOrder;
+use crate::engines::soa::{Interaction, InteractionError, InteractionId};
 
 /// Optional active range for this interaction, encoded as `(max, min)`.
 pub type PowerLawRange = (f64, f64);
@@ -42,13 +42,13 @@ impl PowerLawNetwork {
     /// Creates an empty power-law network.
     pub fn empty() -> Self {
         Self {
-            interactions: Interaction::new(0, DirectionMode::Undirected),
+            interactions: Interaction::new(0, InteractionOrder::Unordered),
         }
     }
 
     /// Number of active pair interactions.
     pub fn len(&self) -> usize {
-        self.interactions.topology().active_count()
+        self.interactions.len()
     }
 
     /// Returns true if no interactions exist.
@@ -63,7 +63,7 @@ impl PowerLawNetwork {
         k: f64,
         alpha: f64,
         range: Option<PowerLawRange>,
-    ) -> Result<EdgeId, InteractionError> {
+    ) -> Result<InteractionId, InteractionError> {
         self.add_power_law(pair, k, alpha, range)
     }
 
@@ -82,7 +82,7 @@ impl PowerLawNetwork {
         k: f64,
         alpha: f64,
         range: Option<PowerLawRange>,
-    ) -> Result<EdgeId, InteractionError> {
+    ) -> Result<InteractionId, InteractionError> {
         self.add_payload(pair, PowerLawDecay::new(k, alpha, range))
     }
 
@@ -91,9 +91,9 @@ impl PowerLawNetwork {
         &mut self,
         pair: (usize, usize),
         payload: PowerLawDecay,
-    ) -> Result<EdgeId, InteractionError> {
+    ) -> Result<InteractionId, InteractionError> {
         self.ensure_n_objects_for(pair);
-        self.interactions.insert(&[pair.0, pair.1], payload)
+        self.interactions.set_pair(pair.0, pair.1, payload)
     }
 
     /// Deletes one pair interaction payload.
@@ -106,7 +106,7 @@ impl PowerLawNetwork {
         }
         Ok(self
             .interactions
-            .remove(&[pair.0, pair.1])?
+            .remove_pair(pair.0, pair.1)?
             .map(|(_, payload)| payload))
     }
 
@@ -126,7 +126,7 @@ impl PowerLawNetwork {
         if pair.0.max(pair.1) >= self.interactions.topology().n_objects() {
             return Ok(None);
         }
-        self.interactions.get(&[pair.0, pair.1])
+        self.interactions.get_pair(pair.0, pair.1)
     }
 
     /// Returns mutable payload for one pair.
@@ -137,7 +137,7 @@ impl PowerLawNetwork {
         if pair.0.max(pair.1) >= self.interactions.topology().n_objects() {
             return Ok(None);
         }
-        self.interactions.get_mut(&[pair.0, pair.1])
+        self.interactions.get_pair_mut(pair.0, pair.1)
     }
 
     /// Clears all interactions while preserving capacity.
@@ -158,7 +158,7 @@ impl PowerLawNetwork {
     fn ensure_n_objects_for(&mut self, pair: (usize, usize)) {
         let needed = pair.0.max(pair.1).saturating_add(1);
         if needed > self.interactions.topology().n_objects() {
-            self.interactions.topology_mut().set_n_objects(needed);
+            let _ = self.interactions.set_n_objects(needed);
         }
     }
 }

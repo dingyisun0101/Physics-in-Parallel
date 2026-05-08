@@ -733,19 +733,28 @@ core.is_empty()
 core.contains(label)
 core.n_objects()
 core.labels()
+core.id_of(label)
+core.label_of(id)
 core.allocate::<T>(label, dim, n_objects)
 core.insert(label, vector_list)
 core.remove(label)
 core.rename(from, to)
 core.get::<T>(label)
 core.get_mut::<T>(label)
+core.get_by_id::<T>(id)
+core.get_by_id_mut::<T>(id)
 core.vector_of::<T>(label, obj)
 core.vector_of_mut::<T>(label, obj)
 core.set_vector_of::<T>(label, obj, value)
 core.dim_of(label)
+core.dim_of_id(id)
 core.type_name_of(label)
+core.type_name_of_id(id)
 core.serialize()
 ```
+
+The label-based API is the normal user path. Attribute IDs are generated
+automatically and are available as an optional expert path for repeated lookup.
 
 Usage:
 
@@ -786,75 +795,91 @@ let obj = PhysObj::new(meta, core);
 let json = obj.serialize().unwrap();
 ```
 
-### Topology
+### InteractionTopology
 
 Purpose:
 
-`Topology` maps interaction keys to stable slot IDs. It supports mixed arity, so keys can be pairs, triples, or longer lists of object indices.
+`InteractionTopology` maps object-node lists to stable interaction IDs. It supports mixed arity, so an interaction can be a pair, a triple, or a longer n-body term.
+
+`InteractionOrder::Ordered` preserves caller order, so `[i, j]` and `[j, i]` are different interactions.
+
+`InteractionOrder::Unordered` sorts the node list before lookup, so `[i, j]` and `[j, i]` identify the same symmetric interaction.
 
 Core structs and enums:
 
-- `Topology`
-- `InteractionKey`
-- `DirectionMode`
+- `InteractionTopology`
+- `InteractionNodes`
+- `InteractionOrder`
 - `ObjId`
-- `EdgeId`
+- `InteractionId`
 
 Core API:
 
 ```rust
-Topology::new(n_objects)
-Topology::with_mode(n_objects, mode)
+InteractionTopology::new(n_objects)
+InteractionTopology::with_order(n_objects, order)
 topology.n_objects()
-topology.mode()
-topology.set_mode(mode)
+topology.order()
+topology.set_order(order)
 topology.set_n_objects(n_objects)
-topology.len_slots()
-topology.active_count()
-topology.free_count()
-topology.edge_key(edge)
-topology.index_of(nodes)
-topology.contains_key(nodes)
-topology.insert(nodes)
+topology.prune_n_objects(n_objects)
+topology.len()
+topology.is_empty()
+topology.capacity_slots()
+topology.free_slot_count()
+topology.nodes_of(id)
+topology.id_of(nodes)
+topology.contains(nodes)
+topology.add(nodes)
 topology.remove(nodes)
-topology.delete(nodes)
 topology.clear()
-topology.iter_active()
-topology.index_of_pair(i, j)
-topology.insert_pair(i, j)
+topology.iter()
+topology.id_of_pair(i, j)
+topology.add_pair(i, j)
 topology.remove_pair(i, j)
 ```
 
-Direction modes:
+Interaction order:
 
 ```rust
-DirectionMode::Directed
-DirectionMode::Undirected
+InteractionOrder::Ordered
+InteractionOrder::Unordered
 ```
 
 ### Interaction
 
 Purpose:
 
-`Interaction<T>` combines a `Topology` with slot-indexed payload storage for one uniform payload type.
+`Interaction<T>` combines an `InteractionTopology` with payload storage for one uniform payload type. This is the normal user-facing container for model interactions because topology edits made through `Interaction<T>` keep payload storage synchronized.
 
 Core API:
 
 ```rust
-Interaction::<T>::new(n_objects, mode)
+Interaction::<T>::new(n_objects, order)
 Interaction::<T>::with_topology(topology)
 interaction.topology()
 interaction.topology_mut()
-interaction.contains_key(nodes)
-interaction.insert(nodes, payload)
+interaction.len()
+interaction.is_empty()
+interaction.n_objects()
+interaction.order()
+interaction.set_order(order)
+interaction.set_n_objects(n_objects)
+interaction.prune_n_objects(n_objects)
+interaction.contains(nodes)
+interaction.set(nodes, payload)
 interaction.remove(nodes)
 interaction.get(nodes)
 interaction.get_mut(nodes)
+interaction.set_pair(i, j, payload)
+interaction.get_pair(i, j)
+interaction.get_pair_mut(i, j)
+interaction.remove_pair(i, j)
 interaction.clear()
-interaction.iter_active()
-interaction.par_for_each_active_payload(...)
-interaction.par_for_each_active_payload_mut(...)
-interaction.par_for_each_active(...)
+interaction.iter()
+interaction.par_for_each_payload(...)
+interaction.par_for_each_payload_mut(...)
+interaction.par_for_each(...)
 ```
 
 Usage:
@@ -862,8 +887,8 @@ Usage:
 ```rust
 use physics_in_parallel::engines::prelude::*;
 
-let mut springs = Interaction::<f64>::new(10, DirectionMode::Undirected);
-let edge = springs.insert(&[0, 1], 1.5).unwrap();
+let mut springs = Interaction::<f64>::new(10, InteractionOrder::Unordered);
+let id = springs.set_pair(0, 1, 1.5).unwrap();
 assert_eq!(*springs.get(&[1, 0]).unwrap().unwrap(), 1.5);
 ```
 
@@ -871,7 +896,7 @@ assert_eq!(*springs.get(&[1, 0]).unwrap().unwrap(), 1.5);
 
 Purpose:
 
-`NeighborList` is a cell-linked candidate-pair generator for bounded particle systems. It partitions a continuous box into cells and emits nearby candidate object pairs.
+`NeighborList` is a cell-linked candidate-pair generator for bounded particle systems. It partitions a continuous box into cells and emits unique unordered nearby-cell candidate pairs. It does not apply the final physical distance cutoff; model wrappers do that filtering.
 
 Core structs and enums:
 
@@ -881,10 +906,18 @@ Core structs and enums:
 Core API:
 
 ```rust
-NeighborList::new(min, max, cell_size)
+NeighborList::new(min, max, cell_width)
+neighbor_list.dim()
+neighbor_list.min()
+neighbor_list.max()
+neighbor_list.cell_width()
+neighbor_list.cells_per_axis()
+neighbor_list.num_cells()
+neighbor_list.num_objects()
 neighbor_list.clear()
-neighbor_list.rebuild(positions, n_particles)
-neighbor_list.for_each_candidate_pair(|i, j| { ... })
+neighbor_list.rebuild(positions, n_objects)
+neighbor_list.for_each_pair_candidate(|i, j| { ... })
+neighbor_list.collect_pair_candidates()
 ```
 
 Usage:
@@ -895,7 +928,7 @@ use physics_in_parallel::engines::prelude::*;
 let mut list = NeighborList::new(&[0.0, 0.0], &[10.0, 10.0], 1.0).unwrap();
 let positions = vec![0.1, 0.2, 0.4, 0.5];
 list.rebuild(&positions, 2).unwrap();
-list.for_each_candidate_pair(|i, j| {
+list.for_each_pair_candidate(|i, j| {
     println!("{i} {j}");
 });
 ```

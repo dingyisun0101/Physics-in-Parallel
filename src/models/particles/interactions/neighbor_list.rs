@@ -99,7 +99,7 @@ impl ParticleNeighborList {
 
         let cutoff_sq = self.cutoff * self.cutoff;
         let mut pairs = Vec::<(usize, usize)>::new();
-        self.grid.for_each_candidate_pair(|i, j| {
+        self.grid.for_each_pair_candidate(|i, j| {
             if let Some(flags) = &alive_flags {
                 if !flags[i] || !flags[j] {
                     return;

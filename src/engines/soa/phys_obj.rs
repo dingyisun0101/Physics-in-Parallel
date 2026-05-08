@@ -16,6 +16,8 @@ Design:
 Invariants:
     - Every attribute column in one `AttrsCore` has the same `n_objects`.
     - Attribute labels are unique.
+    - Attribute IDs are generated automatically and remain stable while an
+      attribute exists.
     - Typed accessors check the requested scalar type at runtime and return a
       structured `AttrsError` on mismatch.
 */
@@ -75,6 +77,9 @@ pub enum AttrsError {
     UnknownLabel {
         label: String,
     },
+    UnknownId {
+        id: AttrId,
+    },
     InvalidVectorShape {
         dim: usize,
         n: usize,
@@ -100,9 +105,16 @@ pub enum AttrsError {
     },
 }
 
+#[derive(Debug, Clone)]
+struct AttrEntry {
+    label: String,
+    data: Box<dyn DynVectorList>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AttrsCore {
-    data: AHashMap<String, Box<dyn DynVectorList>>,
+    label_to_id: AHashMap<String, AttrId>,
+    entries: Vec<Option<AttrEntry>>,
     n_objects: Option<usize>,
 }
 
@@ -114,17 +126,17 @@ impl AttrsCore {
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.label_to_id.len()
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.label_to_id.is_empty()
     }
 
     #[inline]
     pub fn contains(&self, label: &str) -> bool {
-        self.data.contains_key(label)
+        self.label_to_id.contains_key(label)
     }
 
     #[inline]
@@ -134,12 +146,29 @@ impl AttrsCore {
 
     #[inline]
     pub fn labels(&self) -> impl Iterator<Item = &str> {
-        self.data.keys().map(|k| k.as_str())
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.as_ref().map(|entry| entry.label.as_str()))
     }
 
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.to_json_string()
+    }
+
+    #[inline]
+    pub fn id_of(&self, label: &str) -> Result<AttrId, AttrsError> {
+        self.label_to_id
+            .get(label)
+            .copied()
+            .ok_or_else(|| AttrsError::UnknownLabel {
+                label: label.to_string(),
+            })
+    }
+
+    #[inline]
+    pub fn label_of(&self, id: AttrId) -> Result<&str, AttrsError> {
+        Ok(&self.entry(id)?.label)
     }
 
     pub fn insert<T>(
@@ -151,7 +180,7 @@ impl AttrsCore {
         T: Scalar + Serialize + Copy + 'static,
     {
         let label = label.into();
-        if self.data.contains_key(&label) {
+        if self.label_to_id.contains_key(&label) {
             return Err(AttrsError::DuplicateLabel { label });
         }
 
@@ -166,7 +195,12 @@ impl AttrsCore {
             });
         }
 
-        self.data.insert(label, Box::new(values));
+        let id = self.entries.len();
+        self.entries.push(Some(AttrEntry {
+            label: label.clone(),
+            data: Box::new(values),
+        }));
+        self.label_to_id.insert(label, id);
         if self.n_objects.is_none() {
             self.n_objects = Some(n);
         }
@@ -189,21 +223,22 @@ impl AttrsCore {
     }
 
     pub fn remove(&mut self, label: &str) -> Result<(), AttrsError> {
-        self.data
+        let id = self
+            .label_to_id
             .remove(label)
-            .map(|_| {
-                if self.data.is_empty() {
-                    self.n_objects = None;
-                }
-            })
             .ok_or_else(|| AttrsError::UnknownLabel {
                 label: label.to_string(),
-            })
+            })?;
+        self.entries[id] = None;
+        if self.label_to_id.is_empty() {
+            self.n_objects = None;
+        }
+        Ok(())
     }
 
     pub fn rename(&mut self, from: &str, to: &str) -> Result<(), AttrsError> {
         if from == to {
-            return if self.data.contains_key(from) {
+            return if self.label_to_id.contains_key(from) {
                 Ok(())
             } else {
                 Err(AttrsError::UnknownLabel {
@@ -212,36 +247,39 @@ impl AttrsCore {
             };
         }
 
-        if self.data.contains_key(to) {
+        if self.label_to_id.contains_key(to) {
             return Err(AttrsError::DuplicateLabel {
                 label: to.to_string(),
             });
         }
 
-        let col = self
-            .data
+        let id = self
+            .label_to_id
             .remove(from)
             .ok_or_else(|| AttrsError::UnknownLabel {
                 label: from.to_string(),
             })?;
-        self.data.insert(to.to_string(), col);
+        let entry = self.entry_mut(id)?;
+        entry.label = to.to_string();
+        self.label_to_id.insert(to.to_string(), id);
         Ok(())
     }
 
     pub fn get<T: Scalar + 'static>(&self, label: &str) -> Result<&VectorList<T>, AttrsError> {
-        let col = self
-            .data
-            .get(label)
-            .ok_or_else(|| AttrsError::UnknownLabel {
-                label: label.to_string(),
-            })?;
+        let id = self.id_of(label)?;
+        self.get_by_id(id)
+    }
 
-        col.as_any()
+    pub fn get_by_id<T: Scalar + 'static>(&self, id: AttrId) -> Result<&VectorList<T>, AttrsError> {
+        let entry = self.entry(id)?;
+        entry
+            .data
+            .as_any()
             .downcast_ref::<VectorList<T>>()
             .ok_or_else(|| AttrsError::WrongType {
-                label: label.to_string(),
+                label: entry.label.clone(),
                 expected: std::any::type_name::<T>().to_string(),
-                got: col.type_name().to_string(),
+                got: entry.data.type_name().to_string(),
             })
     }
 
@@ -249,18 +287,23 @@ impl AttrsCore {
         &mut self,
         label: &str,
     ) -> Result<&mut VectorList<T>, AttrsError> {
-        let col = self
-            .data
-            .get_mut(label)
-            .ok_or_else(|| AttrsError::UnknownLabel {
-                label: label.to_string(),
-            })?;
-        let got = col.type_name().to_string();
+        let id = self.id_of(label)?;
+        self.get_by_id_mut(id)
+    }
 
-        col.as_any_mut()
+    pub fn get_by_id_mut<T: Scalar + 'static>(
+        &mut self,
+        id: AttrId,
+    ) -> Result<&mut VectorList<T>, AttrsError> {
+        let entry = self.entry_mut(id)?;
+        let got = entry.data.type_name().to_string();
+
+        entry
+            .data
+            .as_any_mut()
             .downcast_mut::<VectorList<T>>()
             .ok_or_else(|| AttrsError::WrongType {
-                label: label.to_string(),
+                label: entry.label.clone(),
                 expected: std::any::type_name::<T>().to_string(),
                 got,
             })
@@ -327,23 +370,37 @@ impl AttrsCore {
     }
 
     pub fn dim_of(&self, label: &str) -> Result<usize, AttrsError> {
-        let col = self
-            .data
-            .get(label)
-            .ok_or_else(|| AttrsError::UnknownLabel {
-                label: label.to_string(),
-            })?;
-        Ok(col.dim())
+        let id = self.id_of(label)?;
+        self.dim_of_id(id)
+    }
+
+    #[inline]
+    pub fn dim_of_id(&self, id: AttrId) -> Result<usize, AttrsError> {
+        Ok(self.entry(id)?.data.dim())
     }
 
     pub fn type_name_of(&self, label: &str) -> Result<&'static str, AttrsError> {
-        let col = self
-            .data
-            .get(label)
-            .ok_or_else(|| AttrsError::UnknownLabel {
-                label: label.to_string(),
-            })?;
-        Ok(col.type_name())
+        let id = self.id_of(label)?;
+        self.type_name_of_id(id)
+    }
+
+    #[inline]
+    pub fn type_name_of_id(&self, id: AttrId) -> Result<&'static str, AttrsError> {
+        Ok(self.entry(id)?.data.type_name())
+    }
+
+    fn entry(&self, id: AttrId) -> Result<&AttrEntry, AttrsError> {
+        self.entries
+            .get(id)
+            .and_then(|entry| entry.as_ref())
+            .ok_or(AttrsError::UnknownId { id })
+    }
+
+    fn entry_mut(&mut self, id: AttrId) -> Result<&mut AttrEntry, AttrsError> {
+        self.entries
+            .get_mut(id)
+            .and_then(|entry| entry.as_mut())
+            .ok_or(AttrsError::UnknownId { id })
     }
 }
 
@@ -351,25 +408,30 @@ impl ToJsonPayload for AttrsCore {
     type Payload = AttrsCorePayload;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        let mut labels: Vec<&str> = self.data.keys().map(|k| k.as_str()).collect();
+        let mut labels: Vec<&str> = self.labels().collect();
         labels.sort_unstable();
 
         let mut attrs: Vec<LabeledPayload> = Vec::with_capacity(labels.len());
         for label in labels {
-            let col = self.data.get(label).ok_or_else(|| {
+            let id = self.id_of(label).map_err(|e| {
                 serde_json::Error::io(std::io::Error::other(format!(
-                    "label disappeared during serialization: {label}"
+                    "label disappeared during serialization: {e:?}"
+                )))
+            })?;
+            let entry = self.entry(id).map_err(|e| {
+                serde_json::Error::io(std::io::Error::other(format!(
+                    "entry disappeared during serialization: {e:?}"
                 )))
             })?;
             attrs.push(LabeledPayload {
                 label: label.to_string(),
-                payload: col.serialize_value()?,
+                payload: entry.data.serialize_value()?,
             });
         }
 
         Ok(AttrsCorePayload {
             n_objects: self.n_objects,
-            num_attrs: self.data.len(),
+            num_attrs: self.len(),
             attrs,
         })
     }
