@@ -2,85 +2,34 @@
 Pairwise power-law interaction parameter storage for particle models.
 
 Purpose:
-`PowerLawNetwork` stores unordered particle pairs with one `PowerLawDecay`
-payload on each pair. The struct is currently a validated storage layer; actual
-force or rate application belongs in downstream model code that knows the
-physical convention being used.
+`PowerLawNetwork` stores unordered particle pairs with one reusable
+`models::laws::PowerLawDecay` payload on each pair. The struct is currently a
+validated storage layer; actual force or rate application belongs in downstream
+model code that knows the physical convention being used.
 */
 
 use crate::engines::soa::interaction::InteractionOrder;
 use crate::engines::soa::{Interaction, InteractionError, InteractionId};
-
-/// Optional active distance interval `(min, max)`.
-pub type PowerLawRange = (f64, f64);
-
-/// Per-pair power-law payload.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PowerLawDecay {
-    /// Strength constant.
-    pub k: f64,
-    /// Power exponent.
-    pub alpha: f64,
-    /// Optional active distance interval `(min, max)`.
-    pub range: Option<PowerLawRange>,
-}
-
-impl PowerLawDecay {
-    /// Builds a validated power-law payload.
-    pub fn new(
-        k: f64,
-        alpha: f64,
-        range: Option<PowerLawRange>,
-    ) -> Result<Self, PowerLawNetworkError> {
-        let payload = Self { k, alpha, range };
-        payload.validate()?;
-        Ok(payload)
-    }
-
-    /// Validates power-law parameters.
-    pub fn validate(&self) -> Result<(), PowerLawNetworkError> {
-        if !self.k.is_finite() {
-            return Err(PowerLawNetworkError::InvalidStrength { k: self.k });
-        }
-        if !self.alpha.is_finite() {
-            return Err(PowerLawNetworkError::InvalidExponent { alpha: self.alpha });
-        }
-        if let Some((min, max)) = self.range {
-            if !min.is_finite() || !max.is_finite() || min < 0.0 || max < min {
-                return Err(PowerLawNetworkError::InvalidRange { min, max });
-            }
-        }
-        Ok(())
-    }
-}
+use crate::models::laws::{PowerLawDecay, PowerLawError, PowerLawRange};
 
 /// Errors returned by power-law network operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PowerLawNetworkError {
     /// Lower-level interaction storage error.
     Interaction(InteractionError),
-    /// Strength constant is not finite.
-    InvalidStrength {
-        /// Invalid strength value.
-        k: f64,
-    },
-    /// Power exponent is not finite.
-    InvalidExponent {
-        /// Invalid exponent value.
-        alpha: f64,
-    },
-    /// Active range is not finite, negative, or ordered incorrectly.
-    InvalidRange {
-        /// Lower active distance.
-        min: f64,
-        /// Upper active distance.
-        max: f64,
-    },
+    /// Lower-level power-law validation error.
+    Law(PowerLawError),
 }
 
 impl From<InteractionError> for PowerLawNetworkError {
     fn from(value: InteractionError) -> Self {
         Self::Interaction(value)
+    }
+}
+
+impl From<PowerLawError> for PowerLawNetworkError {
+    fn from(value: PowerLawError) -> Self {
+        Self::Law(value)
     }
 }
 

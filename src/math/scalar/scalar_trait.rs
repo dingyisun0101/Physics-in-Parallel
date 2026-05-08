@@ -63,6 +63,23 @@ pub enum ScalarCastError {
     },
 }
 
+impl core::fmt::Display for ScalarCastError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::RealPartOutOfRange { source, target } => write!(
+                f,
+                "real component of scalar type {source} cannot be represented as {target}"
+            ),
+            Self::ImagPartOutOfRange { source, target } => write!(
+                f,
+                "imaginary component of scalar type {source} cannot be represented as {target}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScalarCastError {}
+
 /**
     Compute-oriented scalar trait for real, and complex numeric types.
 

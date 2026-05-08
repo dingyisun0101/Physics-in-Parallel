@@ -73,7 +73,7 @@ impl fmt::Display for TensorError {
                     "{operation} requires rank {expected}, but tensor rank is {actual}"
                 )
             }
-            Self::ScalarCast(error) => write!(f, "tensor scalar cast failed: {error:?}"),
+            Self::ScalarCast(error) => write!(f, "tensor scalar cast failed: {error}"),
         }
     }
 }

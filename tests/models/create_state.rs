@@ -1,8 +1,9 @@
-use physics_in_parallel::models::particles::attrs::{is_alive, set_alive};
+use physics_in_parallel::models::particles::attrs::{is_alive, is_rigid, set_alive, set_rigid};
 use physics_in_parallel::models::particles::create_state::{
-    ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V, MassiveParticlesError, RandPosMethod,
-    RandVelMethod, create_template, randomize_r, randomize_v,
+    ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V, MassiveParticlesError, VelocitySamplingMethod,
+    create_template, randomize_r, randomize_v,
 };
+use physics_in_parallel::space::continuous::sampling::VectorSamplingMethod;
 
 #[test]
 fn create_template_shapes_and_defaults() {
@@ -12,7 +13,7 @@ fn create_template_shapes_and_defaults() {
     let v = obj.core.get::<f64>(ATTR_V).unwrap();
     let m = obj.core.get::<f64>(ATTR_M).unwrap();
     let m_inv = obj.core.get::<f64>(ATTR_M_INV).unwrap();
-    let rigid = obj.core.get::<f64>(ATTR_RIGID).unwrap();
+    let rigid = obj.core.get::<u8>(ATTR_RIGID).unwrap();
 
     assert_eq!(r.dim(), 3);
     assert_eq!(r.num_vectors(), 4);
@@ -27,12 +28,14 @@ fn create_template_shapes_and_defaults() {
         assert_eq!(m.get(i as isize, 0), 1.0);
         assert_eq!(m_inv.get(i as isize, 0), 1.0);
         assert!(is_alive(&obj, i).unwrap());
-        assert_eq!(rigid.get(i as isize, 0), 0.0);
+        assert!(!is_rigid(&obj, i).unwrap());
     }
 
     let mut obj = obj;
     set_alive(&mut obj, 2, false).unwrap();
     assert!(!is_alive(&obj, 2).unwrap());
+    set_rigid(&mut obj, 1, true).unwrap();
+    assert!(is_rigid(&obj, 1).unwrap());
 }
 
 #[test]
@@ -53,7 +56,7 @@ fn randomize_r_uniform_stays_inside_box() {
 
     randomize_r(
         &mut obj,
-        RandPosMethod::Uniform {
+        VectorSamplingMethod::UniformCentered {
             box_size: &[2.0, 4.0],
         },
     )
@@ -71,12 +74,16 @@ fn randomize_r_uniform_stays_inside_box() {
 fn randomize_r_rejects_invalid_position_parameters() {
     let mut obj = create_template(2, 4).unwrap();
 
-    let err = randomize_r(&mut obj, RandPosMethod::Uniform { box_size: &[1.0] }).unwrap_err();
+    let err = randomize_r(
+        &mut obj,
+        VectorSamplingMethod::UniformCentered { box_size: &[1.0] },
+    )
+    .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
 
     let err = randomize_r(
         &mut obj,
-        RandPosMethod::JitteredLattice {
+        VectorSamplingMethod::JitteredLattice {
             spacings: &[1.0, f64::NAN],
             sigmas: &[0.0, 0.0],
         },
@@ -91,7 +98,7 @@ fn randomize_v_invalid_and_mass_inv_validation() {
 
     let err = randomize_v(
         &mut obj,
-        RandVelMethod::Uniform {
+        VelocitySamplingMethod::Uniform {
             low: 1.0,
             high: 1.0,
         },
@@ -103,7 +110,11 @@ fn randomize_v_invalid_and_mass_inv_validation() {
         .set_vector_of::<f64>(ATTR_M_INV, 1, &[-1.0])
         .unwrap();
 
-    let err = randomize_v(&mut obj, RandVelMethod::MaxwellBoltzmann { tau: 1.0 }).unwrap_err();
+    let err = randomize_v(
+        &mut obj,
+        VelocitySamplingMethod::MaxwellBoltzmann { tau: 1.0 },
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         MassiveParticlesError::InvalidMassInv {
@@ -114,14 +125,14 @@ fn randomize_v_invalid_and_mass_inv_validation() {
 }
 
 #[test]
-fn randomize_v_drift_gaussian_validates_parameters() {
+fn randomize_v_gaussian_per_axis_validates_parameters() {
     let mut obj = create_template(2, 3).unwrap();
 
     let err = randomize_v(
         &mut obj,
-        RandVelMethod::DriftGaussian {
-            avg: &[0.0],
-            sigma: &[1.0, 1.0],
+        VelocitySamplingMethod::GaussianPerAxis {
+            mean: &[0.0],
+            std: &[1.0, 1.0],
         },
     )
     .unwrap_err();
@@ -129,9 +140,9 @@ fn randomize_v_drift_gaussian_validates_parameters() {
 
     let err = randomize_v(
         &mut obj,
-        RandVelMethod::DriftGaussian {
-            avg: &[0.0, 0.0],
-            sigma: &[1.0, -1.0],
+        VelocitySamplingMethod::GaussianPerAxis {
+            mean: &[0.0, 0.0],
+            std: &[1.0, -1.0],
         },
     )
     .unwrap_err();

@@ -1,15 +1,30 @@
 /*!
-Thermostat interfaces and implementations for massive-particle models.
+Thermostats for canonical massive-particle state.
+
+Purpose:
+Thermostats modify particle velocities so a simulated particle system exchanges
+energy with an implicit heat bath. This module is particle-specific: it mutates
+`ATTR_V`, reads `ATTR_M_INV`, honors `ATTR_ALIVE` through `ParticleSelection`,
+and always skips particles marked rigid by `ATTR_RIGID`.
+
+Langevin convention:
+`LangevinThermostat` applies the exact Ornstein-Uhlenbeck velocity update
+
+`v_next = exp(-gamma * dt) * v_old + sqrt(tau_target * m_inv * (1 - exp(-2 * gamma * dt))) * z`
+
+where `z` is a standard normal random value generated independently for each
+particle and velocity component. The random stream is deterministic for a fixed
+`seed`, `step_counter`, particle index, and component traversal order.
 */
 
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_distr::{Distribution, StandardNormal};
+use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{
-    ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ATTR_V, ParticleSelection, is_alive_value,
-};
+use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
+use crate::models::particles::state::{ParticleStateError, gather_inverse_mass, gather_masks};
 
 /// Errors returned by thermostat modules.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +56,35 @@ impl From<AttrsError> for ThermostatError {
     }
 }
 
-/// Generic thermostat contract.
+impl From<ParticleStateError> for ThermostatError {
+    fn from(value: ParticleStateError) -> Self {
+        match value {
+            ParticleStateError::Attrs(err) => Self::Attrs(err),
+            ParticleStateError::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            },
+            ParticleStateError::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            },
+        }
+    }
+}
+
+/// Generic thermostat contract for particle state.
 pub trait Thermostat {
+    /// Applies one thermostat step with time step `dt`.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), ThermostatError>;
 }
 
@@ -65,24 +107,20 @@ pub struct LangevinThermostat {
 }
 
 impl LangevinThermostat {
+    /// Constructs a Langevin thermostat.
+    ///
+    /// `tau_target` is the temperature-like energy scale used in the noise
+    /// amplitude. `gamma` is the friction rate. Both must be finite and
+    /// non-negative. `selection` controls whether dead particles are skipped;
+    /// rigid particles are always skipped.
     pub fn new(
         tau_target: f64,
         gamma: f64,
         seed: u64,
         selection: ParticleSelection,
     ) -> Result<Self, ThermostatError> {
-        if !tau_target.is_finite() || tau_target < 0.0 {
-            return Err(ThermostatError::InvalidParam {
-                field: "tau_target",
-                value: tau_target,
-            });
-        }
-        if !gamma.is_finite() || gamma < 0.0 {
-            return Err(ThermostatError::InvalidParam {
-                field: "gamma",
-                value: gamma,
-            });
-        }
+        validate_nonnegative("tau_target", tau_target)?;
+        validate_nonnegative("gamma", gamma)?;
 
         Ok(Self {
             tau_target,
@@ -104,142 +142,92 @@ impl LangevinThermostat {
     }
 
     #[inline]
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    #[inline]
     pub fn step_counter(&self) -> u64 {
         self.step_counter
+    }
+
+    #[inline]
+    pub fn selection(&self) -> ParticleSelection {
+        self.selection
     }
 }
 
 impl Thermostat for LangevinThermostat {
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), ThermostatError> {
-        if !dt.is_finite() || dt <= 0.0 {
-            return Err(ThermostatError::InvalidDt { dt });
-        }
+        validate_dt(dt)?;
 
         let (dim, n) = {
             let v = objects.core.get::<f64>(ATTR_V)?;
             (v.dim(), v.num_vectors())
         };
 
-        let m_inv_values: Vec<f64> = {
-            let m_inv = objects.core.get::<f64>(ATTR_M_INV)?;
-            if m_inv.dim() != 1 {
-                return Err(ThermostatError::InvalidAttrShape {
-                    label: ATTR_M_INV,
-                    expected_dim: 1,
-                    got_dim: m_inv.dim(),
-                });
-            }
-            if m_inv.num_vectors() != n {
-                return Err(ThermostatError::InconsistentParticleCount {
-                    label: ATTR_M_INV,
-                    expected: n,
-                    got: m_inv.num_vectors(),
-                });
-            }
-
-            let mut out = Vec::with_capacity(n);
-            for i in 0..n {
-                out.push(m_inv.get(i as isize, 0));
-            }
-            out
-        };
-
-        let alive_flags: Option<Vec<bool>> =
-            if self.selection.includes_dead() || !objects.core.contains(ATTR_ALIVE) {
-                None
-            } else {
-                let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
-                if alive.dim() != 1 {
-                    return Err(ThermostatError::InvalidAttrShape {
-                        label: ATTR_ALIVE,
-                        expected_dim: 1,
-                        got_dim: alive.dim(),
-                    });
-                }
-                if alive.num_vectors() != n {
-                    return Err(ThermostatError::InconsistentParticleCount {
-                        label: ATTR_ALIVE,
-                        expected: n,
-                        got: alive.num_vectors(),
-                    });
-                }
-
-                let mut flags = Vec::with_capacity(n);
-                for i in 0..n {
-                    flags.push(is_alive_value(alive.get(i as isize, 0)));
-                }
-                Some(flags)
-            };
-
-        let rigid_flags: Option<Vec<bool>> = if !objects.core.contains(ATTR_RIGID) {
-            None
-        } else {
-            let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
-            if rigid.dim() != 1 {
-                return Err(ThermostatError::InvalidAttrShape {
-                    label: ATTR_RIGID,
-                    expected_dim: 1,
-                    got_dim: rigid.dim(),
-                });
-            }
-            if rigid.num_vectors() != n {
-                return Err(ThermostatError::InconsistentParticleCount {
-                    label: ATTR_RIGID,
-                    expected: n,
-                    got: rigid.num_vectors(),
-                });
-            }
-
-            let mut flags = Vec::with_capacity(n);
-            for i in 0..n {
-                flags.push(rigid.get(i as isize, 0) > 0.0);
-            }
-            Some(flags)
-        };
+        let m_inv_values = gather_inverse_mass(objects, n)?;
+        let masks = gather_masks(objects, n, self.selection)?;
 
         let c = (-self.gamma * dt).exp();
         let one_minus_c2 = (1.0 - c * c).max(0.0);
+        let step = self.step_counter;
+        let seed = self.seed;
+        let tau_target = self.tau_target;
 
         let v = objects.core.get_mut::<f64>(ATTR_V)?;
-        for i in 0..n {
-            if let Some(flags) = &alive_flags {
-                if !flags[i] {
-                    continue;
+        v.as_tensor_mut()
+            .data
+            .par_chunks_mut(dim)
+            .enumerate()
+            .try_for_each(|(i, row)| -> Result<(), ThermostatError> {
+                if masks.should_skip(i) {
+                    return Ok(());
                 }
-            }
-            if let Some(flags) = &rigid_flags {
-                if flags[i] {
-                    continue;
+
+                let m_inv = m_inv_values[i];
+                if !m_inv.is_finite() || m_inv <= 0.0 {
+                    return Err(ThermostatError::InvalidParam {
+                        field: ATTR_M_INV,
+                        value: m_inv,
+                    });
                 }
-            }
 
-            let m_inv = m_inv_values[i];
-            if !m_inv.is_finite() || m_inv <= 0.0 {
-                return Err(ThermostatError::InvalidParam {
-                    field: "m_inv",
-                    value: m_inv,
-                });
-            }
+                let sigma = (tau_target * m_inv * one_minus_c2).sqrt();
+                if !sigma.is_finite() {
+                    return Err(ThermostatError::InvalidParam {
+                        field: "sigma",
+                        value: sigma,
+                    });
+                }
 
-            let sigma = (self.tau_target * m_inv * one_minus_c2).sqrt();
-            if !sigma.is_finite() {
-                return Err(ThermostatError::InvalidParam {
-                    field: "sigma",
-                    value: sigma,
-                });
-            }
+                let row_seed = splitmix64(seed ^ step ^ ((i as u64) << 1));
+                let mut rng = SmallRng::seed_from_u64(row_seed);
+                for vd in row.iter_mut() {
+                    let z: f64 = StandardNormal.sample(&mut rng);
+                    *vd = c * *vd + sigma * z;
+                }
 
-            let seed = splitmix64(self.seed ^ self.step_counter ^ ((i as u64) << 1));
-            let mut rng = SmallRng::seed_from_u64(seed);
-            let row = v.get_vector_mut(i as isize);
-
-            for vd in row.iter_mut().take(dim) {
-                let z: f64 = StandardNormal.sample(&mut rng);
-                *vd = c * *vd + sigma * z;
-            }
-        }
+                Ok(())
+            })?;
 
         self.step_counter = self.step_counter.wrapping_add(1);
         Ok(())
     }
+}
+
+#[inline]
+fn validate_nonnegative(field: &'static str, value: f64) -> Result<(), ThermostatError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(ThermostatError::InvalidParam { field, value });
+    }
+    Ok(())
+}
+
+#[inline]
+fn validate_dt(dt: f64) -> Result<(), ThermostatError> {
+    if !dt.is_finite() || dt <= 0.0 {
+        return Err(ThermostatError::InvalidDt { dt });
+    }
+    Ok(())
 }

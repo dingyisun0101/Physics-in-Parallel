@@ -2,9 +2,10 @@
 Pairwise Hooke-law spring interactions for massive-particle models.
 
 Purpose:
-`SpringNetwork` stores an unordered set of particle pairs, with one `Spring`
-payload on each pair. It can then add Hooke-law acceleration contributions into
-the canonical particle acceleration attribute `ATTR_A`.
+`SpringNetwork` stores an unordered set of particle pairs, with one reusable
+`models::laws::Spring` payload on each pair. It can then add Hooke-law
+acceleration contributions into the canonical particle acceleration attribute
+`ATTR_A`.
 
 Design:
 The network owns only interaction topology and spring parameters. Particle
@@ -17,48 +18,9 @@ on top of it.
 use crate::engines::soa::interaction::InteractionOrder;
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::engines::soa::{Interaction, InteractionError, InteractionId};
-use crate::models::particles::attrs::{
-    ATTR_A, ATTR_ALIVE, ATTR_M_INV, ATTR_R, ATTR_RIGID, ParticleSelection, is_alive_value,
-};
-
-/// Optional distance window `(min, max)` where this spring is active.
-pub type SpringCutoff = (f64, f64);
-
-/// Per-edge spring payload.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Spring {
-    /// Spring constant.
-    pub k: f64,
-    /// Unstretched length.
-    pub l_0: f64,
-    /// Optional pair-distance cutoff `(min, max)`.
-    pub cutoff: Option<SpringCutoff>,
-}
-
-impl Spring {
-    /// Builds a validated spring payload.
-    pub fn new(k: f64, l_0: f64, cutoff: Option<SpringCutoff>) -> Result<Self, SpringNetworkError> {
-        let spring = Self { k, l_0, cutoff };
-        spring.validate()?;
-        Ok(spring)
-    }
-
-    /// Validates physical spring parameters.
-    pub fn validate(&self) -> Result<(), SpringNetworkError> {
-        if !self.k.is_finite() {
-            return Err(SpringNetworkError::InvalidSpringConstant { k: self.k });
-        }
-        if !self.l_0.is_finite() || self.l_0 < 0.0 {
-            return Err(SpringNetworkError::InvalidRestLength { l_0: self.l_0 });
-        }
-        if let Some((min, max)) = self.cutoff {
-            if !min.is_finite() || !max.is_finite() || min < 0.0 || max < min {
-                return Err(SpringNetworkError::InvalidCutoff { min, max });
-            }
-        }
-        Ok(())
-    }
-}
+use crate::models::laws::{Spring, SpringCutoff, SpringLawError};
+use crate::models::particles::attrs::{ATTR_A, ATTR_R, ParticleSelection};
+use crate::models::particles::state::{ParticleStateError, gather_inverse_mass, gather_masks};
 
 /// Errors returned by spring-network operations.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,23 +29,8 @@ pub enum SpringNetworkError {
     Attrs(AttrsError),
     /// Lower-level interaction storage error.
     Interaction(InteractionError),
-    /// Spring constant is not finite.
-    InvalidSpringConstant {
-        /// Invalid spring constant.
-        k: f64,
-    },
-    /// Rest length is not finite or is negative.
-    InvalidRestLength {
-        /// Invalid rest length.
-        l_0: f64,
-    },
-    /// Cutoff bounds are not finite, negative, or ordered incorrectly.
-    InvalidCutoff {
-        /// Lower active distance.
-        min: f64,
-        /// Upper active distance.
-        max: f64,
-    },
+    /// Lower-level spring law validation error.
+    Law(SpringLawError),
     /// Required particle attribute has the wrong vector dimension.
     InvalidAttrShape {
         /// Attribute label that failed validation.
@@ -127,6 +74,38 @@ impl From<InteractionError> for SpringNetworkError {
 impl From<AttrsError> for SpringNetworkError {
     fn from(value: AttrsError) -> Self {
         Self::Attrs(value)
+    }
+}
+
+impl From<SpringLawError> for SpringNetworkError {
+    fn from(value: SpringLawError) -> Self {
+        Self::Law(value)
+    }
+}
+
+impl From<ParticleStateError> for SpringNetworkError {
+    fn from(value: ParticleStateError) -> Self {
+        match value {
+            ParticleStateError::Attrs(err) => Self::Attrs(err),
+            ParticleStateError::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            },
+            ParticleStateError::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            },
+        }
     }
 }
 
@@ -260,21 +239,11 @@ impl SpringNetwork {
         objects: &mut PhysObj,
         selection: ParticleSelection,
     ) -> Result<(), SpringNetworkError> {
-        let (dim, n, r_data, m_inv_data, alive_flags, rigid_flags) = {
+        let (dim, n, r_data, m_inv_data, masks) = {
             let r = objects.core.get::<f64>(ATTR_R)?;
-            let m_inv = objects.core.get::<f64>(ATTR_M_INV)?;
 
             if r.dim() == 0 || r.num_vectors() == 0 {
                 return Ok(());
-            }
-            if m_inv.dim() != 1 || m_inv.num_vectors() != r.num_vectors() {
-                return Err(invalid_attr_or_count(
-                    ATTR_M_INV,
-                    1,
-                    m_inv.dim(),
-                    r.num_vectors(),
-                    m_inv.num_vectors(),
-                ));
             }
 
             let dim = r.dim();
@@ -287,9 +256,8 @@ impl SpringNetwork {
                 }
             }
 
-            let mut m_inv_data = vec![0.0f64; n];
+            let m_inv_data = gather_inverse_mass(objects, n)?;
             for i in 0..n {
-                m_inv_data[i] = m_inv.get(i as isize, 0);
                 if !m_inv_data[i].is_finite() || m_inv_data[i] < 0.0 {
                     return Err(SpringNetworkError::InvalidInverseMass {
                         index: i,
@@ -298,31 +266,9 @@ impl SpringNetwork {
                 }
             }
 
-            let alive_flags = if !selection.includes_dead() && objects.core.contains(ATTR_ALIVE) {
-                let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
-                validate_scalar_mask(ATTR_ALIVE, alive.dim(), alive.num_vectors(), n)?;
-                Some(
-                    (0..n)
-                        .map(|i| is_alive_value(alive.get(i as isize, 0)))
-                        .collect::<Vec<bool>>(),
-                )
-            } else {
-                None
-            };
+            let masks = gather_masks(objects, n, selection)?;
 
-            let rigid_flags = if objects.core.contains(ATTR_RIGID) {
-                let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
-                validate_scalar_mask(ATTR_RIGID, rigid.dim(), rigid.num_vectors(), n)?;
-                Some(
-                    (0..n)
-                        .map(|i| rigid.get(i as isize, 0) > 0.0)
-                        .collect::<Vec<bool>>(),
-                )
-            } else {
-                None
-            };
-
-            (dim, n, r_data, m_inv_data, alive_flags, rigid_flags)
+            (dim, n, r_data, m_inv_data, masks)
         };
 
         let mut accum = vec![0.0f64; n * dim];
@@ -343,10 +289,8 @@ impl SpringNetwork {
                 continue;
             }
 
-            if let Some(alive) = &alive_flags {
-                if !alive[i] || !alive[j] {
-                    continue;
-                }
+            if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
+                continue;
             }
 
             for k in 0..dim {
@@ -365,8 +309,8 @@ impl SpringNetwork {
             }
 
             let f_mag = -spring.k * (norm - spring.l_0);
-            let i_rigid = rigid_flags.as_ref().is_some_and(|flags| flags[i]);
-            let j_rigid = rigid_flags.as_ref().is_some_and(|flags| flags[j]);
+            let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
+            let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
 
             for k in 0..dim {
                 let force = f_mag * (dr[k] / norm);
@@ -407,29 +351,6 @@ impl SpringNetwork {
                 .expect("growing spring interaction object bound should not invalidate entries");
         }
     }
-}
-
-fn validate_scalar_mask(
-    label: &'static str,
-    got_dim: usize,
-    got_n: usize,
-    expected_n: usize,
-) -> Result<(), SpringNetworkError> {
-    if got_dim != 1 {
-        return Err(SpringNetworkError::InvalidAttrShape {
-            label,
-            expected_dim: 1,
-            got_dim,
-        });
-    }
-    if got_n != expected_n {
-        return Err(SpringNetworkError::InconsistentParticleCount {
-            label,
-            expected: expected_n,
-            got: got_n,
-        });
-    }
-    Ok(())
 }
 
 fn invalid_attr_or_count(

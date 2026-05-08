@@ -24,7 +24,7 @@ use serde_json::Value;
 use crate::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense::Tensor};
 
 use super::VectorList;
-use crate::math::ndarray_convert::NdarrayConvert;
+use crate::math::io::ndarray::NdarrayConvert;
 
 // ============================================================================
 // ------------------------------- Common Trait -------------------------------

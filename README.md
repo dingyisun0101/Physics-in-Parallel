@@ -1,85 +1,54 @@
 # Physics in Parallel
 
-Physics in Parallel is a Rust crate for numerical and physics simulation infrastructure.
+Physics in Parallel is a Rust crate for building physics-oriented numerical simulations from reusable layers. The design goal is to let domain users work with familiar concepts such as scalars, tensors, spaces, particles, boundaries, laws, and interactions while hiding backend memory layout and parallel traversal details.
 
-The crate is organized as layered modules:
+The crate is organized from lower-level infrastructure to higher-level model code:
 
 ```text
 math -> space -> engines -> models
 ```
 
-Current documentation focus:
+- `math` defines scalar algebra, rank-N tensors, matrices, vector batches, random fillers, and math IO.
+- `space` defines continuous-space utilities and discrete square-lattice spaces.
+- `engines` defines model-agnostic runtime storage, reducers, interaction topology, and neighbor-list infrastructure.
+- `models` defines validated physical laws and canonical massive-particle model pieces.
 
-- `math`: scalar, tensor, matrix, vector-list, random generation, and math IO.
-- `space`: square-lattice spaces, coordinate-pair generation, square-lattice kernels, and space IO.
-- `engines`: structure-of-arrays object storage, interaction topology, and neighbor-list infrastructure.
-
-The easiest import for common usage is:
+Common import:
 
 ```rust
 use physics_in_parallel::prelude::*;
 ```
 
-For narrower imports:
+Narrower imports are also available:
 
 ```rust
 use physics_in_parallel::math::prelude::*;
 use physics_in_parallel::space::prelude::*;
+use physics_in_parallel::engines::prelude::*;
+use physics_in_parallel::models::prelude::*;
 ```
 
-## Module Layout
+## Design Rules
 
-The refactored core modules use folder-based Rust module layout:
+Core consistency rules used across the crate:
 
-```text
-src/math/
-    mod.rs
-    scalar/
-    tensor/
-    io/
-
-src/space/
-    mod.rs
-    discrete/
-        square_lattice/
-            representation.rs
-            displacement.rs
-            kernel.rs
-    io/
-
-src/engines/
-    mod.rs
-    soa/
-        mod.rs
-        phys_obj.rs
-        interaction.rs
-        neighbor_list.rs
-```
+- Lower modules should be reused by higher modules. For example, particle boundaries call `space::continuous` boundary logic, particle randomization calls `space::continuous::sampling`, and particle interactions use `engines::soa::Interaction`.
+- Public APIs should expose physical or mathematical concepts, not backend layout. Internal storage helpers are kept behind `pub(crate)` where possible.
+- Type-preserving math operations keep the same scalar type and backend when the operation is mathematically backend-preserving.
+- Explicit conversion APIs have explicit names such as `try_cast_to`, `cast_to`, `to_dense`, `to_sparse`, and `to_ndarray`.
+- Boolean particle masks use compact numeric storage internally, while users normally call bool-facing helpers such as `set_alive`, `is_alive`, `set_rigid`, and `is_rigid`.
 
 ## Math
 
 Purpose:
 
-`math` provides the numeric foundation used by the rest of the crate. It defines scalar behavior, generic rank-N tensors, matrix abstractions, vector-list batches, random fillers, and IO conversion utilities.
-
-Common import:
-
-```rust
-use physics_in_parallel::math::prelude::*;
-```
+`math` is the numeric foundation. It provides scalar traits, generic rank-N tensors, rank-2 matrix wrappers, vector-list batches, random fillers, and IO conversion traits.
 
 ### Scalar
 
 Purpose:
 
-`Scalar` gives integers, real floats, and complex values one common mathematical interface. It separates type-preserving operations from operations that explicitly change type or project values.
-
-Core structs and traits:
-
-- `Scalar`: common scalar math trait.
-- `ScalarSerde`: scalar values that can also be serialized/deserialized.
-- `ScalarCastError`: error type for failed explicit scalar casts.
-- `Complex`: re-export of `num_complex::Complex`.
+`Scalar` gives integers, real floats, and complex values one common number-like interface. It separates operations that preserve the scalar type from projection/construction/casting operations that intentionally cross type boundaries.
 
 Core API:
 
@@ -103,39 +72,28 @@ T::try_cast_to::<U>()
 T::cast_to::<U>()
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::math::prelude::*;
-
-let x = 3.0_f64;
-let y = x.sqrt();
-let z: i64 = x.cast_to();
-let c = Complex::new(1.0, 2.0);
-let r = c.norm_sqr_real();
-```
+- `Scalar`
+- `ScalarSerde`
+- `ScalarCastError`
+- `Complex`
 
 ### Rank-N Tensor
 
 Purpose:
 
-`Tensor<T, Backend>` is the general tensor API. It hides dense/sparse storage details behind a consistent user-facing type while still preserving backend type where operations are type-preserving.
-
-Core structs and traits:
-
-- `Tensor<T, DenseBackend>`: dense rank-N tensor.
-- `Tensor<T, SparseBackend>`: sparse rank-N tensor.
-- `TensorTrait`: shared tensor behavior.
-- `Backend`, `DenseBackend`, `SparseBackend`: backend markers.
-- `TensorResult`, `TensorError`: tensor error types.
+`Tensor<T, Backend>` is the general tensor facade. It lets users address tensors by shape and coordinate while dense/sparse storage and parallel element traversal stay behind the API.
 
 Core creation API:
 
 ```rust
 Tensor::<T, DenseBackend>::empty(shape)
+Tensor::<T, DenseBackend>::zeros(shape)
 Tensor::<T, DenseBackend>::from_vec(shape, data)
+Tensor::<T, DenseBackend>::from_fn(shape, f)
 Tensor::<T, SparseBackend>::empty(shape)
-Tensor::<T, SparseBackend>::from_vec(shape, data)
+Tensor::<T, SparseBackend>::from_triplets(shape, triplets)
 ```
 
 Core access API:
@@ -166,47 +124,35 @@ tensor.transpose()
 tensor.hermitian_transpose()
 ```
 
-Conversion and explicit-type API:
+Explicit conversion and linear algebra API:
 
 ```rust
 tensor.try_cast_to::<U>()
 tensor.cast_to::<U>()
 tensor.to_dense()
 tensor.to_sparse()
-```
-
-Linear algebra API:
-
-```rust
 tensor.dot(&rhs)
+tensor.hermitian_dot(&rhs)
 tensor.matmul(&rhs)
 tensor.cross(&rhs)
 tensor.wedge(&rhs)
 tensor.norm_sqr()
+tensor.norm_sqr_real()
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::math::prelude::*;
-
-let a = Tensor::<f64, DenseBackend>::from_vec(&[2, 2], vec![1.0, 2.0, 3.0, 4.0]);
-let b = a.scalar_mul(2.0);
-let c = a.matmul(&b);
-```
+- `Tensor<T, DenseBackend>`
+- `Tensor<T, SparseBackend>`
+- `TensorTrait`
+- `TensorError`
+- `TensorResult`
 
 ### Tensor Random Fillers
 
 Purpose:
 
-`TensorRandFiller` fills dense tensor storage in parallel. It is reused by tensor tests, vector-list random generators, and space coordinate generation.
-
-Core structs and enums:
-
-- `TensorRandFiller`
-- `RandType`
-- `RngKind`
-- `TensorRandError`
+`TensorRandFiller` fills dense tensor storage in parallel. It is the shared random infrastructure used directly by tensors and indirectly by vector-list random generators and continuous-space sampling.
 
 Core API:
 
@@ -218,47 +164,18 @@ filler.try_refresh(tensor)
 filler.rng_kind()
 ```
 
-Random distribution API:
+Core types:
 
-```rust
-RandType::Uniform { low, high }
-RandType::UniformInt { low, high }
-RandType::Normal { mean, std }
-RandType::Bernoulli { p }
-```
-
-Usage:
-
-```rust
-use physics_in_parallel::math::prelude::*;
-
-let mut tensor = dense::Tensor::<f64>::empty(&[1_000, 3]);
-let mut filler = TensorRandFiller::new(
-    RandType::Normal { mean: 0.0, std: 1.0 },
-    Some(4),
-);
-filler.refresh(&mut tensor);
-```
+- `TensorRandFiller`
+- `RandType`
+- `RngKind`
+- `TensorRandError`
 
 ### Matrix
 
 Purpose:
 
-`Matrix<T, Backend>` is a rank-2 wrapper that gives matrix-specific access and operations while reusing rank-N tensor infrastructure internally.
-
-Core structs and traits:
-
-- `Matrix<T, Backend>`
-- `MatrixBackend`
-- `DenseMatrix<T>`
-- `SparseMatrix<T>`
-- `DiagonalMatrix<T>`
-- `SymmetricMatrix<T>`
-- `AntiSymmetricMatrix<T>`
-- `UpperTriangularMatrix<T>`
-- `LowerTriangularMatrix<T>`
-- `StrictUpperTriangularMatrix<T>`
-- `StrictLowerTriangularMatrix<T>`
+`Matrix<T, Backend>` is a rank-2 wrapper over rank-N tensor infrastructure. Dense and sparse matrices use rank-N tensor backends; structured matrices such as diagonal, symmetric, antisymmetric, and triangular matrices store only the independent entries and infer the rest.
 
 Core creation API:
 
@@ -272,75 +189,62 @@ SymmetricMatrix::<T>::empty(n, n)
 AntiSymmetricMatrix::<T>::empty(n, n)
 UpperTriangularMatrix::<T>::empty(n, n)
 LowerTriangularMatrix::<T>::empty(n, n)
+StrictUpperTriangularMatrix::<T>::empty(n, n)
+StrictLowerTriangularMatrix::<T>::empty(n, n)
 ```
 
-Core access API:
+Core API:
 
 ```rust
 matrix.shape()
 matrix.rows()
 matrix.cols()
+matrix.size()
 matrix.get(i, j)
 matrix.set(i, j, value)
 matrix.fill(value)
 matrix.print()
-```
-
-Matrix operations:
-
-```rust
 matrix.add(&rhs)
 matrix.sub(&rhs)
 matrix.elem_mul(&rhs)
 matrix.elem_div(&rhs)
-&matrix + &rhs
-&matrix - &rhs
+matrix.scalar_mul(scalar)
 matrix.transpose()
 matrix.hermitian_transpose()
 matrix.trace()
 matrix.matmul(&rhs)
-matrix.scalar_mul(scalar)
 matrix.try_cast_to::<U>()
 matrix.cast_to::<U>()
 matrix.to_dense()
+matrix.to_sparse()
 matrix.to_dense_matrix()
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::math::prelude::*;
-
-let a = DenseMatrix::<f64>::from_vec(2, 2, vec![1.0, 2.0, 3.0, 4.0]);
-let b = a.transpose();
-let c = a.matmul(&b);
-```
+- `DenseMatrix<T>`
+- `SparseMatrix<T>`
+- `DiagonalMatrix<T>`
+- `SymmetricMatrix<T>`
+- `AntiSymmetricMatrix<T>`
+- `UpperTriangularMatrix<T>`
+- `LowerTriangularMatrix<T>`
+- `StrictUpperTriangularMatrix<T>`
+- `StrictLowerTriangularMatrix<T>`
 
 ### VectorList
 
 Purpose:
 
-`VectorList<T>` stores many fixed-length vectors as a dense rank-N tensor with logical shape `[num_vectors, dim]`. Users work with whole vectors as the natural unit.
+`VectorList<T>` stores many fixed-length vectors as dense rank-N storage with logical shape `[num_vectors, dim]`. It is used when the natural unit of manipulation is a vector row, not an individual scalar.
 
-Core structs and traits:
-
-- `VectorList<T>`
-- `VectorListRand`
-- `HaarVectors`
-- `NNVectors`
-
-Core creation API:
+Core API:
 
 ```rust
 VectorList::<T>::empty(dim, num_vectors)
 VectorList::<T>::zeros(dim, num_vectors)
 VectorList::<T>::from_vec(dim, num_vectors, data)
 VectorList::<T>::from_fn(dim, num_vectors, f)
-```
-
-Core access API:
-
-```rust
 vectors.dim()
 vectors.num_vectors()
 vectors.shape()
@@ -348,27 +252,16 @@ vectors.get(i, axis)
 vectors.set(i, axis, value)
 vectors.get_vec(i)
 vectors.get_vec_mut(i)
+vectors.get_vec_owned(i)
 vectors.set_vec(i, values)
 vectors.axis(axis)
-vectors.print()
-```
-
-Vector operations:
-
-```rust
 vectors.fill(value)
+vectors.print()
 vectors.par_for_each_vec(...)
 vectors.par_for_each_vec_mut(...)
 vectors.scale_vectors_by_list(scales)
 vectors.normalize()
 vectors.norms_real()
-vectors.add(&rhs)
-vectors.sub(&rhs)
-vectors.elem_mul(&rhs)
-vectors.elem_div(&rhs)
-&vectors + &rhs
-&vectors - &rhs
-vectors.scalar_mul(scalar)
 vectors.try_cast_to::<U>()
 vectors.cast_to::<U>()
 ```
@@ -378,73 +271,102 @@ Random vector batches:
 ```rust
 HaarVectors::new(dim, num_vectors, num_rngs)
 haar.refresh()
-
 NNVectors::new(dim, num_vectors, num_rngs)
 nn.refresh()
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::math::prelude::*;
-
-let mut vectors = VectorList::<f64>::empty(3, 2);
-vectors.set_vec(0, &[1.0, 0.0, 0.0]);
-vectors.set_vec(1, &[0.0, 1.0, 0.0]);
-
-let mut haar = HaarVectors::new(3, 10_000, Some(4));
-haar.refresh();
-```
+- `VectorList<T>`
+- `VectorListRand`
+- `HaarVectors`
+- `NNVectors`
 
 ### Math IO
 
 Purpose:
 
-`math::io` provides conversion and serialization support for tensors, matrices, and vector lists.
+`math::io` handles external-format interop for math containers. JSON payloads use compact shape/data schemas, while ndarray conversions preserve logical shape and row-major element order.
 
-Core APIs:
+Core API:
 
 ```rust
 serde_json::to_string_pretty(&value)
 serde_json::from_str::<T>(json)
 value.to_ndarray()
 T::from_ndarray(&array)
+value.to_tensor_string()
+T::from_tensor_string(input)
 ```
 
-Flat JSON schema:
+Core types:
 
-```json
-{
-  "kind": "...",
-  "shape": [2, 3],
-  "data": [1, 2, 3, 4, 5, 6]
-}
-```
-
-Common math payload kinds:
-
-- `tensor`
-- `tensor_sparse`
-- `matrix`
-- `vector_list`
+- `NdarrayConvert`
+- `ToJsonPayload`
+- `FromJsonPayload`
+- `FlatPayload<T>`
+- `TensorStringConvert`
 
 ## Space
 
 Purpose:
 
-`space` adds physical coordinate semantics on top of math data structures. The ready user-facing space implementation is the square lattice.
+`space` adds physical coordinate semantics on top of math data structures. It contains continuous-space tools and discrete square-lattice spaces.
 
-Common import:
+### Continuous Boundary
+
+Purpose:
+
+Continuous boundaries define how real-valued coordinate vectors are returned to an axis-aligned domain. The pure boundary code is independent of particles and can operate on one vector or a flat list of vectors.
+
+Core API:
 
 ```rust
-use physics_in_parallel::space::prelude::*;
+PeriodicBox::new(min, max)
+ClampBox::new(min, max)
+ReflectBox::new(min, max)
+boundary.dim()
+boundary.min()
+boundary.max()
+boundary.apply_position(r)
+boundary.apply_position_velocity(r, v)
+boundary.apply_positions(flat_positions)
+boundary.apply_positions_velocities(flat_positions, flat_velocities)
 ```
+
+Core types:
+
+- `ContinuousBoundary`
+- `PeriodicBox`
+- `ClampBox`
+- `ReflectBox`
+- `BoundaryError`
+
+### Continuous Sampling
+
+Purpose:
+
+Continuous sampling fills `VectorList<f64>` values with common coordinate or velocity initialization patterns. Particle state construction delegates to this module for generic continuous-vector randomization.
+
+Core API:
+
+```rust
+sample_vectors(vectors, VectorSamplingMethod::Uniform { low, high })
+sample_vectors(vectors, VectorSamplingMethod::UniformCentered { box_size })
+sample_vectors(vectors, VectorSamplingMethod::GaussianPerAxis { mean, std })
+sample_vectors(vectors, VectorSamplingMethod::JitteredLattice { spacings, sigmas })
+```
+
+Core types:
+
+- `VectorSamplingMethod`
+- `VectorSamplingError`
 
 ### Space Trait
 
 Purpose:
 
-`Space<T>` gives simulation code one common interface for reading, mutating, filling, and saving spatial containers.
+`Space<T>` gives higher-level code a common interface for spatial containers without exposing each container's storage or boundary implementation.
 
 Core API:
 
@@ -459,30 +381,13 @@ space.set_all(value)
 space.save(path, target_side_length)
 ```
 
-For `SquareLattice`, coordinates are signed. Raw coordinates outside the shape are interpreted by the lattice boundary condition.
-
 ### SquareLattice
 
 Purpose:
 
-`SquareLattice<T>` represents a square, cubic, or hypercubic lattice over a tensor-style shape such as `[128]`, `[64, 64]`, or `[32, 64, 16]`.
+`SquareLattice<T>` represents square, cubic, or hypercubic lattice sites over a tensor-style shape such as `[128]`, `[64, 64]`, or `[32, 64, 16]`.
 
-Core structs and enums:
-
-- `SquareLattice<T>`
-- `SquareLatticeConfig`
-- `SquareLatticeInitMethod<T>`
-- `BoundaryCondition`
-- `VacancyValue`
-
-Boundary conditions:
-
-```rust
-BoundaryCondition::Periodic
-BoundaryCondition::Reflective
-```
-
-Config API:
+Core API:
 
 ```rust
 SquareLatticeConfig::new(shape, boundary)
@@ -492,20 +397,6 @@ cfg.shape()
 cfg.rank()
 cfg.num_sites()
 cfg.tensor_shape()
-```
-
-Initialization API:
-
-```rust
-SquareLatticeInitMethod::Empty
-SquareLatticeInitMethod::Uniform { val }
-SquareLatticeInitMethod::RandomUniformChoices { choices }
-SquareLatticeInitMethod::SeededCenter { val }
-```
-
-Lattice API:
-
-```rust
 SquareLattice::<T>::new(cfg, init_method)
 SquareLattice::<T>::vacancy()
 lattice.data()
@@ -516,53 +407,19 @@ lattice.downsample(target_shape)
 lattice.rescale(target_shape)
 ```
 
-Space API on square lattices:
+Core types:
 
-```rust
-lattice.get(coord)
-lattice.get_mut(coord)
-lattice.set(coord, value)
-lattice.set_all(value)
-lattice.dims()
-lattice.linear_size()
-```
+- `SquareLattice<T>`
+- `SquareLatticeConfig`
+- `SquareLatticeInitMethod<T>`
+- `BoundaryCondition`
+- `VacancyValue`
 
-Usage:
-
-```rust
-use physics_in_parallel::space::prelude::*;
-
-let cfg = SquareLatticeConfig::new(&[64, 64], BoundaryCondition::Periodic);
-let mut lattice = SquareLattice::<usize>::new(
-    cfg,
-    SquareLatticeInitMethod::Uniform { val: 1 },
-);
-
-lattice.set(&[-1, 0], 7);
-assert_eq!(*lattice.get(&[63, 0]), 7);
-```
-
-### Square-Lattice Kernels
+### Square-Lattice Kernels And Pair Generation
 
 Purpose:
 
-Square-lattice kernels describe how random displacements are sampled for lattice pair generation.
-
-Core structs and enums:
-
-- `KernelType`
-- `Kernel`
-- `PowerLawKernel`
-- `UniformKernel`
-- `NearestNeighborKernel`
-
-Kernel types:
-
-```rust
-KernelType::NearestNeighbor { d }
-KernelType::Uniform { c, l }
-KernelType::PowerLaw { c, l, mu }
-```
+Kernels define random displacement rules for square-lattice workflows. `RandPairGenerator` creates source coordinates, raw displacements, and raw targets. Boundary interpretation is intentionally left to `SquareLattice` access methods.
 
 Core API:
 
@@ -570,59 +427,11 @@ Core API:
 create_kernel(kernel_type)
 kernel.sample(n)
 kernel.kind()
-```
-
-Usage:
-
-```rust
-use physics_in_parallel::space::prelude::*;
-
-let kernel = create_kernel(KernelType::PowerLaw {
-    c: 1.0,
-    l: 20.0,
-    mu: 2.0,
-});
-let lengths = kernel.sample(1_000);
-```
-
-### RandPairGenerator
-
-Purpose:
-
-`RandPairGenerator` creates batches of source coordinates, displacement vectors, and raw target coordinates for square-lattice workflows.
-
-Important responsibility split:
-
-- Sources are generated inside the provided shape.
-- Displacements are raw move vectors.
-- Targets are raw `source + displacement`.
-- Boundary interpretation is done later by `SquareLattice::get`, `set`, or `get_mut`.
-
-Core structs and enums:
-
-- `RandPairGenerator`
-- `SourceMode`
-
-Source modes:
-
-```rust
-SourceMode::Origin
-SourceMode::RandomUniform
-SourceMode::CustomFiller(filler)
-```
-
-Core API:
-
-```rust
 RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, num_rngs)
 gen.refresh()
 gen.refresh_sources()
 gen.refresh_displacements()
 gen.refresh_targets()
-gen.shape()
-gen.rank()
-gen.num_pairs()
-gen.kernel_type()
 gen.sources()
 gen.displacements()
 gen.targets()
@@ -631,30 +440,21 @@ gen.displacement(i)
 gen.target(i)
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::space::prelude::*;
-
-let mut generator = RandPairGenerator::new(
-    &[64, 64],
-    KernelType::NearestNeighbor { d: 2 },
-    10_000,
-    SourceMode::RandomUniform,
-    Some(4),
-);
-
-generator.refresh();
-
-let source = generator.source(0);
-let target = generator.target(0);
-```
+- `Kernel`
+- `KernelType`
+- `NearestNeighborKernel`
+- `UniformKernel`
+- `PowerLawKernel`
+- `RandPairGenerator`
+- `SourceMode`
 
 ### Space IO
 
 Purpose:
 
-`space::io` contains IO behavior for space types. Current ready IO support is for square lattices.
+`space::io` contains IO behavior for space types. Current ready support is square-lattice JSON and ndarray conversion.
 
 Core API:
 
@@ -667,279 +467,326 @@ lattice.to_ndarray()
 lattice.serialize()
 ```
 
-Square-lattice JSON kinds:
-
-- `square_lattice_periodic`
-- `square_lattice_reflective`
-
-Usage:
-
-```rust
-use physics_in_parallel::space::prelude::*;
-
-let cfg = SquareLatticeConfig::periodic(&[4, 4]);
-let lattice = SquareLattice::<usize>::new(
-    cfg,
-    SquareLatticeInitMethod::Uniform { val: 2 },
-);
-
-let json = serde_json::to_string_pretty(&lattice).unwrap();
-```
-
 ## Engines
 
 Purpose:
 
-`engines` provides model-agnostic runtime infrastructure. The ready backend is `soa`, a structure-of-arrays layout for object attributes and interaction payloads.
+`engines` provides model-agnostic runtime infrastructure. The ready backend is structure-of-arrays storage, where each attribute is stored as a typed vector-list column.
 
-Common import:
-
-```rust
-use physics_in_parallel::engines::prelude::*;
-```
-
-### AttrsMeta
+### Reducers
 
 Purpose:
 
-`AttrsMeta` stores human-facing metadata for a `PhysObj`.
+Reducers combine batches of observed values without knowing which model produced the values.
+
+Core API:
+
+```rust
+MeanReducer.reduce(values)
+```
+
+Core types:
+
+- `Reducer<T>`
+- `MeanReducer`
+
+### PhysObj And Attribute Storage
+
+Purpose:
+
+`PhysObj` stores many simulation objects as named typed attribute columns. Each column is a `VectorList<T>` with shape `[n_objects, dim]`. Attribute labels are the normal user path; generated attribute IDs are available for repeated expert lookups.
 
 Core API:
 
 ```rust
 AttrsMeta::empty()
 AttrsMeta::new(id, label, comment)
-meta.serialize()
-```
-
-### AttrsCore
-
-Purpose:
-
-`AttrsCore` stores named typed attribute columns. Each column is a `VectorList<T>` with shape `[n_objects, dim]`. Different labels may store different scalar types, but all labels in one core must have the same `n_objects`.
-
-Core structs and enums:
-
-- `AttrsCore`
-- `AttrsError`
-- `AttrId`
-
-Core API:
-
-```rust
 AttrsCore::empty()
-core.len()
-core.is_empty()
-core.contains(label)
-core.n_objects()
-core.labels()
-core.id_of(label)
-core.label_of(id)
 core.allocate::<T>(label, dim, n_objects)
 core.insert(label, vector_list)
 core.remove(label)
 core.rename(from, to)
+core.contains(label)
+core.labels()
+core.n_objects()
+core.id_of(label)
+core.label_of(id)
 core.get::<T>(label)
 core.get_mut::<T>(label)
 core.get_by_id::<T>(id)
 core.get_by_id_mut::<T>(id)
 core.vector_of::<T>(label, obj)
 core.vector_of_mut::<T>(label, obj)
-core.set_vector_of::<T>(label, obj, value)
+core.set_vector_of::<T>(label, obj, values)
 core.dim_of(label)
-core.dim_of_id(id)
 core.type_name_of(label)
-core.type_name_of_id(id)
-core.serialize()
-```
-
-The label-based API is the normal user path. Attribute IDs are generated
-automatically and are available as an optional expert path for repeated lookup.
-
-Usage:
-
-```rust
-use physics_in_parallel::engines::prelude::*;
-
-let mut core = AttrsCore::empty();
-core.allocate::<f64>("r", 3, 1_000).unwrap();
-core.set_vector_of::<f64>("r", 0, &[1.0, 2.0, 3.0]).unwrap();
-let r0 = core.vector_of::<f64>("r", 0).unwrap();
-```
-
-### PhysObj
-
-Purpose:
-
-`PhysObj` bundles `AttrsMeta` and `AttrsCore` into one serializable object collection.
-
-Core API:
-
-```rust
 PhysObj::empty()
 PhysObj::new(meta, core)
 obj.serialize()
 obj.save_to_json(output_dir, filename)
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::engines::prelude::*;
+- `AttrsMeta`
+- `AttrsCore`
+- `AttrsError`
+- `AttrId`
+- `PhysObj`
 
-let meta = AttrsMeta::new(0, "particles", "particle state");
-let mut core = AttrsCore::empty();
-core.allocate::<f64>("v", 3, 100).unwrap();
-
-let obj = PhysObj::new(meta, core);
-let json = obj.serialize().unwrap();
-```
-
-### InteractionTopology
+### Interaction Storage
 
 Purpose:
 
-`InteractionTopology` maps object-node lists to stable interaction IDs. It supports mixed arity, so an interaction can be a pair, a triple, or a longer n-body term.
-
-`InteractionOrder::Ordered` preserves caller order, so `[i, j]` and `[j, i]` are different interactions.
-
-`InteractionOrder::Unordered` sorts the node list before lookup, so `[i, j]` and `[j, i]` identify the same symmetric interaction.
-
-Core structs and enums:
-
-- `InteractionTopology`
-- `InteractionNodes`
-- `InteractionOrder`
-- `ObjId`
-- `InteractionId`
+`InteractionTopology` maps participating object IDs to stable interaction IDs. `Interaction<T>` combines topology with payload storage, so topology edits and payload edits stay synchronized.
 
 Core API:
 
 ```rust
 InteractionTopology::new(n_objects)
 InteractionTopology::with_order(n_objects, order)
-topology.n_objects()
-topology.order()
 topology.set_order(order)
 topology.set_n_objects(n_objects)
 topology.prune_n_objects(n_objects)
-topology.len()
-topology.is_empty()
-topology.capacity_slots()
-topology.free_slot_count()
-topology.nodes_of(id)
-topology.id_of(nodes)
-topology.contains(nodes)
 topology.add(nodes)
 topology.remove(nodes)
-topology.clear()
-topology.iter()
-topology.id_of_pair(i, j)
+topology.id_of(nodes)
+topology.nodes_of(id)
 topology.add_pair(i, j)
 topology.remove_pair(i, j)
-```
-
-Interaction order:
-
-```rust
-InteractionOrder::Ordered
-InteractionOrder::Unordered
-```
-
-### Interaction
-
-Purpose:
-
-`Interaction<T>` combines an `InteractionTopology` with payload storage for one uniform payload type. This is the normal user-facing container for model interactions because topology edits made through `Interaction<T>` keep payload storage synchronized.
-
-Core API:
-
-```rust
 Interaction::<T>::new(n_objects, order)
 Interaction::<T>::with_topology(topology)
-interaction.topology()
-interaction.topology_mut()
-interaction.len()
-interaction.is_empty()
-interaction.n_objects()
-interaction.order()
-interaction.set_order(order)
-interaction.set_n_objects(n_objects)
-interaction.prune_n_objects(n_objects)
-interaction.contains(nodes)
 interaction.set(nodes, payload)
-interaction.remove(nodes)
 interaction.get(nodes)
 interaction.get_mut(nodes)
+interaction.remove(nodes)
 interaction.set_pair(i, j, payload)
 interaction.get_pair(i, j)
-interaction.get_pair_mut(i, j)
 interaction.remove_pair(i, j)
-interaction.clear()
-interaction.iter()
-interaction.par_for_each_payload(...)
-interaction.par_for_each_payload_mut(...)
 interaction.par_for_each(...)
+interaction.par_for_each_payload_mut(...)
 ```
 
-Usage:
+Core types:
 
-```rust
-use physics_in_parallel::engines::prelude::*;
-
-let mut springs = Interaction::<f64>::new(10, InteractionOrder::Unordered);
-let id = springs.set_pair(0, 1, 1.5).unwrap();
-assert_eq!(*springs.get(&[1, 0]).unwrap().unwrap(), 1.5);
-```
+- `InteractionTopology`
+- `Interaction<T>`
+- `InteractionNodes`
+- `InteractionOrder`
+- `InteractionError`
+- `ObjId`
+- `InteractionId`
 
 ### NeighborList
 
 Purpose:
 
-`NeighborList` is a cell-linked candidate-pair generator for bounded particle systems. It partitions a continuous box into cells and emits unique unordered nearby-cell candidate pairs. It does not apply the final physical distance cutoff; model wrappers do that filtering.
-
-Core structs and enums:
-
-- `NeighborList`
-- `NeighborListError`
+`NeighborList` is a cell-linked candidate-pair generator. It emits unique unordered candidate pairs from same/adjacent cells but does not apply a final physical cutoff distance.
 
 Core API:
 
 ```rust
 NeighborList::new(min, max, cell_width)
-neighbor_list.dim()
-neighbor_list.min()
-neighbor_list.max()
-neighbor_list.cell_width()
-neighbor_list.cells_per_axis()
-neighbor_list.num_cells()
-neighbor_list.num_objects()
-neighbor_list.clear()
 neighbor_list.rebuild(positions, n_objects)
 neighbor_list.for_each_pair_candidate(|i, j| { ... })
 neighbor_list.collect_pair_candidates()
+neighbor_list.clear()
+neighbor_list.dim()
+neighbor_list.num_objects()
+neighbor_list.cells_per_axis()
 ```
 
-Usage:
+Core types:
+
+- `NeighborList`
+- `NeighborListError`
+
+## Models
+
+Purpose:
+
+`models` contains concrete physical model pieces built on the lower layers. Current ready modules cover validated law payloads and canonical massive-particle simulation components.
+
+### Laws
+
+Purpose:
+
+`models::laws` stores small validated parameter payloads. These payloads do not know how objects are stored; model adapters decide how to apply them to particle state, lattice sites, or future model objects.
+
+Core API:
 
 ```rust
-use physics_in_parallel::engines::prelude::*;
-
-let mut list = NeighborList::new(&[0.0, 0.0], &[10.0, 10.0], 1.0).unwrap();
-let positions = vec![0.1, 0.2, 0.4, 0.5];
-list.rebuild(&positions, 2).unwrap();
-list.for_each_pair_candidate(|i, j| {
-    println!("{i} {j}");
-});
+Spring::new(k, l_0, cutoff)
+spring.validate()
+PowerLawDecay::new(k, alpha, range)
+power_law.validate()
 ```
 
-## Higher-Level Modules
+Core types:
 
-The crate also contains:
+- `Spring`
+- `SpringCutoff`
+- `SpringLawError`
+- `PowerLawDecay`
+- `PowerLawRange`
+- `PowerLawError`
 
-- `models`: concrete model packages.
+### Particle Attributes And State Construction
 
-`models` is outside the current README focus and should be documented after its next correctness and API review.
+Purpose:
+
+Particle modules use a canonical `PhysObj` layout. Vector attributes `r`, `v`, and `a` have shape `[num_particles, dim]`. Scalar attributes `m`, `m_inv`, `alive`, and `rigid` have shape `[num_particles, 1]`.
+
+Core attribute API:
+
+```rust
+set_alive(objects, i, alive)
+is_alive(objects, i)
+set_rigid(objects, i, rigid)
+is_rigid(objects, i)
+alive_value(alive)
+rigid_value(rigid)
+ParticleSelection::AliveOnly
+ParticleSelection::All
+```
+
+Core construction/randomization API:
+
+```rust
+create_template(dim, num_particles)
+randomize_r(objects, method)
+randomize_v(objects, VelocitySamplingMethod::Uniform { low, high })
+randomize_v(objects, VelocitySamplingMethod::GaussianPerAxis { mean, std })
+randomize_v(objects, VelocitySamplingMethod::MaxwellBoltzmann { tau })
+```
+
+Core types:
+
+- `ParticleSelection`
+- `MassiveParticlesError`
+- `VelocitySamplingMethod`
+
+### Particle Boundary
+
+Purpose:
+
+Particle boundary adapters apply `space::continuous` boundary objects to canonical particle state. The continuous boundary owns the geometric rule; the particle adapter owns traversal over `ATTR_R`, velocity updates in `ATTR_V`, and alive/rigid mask handling.
+
+Core API:
+
+```rust
+PeriodicBox::new(min, max)?.apply_to_particles(objects)
+ClampBox::new(min, max)?.apply_to_particles(objects)
+ReflectBox::new(min, max)?.apply_to_particles(objects)
+```
+
+Core types:
+
+- `ParticleBoundary`
+- `ParticleBoundaryError`
+
+### Particle Integrators
+
+Purpose:
+
+Integrators advance canonical particle `r` and `v` from `a`. They skip dead particles and rigid particles; they do not clear acceleration after stepping.
+
+Core API:
+
+```rust
+ExplicitEuler.apply(objects, dt)
+SemiImplicitEuler.apply(objects, dt)
+```
+
+Core types:
+
+- `Integrator`
+- `ExplicitEuler`
+- `SemiImplicitEuler`
+- `IntegratorError`
+
+### Particle Thermostat
+
+Purpose:
+
+`LangevinThermostat` applies an exact Ornstein-Uhlenbeck velocity update to canonical particle velocities. It honors `ParticleSelection` for alive/dead behavior and always skips rigid particles.
+
+Core API:
+
+```rust
+LangevinThermostat::new(tau_target, gamma, seed, selection)
+thermostat.apply(objects, dt)
+thermostat.tau_target()
+thermostat.gamma()
+thermostat.seed()
+thermostat.step_counter()
+thermostat.selection()
+```
+
+Core types:
+
+- `Thermostat`
+- `LangevinThermostat`
+- `ThermostatError`
+
+### Particle Observers
+
+Purpose:
+
+Particle observers compute read-only scalar summaries from canonical particle state. `AliveOnly` skips dead particles, while `All` intentionally includes every allocated slot for diagnostics.
+
+Core API:
+
+```rust
+KineticEnergyObserver::default().observe(objects)
+KineticEnergyObserver::new(selection).observe(objects)
+TemperatureObserver::default().observe(objects)
+TemperatureObserver::new(selection).observe(objects)
+```
+
+Core types:
+
+- `Observer`
+- `KineticEnergyObserver`
+- `TemperatureObserver`
+- `ObserveError`
+
+### Particle Interactions
+
+Purpose:
+
+Particle interaction modules wrap engine-level interaction storage with particle-specific validation and application rules.
+
+Core API:
+
+```rust
+ParticleNeighborList::from_bounds(min, max, cutoff)
+ParticleNeighborList::from_box(dimensions, cutoff)
+neighbor_list.rebuild(objects)
+neighbor_list.collect_pairs(objects, selection)
+
+SpringNetwork::empty()
+springs.add_spring(pair, k, l_0, cutoff)
+springs.add_spring_payload(pair, spring)
+springs.get_spring(pair)
+springs.remove_spring(pair)
+springs.apply_hooke_acceleration(objects, selection)
+
+PowerLawNetwork::empty()
+network.add_power_law(pair, k, alpha, range)
+network.add_payload(pair, payload)
+network.get_power_law(pair)
+network.remove_power_law(pair)
+```
+
+Core types:
+
+- `ParticleNeighborList`
+- `ParticleNeighborListError`
+- `SpringNetwork`
+- `SpringNetworkError`
+- `PowerLawNetwork`
+- `PowerLawNetworkError`
 
 ## Examples
 
@@ -948,16 +795,16 @@ Runnable examples:
 ```bash
 cargo run --example serde_flat_json
 cargo run --example vector_list_ndarray
-cargo run --example tensor_rand_large_benchmark --release
-cargo run --example vector_list_haar_benchmark --release
+cargo run --release --example tensor_rand_large_benchmark
+cargo run --release --example vector_list_haar_benchmark
 ```
 
 ## Verification
 
-The current reviewed math, space, and engines APIs are covered by:
+Standard checks:
 
 ```bash
-cargo test --test math --test space --test engines
+cargo fmt --check
 cargo test
 cargo doc --no-deps
 ```

@@ -1,4 +1,7 @@
-use physics_in_parallel::models::particles::attrs::{ATTR_V, ParticleSelection};
+use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
+use physics_in_parallel::models::particles::attrs::{
+    ATTR_ALIVE, ATTR_M_INV, ATTR_V, ParticleSelection, set_alive, set_rigid,
+};
 use physics_in_parallel::models::particles::create_state::create_template;
 use physics_in_parallel::models::particles::thermostat::{
     LangevinThermostat, Thermostat, ThermostatError,
@@ -23,6 +26,8 @@ fn langevin_deterministic_for_same_seed_and_state() {
 
     ta.apply(&mut a, 0.05).unwrap();
     tb.apply(&mut b, 0.05).unwrap();
+    assert_eq!(ta.step_counter(), 1);
+    assert_eq!(tb.step_counter(), 1);
 
     for i in 0..2 {
         assert_eq!(
@@ -51,5 +56,103 @@ fn langevin_rejects_invalid_dt() {
     assert_eq!(
         t.apply(&mut obj, 0.0),
         Err(ThermostatError::InvalidDt { dt: 0.0 })
+    );
+}
+
+#[test]
+fn langevin_rejects_invalid_constructor_parameters() {
+    match LangevinThermostat::new(f64::NAN, 0.1, 1, ParticleSelection::AliveOnly).unwrap_err() {
+        ThermostatError::InvalidParam { field, value } => {
+            assert_eq!(field, "tau_target");
+            assert!(value.is_nan());
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(
+        LangevinThermostat::new(1.0, -0.1, 1, ParticleSelection::AliveOnly).unwrap_err(),
+        ThermostatError::InvalidParam {
+            field: "gamma",
+            value: -0.1,
+        }
+    );
+}
+
+#[test]
+fn langevin_respects_alive_selection_and_rigid_mask() {
+    let mut alive_only = create_template(1, 3).unwrap();
+    let mut all = create_template(1, 3).unwrap();
+    for obj in [&mut alive_only, &mut all] {
+        obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+        obj.core.set_vector_of::<f64>(ATTR_V, 1, &[2.0]).unwrap();
+        obj.core.set_vector_of::<f64>(ATTR_V, 2, &[3.0]).unwrap();
+        set_alive(obj, 1, false).unwrap();
+        set_rigid(obj, 2, true).unwrap();
+    }
+
+    let mut t_alive = LangevinThermostat::new(1.0, 0.5, 7, ParticleSelection::AliveOnly).unwrap();
+    t_alive.apply(&mut alive_only, 0.2).unwrap();
+
+    let mut t_all = LangevinThermostat::new(1.0, 0.5, 7, ParticleSelection::All).unwrap();
+    t_all.apply(&mut all, 0.2).unwrap();
+
+    assert_ne!(alive_only.core.vector_of::<f64>(ATTR_V, 0).unwrap()[0], 1.0);
+    assert_eq!(alive_only.core.vector_of::<f64>(ATTR_V, 1).unwrap()[0], 2.0);
+    assert_eq!(alive_only.core.vector_of::<f64>(ATTR_V, 2).unwrap()[0], 3.0);
+
+    assert_ne!(all.core.vector_of::<f64>(ATTR_V, 1).unwrap()[0], 2.0);
+    assert_eq!(all.core.vector_of::<f64>(ATTR_V, 2).unwrap()[0], 3.0);
+}
+
+#[test]
+fn langevin_reports_invalid_inverse_mass_only_for_included_particles() {
+    let mut obj = create_template(1, 2).unwrap();
+    obj.core
+        .set_vector_of::<f64>(ATTR_M_INV, 0, &[0.0])
+        .unwrap();
+
+    let mut t = LangevinThermostat::new(1.0, 0.5, 1, ParticleSelection::AliveOnly).unwrap();
+    assert_eq!(
+        t.apply(&mut obj, 0.1).unwrap_err(),
+        ThermostatError::InvalidParam {
+            field: ATTR_M_INV,
+            value: 0.0,
+        }
+    );
+
+    set_alive(&mut obj, 0, false).unwrap();
+    t.apply(&mut obj, 0.1).unwrap();
+}
+
+#[test]
+fn langevin_reports_shape_errors() {
+    let mut bad_m_inv = create_template(1, 2).unwrap();
+    bad_m_inv.core.remove(ATTR_M_INV).unwrap();
+    bad_m_inv
+        .core
+        .insert(ATTR_M_INV, VectorList::<f64>::empty(2, 2))
+        .unwrap();
+    let mut t = LangevinThermostat::new(1.0, 0.5, 1, ParticleSelection::AliveOnly).unwrap();
+    assert_eq!(
+        t.apply(&mut bad_m_inv, 0.1).unwrap_err(),
+        ThermostatError::InvalidAttrShape {
+            label: ATTR_M_INV,
+            expected_dim: 1,
+            got_dim: 2,
+        }
+    );
+
+    let mut bad_alive = create_template(1, 2).unwrap();
+    bad_alive.core.remove(ATTR_ALIVE).unwrap();
+    bad_alive
+        .core
+        .insert(ATTR_ALIVE, VectorList::<u8>::empty(2, 2))
+        .unwrap();
+    assert_eq!(
+        t.apply(&mut bad_alive, 0.1).unwrap_err(),
+        ThermostatError::InvalidAttrShape {
+            label: ATTR_ALIVE,
+            expected_dim: 1,
+            got_dim: 2,
+        }
     );
 }

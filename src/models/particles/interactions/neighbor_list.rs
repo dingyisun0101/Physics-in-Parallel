@@ -15,7 +15,8 @@ distance checks, and optional exclusion of dead particles.
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::engines::soa::{NeighborList, NeighborListError};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ParticleSelection, is_alive_value};
+use crate::models::particles::attrs::{ATTR_R, ParticleSelection};
+use crate::models::particles::state::{ParticleStateError, gather_alive_flags};
 
 /// Errors returned by particle-level neighbor-list operations.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +54,32 @@ impl From<AttrsError> for ParticleNeighborListError {
 impl From<NeighborListError> for ParticleNeighborListError {
     fn from(value: NeighborListError) -> Self {
         Self::Neighbor(value)
+    }
+}
+
+impl From<ParticleStateError> for ParticleNeighborListError {
+    fn from(value: ParticleStateError) -> Self {
+        match value {
+            ParticleStateError::Attrs(err) => Self::Attrs(err),
+            ParticleStateError::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            },
+            ParticleStateError::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            },
+        }
     }
 }
 
@@ -128,7 +155,7 @@ impl ParticleNeighborList {
         let n = r.num_vectors();
         let r_data = r.as_tensor().data.as_slice();
 
-        let alive_flags = self.alive_flags(objects, n, selection)?;
+        let alive_flags = gather_alive_flags(objects, n, selection)?;
         let cutoff_sq = self.cutoff * self.cutoff;
         let mut pairs = Vec::<(usize, usize)>::new();
 
@@ -177,38 +204,5 @@ impl ParticleNeighborList {
             });
         }
         Ok(())
-    }
-
-    fn alive_flags(
-        &self,
-        objects: &PhysObj,
-        n: usize,
-        selection: ParticleSelection,
-    ) -> Result<Option<Vec<bool>>, ParticleNeighborListError> {
-        if selection.includes_dead() || !objects.core.contains(ATTR_ALIVE) {
-            return Ok(None);
-        }
-
-        let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
-        if alive.dim() != 1 {
-            return Err(ParticleNeighborListError::InvalidAttrShape {
-                label: ATTR_ALIVE,
-                expected_dim: 1,
-                got_dim: alive.dim(),
-            });
-        }
-        if alive.num_vectors() != n {
-            return Err(ParticleNeighborListError::InconsistentParticleCount {
-                label: ATTR_ALIVE,
-                expected: n,
-                got: alive.num_vectors(),
-            });
-        }
-
-        Ok(Some(
-            (0..n)
-                .map(|i| is_alive_value(alive.get(i as isize, 0)))
-                .collect::<Vec<bool>>(),
-        ))
     }
 }

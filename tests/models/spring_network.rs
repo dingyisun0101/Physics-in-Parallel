@@ -1,8 +1,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
+use physics_in_parallel::models::laws::SpringLawError;
 use physics_in_parallel::models::particles::attrs::{
-    ATTR_A, ATTR_M_INV, ATTR_R, ATTR_RIGID, ParticleSelection, set_alive,
+    ATTR_A, ATTR_M_INV, ATTR_R, ParticleSelection, set_alive, set_rigid,
 };
 use physics_in_parallel::models::particles::create_state::create_template;
 use physics_in_parallel::models::particles::interactions::spring_network::{
@@ -88,17 +89,17 @@ fn invalid_spring_parameters_are_rejected() {
 
     assert!(matches!(
         network.add_spring((0, 1), f64::NAN, 1.0, None).unwrap_err(),
-        SpringNetworkError::InvalidSpringConstant { .. }
+        SpringNetworkError::Law(SpringLawError::InvalidSpringConstant { .. })
     ));
     assert!(matches!(
         network.add_spring((0, 1), 1.0, -1.0, None).unwrap_err(),
-        SpringNetworkError::InvalidRestLength { l_0: -1.0 }
+        SpringNetworkError::Law(SpringLawError::InvalidRestLength { l_0: -1.0 })
     ));
     assert_eq!(
         network
             .add_spring((0, 1), 1.0, 1.0, Some((2.0, 1.0)))
             .unwrap_err(),
-        SpringNetworkError::InvalidCutoff { min: 2.0, max: 1.0 }
+        SpringNetworkError::Law(SpringLawError::InvalidCutoff { min: 2.0, max: 1.0 })
     );
 }
 
@@ -154,22 +155,10 @@ fn hooke_acceleration_respects_rigid_dead_cutoff_and_equal_position_cases() {
         .set_vector_of::<f64>(ATTR_R, 3, &[4.0])
         .unwrap();
 
-    objects
-        .core
-        .set_vector_of::<f64>(ATTR_RIGID, 0, &[1.0])
-        .unwrap();
-    objects
-        .core
-        .set_vector_of::<f64>(ATTR_RIGID, 1, &[0.0])
-        .unwrap();
-    objects
-        .core
-        .set_vector_of::<f64>(ATTR_RIGID, 2, &[0.0])
-        .unwrap();
-    objects
-        .core
-        .set_vector_of::<f64>(ATTR_RIGID, 3, &[0.0])
-        .unwrap();
+    set_rigid(&mut objects, 0, true).unwrap();
+    set_rigid(&mut objects, 1, false).unwrap();
+    set_rigid(&mut objects, 2, false).unwrap();
+    set_rigid(&mut objects, 3, false).unwrap();
 
     set_alive(&mut objects, 0, true).unwrap();
     set_alive(&mut objects, 1, true).unwrap();

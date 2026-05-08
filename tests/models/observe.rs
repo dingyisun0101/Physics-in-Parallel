@@ -4,7 +4,7 @@ use physics_in_parallel::models::particles::attrs::{
 };
 use physics_in_parallel::models::particles::create_state::create_template;
 use physics_in_parallel::models::particles::observe::{
-    KineticEnergyObserver, MeanReducer, ObserveError, Observer, Reducer, TemperatureObserver,
+    KineticEnergyObserver, ObserveError, Observer, TemperatureObserver,
 };
 
 #[test]
@@ -60,6 +60,16 @@ fn temperature_uses_active_particle_degrees_of_freedom() {
 }
 
 #[test]
+fn temperature_returns_zero_when_no_particles_are_active() {
+    let mut obj = create_template(2, 2).unwrap();
+    set_alive(&mut obj, 0, false).unwrap();
+    set_alive(&mut obj, 1, false).unwrap();
+
+    let temp = TemperatureObserver::default().observe(&obj).unwrap();
+    assert_eq!(temp, 0.0);
+}
+
+#[test]
 fn observer_reports_invalid_numeric_state() {
     let mut obj = create_template(1, 2).unwrap();
     obj.core
@@ -91,6 +101,29 @@ fn observer_reports_invalid_numeric_state() {
 }
 
 #[test]
+fn alive_only_ignores_invalid_velocity_on_dead_particle_but_all_reports_it() {
+    let mut obj = create_template(1, 2).unwrap();
+    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+    obj.core
+        .set_vector_of::<f64>(ATTR_V, 1, &[f64::INFINITY])
+        .unwrap();
+    set_alive(&mut obj, 1, false).unwrap();
+
+    let ke = KineticEnergyObserver::default().observe(&obj).unwrap();
+    assert_eq!(ke, 0.5);
+
+    assert_eq!(
+        KineticEnergyObserver::new(ParticleSelection::All)
+            .observe(&obj)
+            .unwrap_err(),
+        ObserveError::InvalidState {
+            field: ATTR_V,
+            value: f64::INFINITY,
+        }
+    );
+}
+
+#[test]
 fn observer_reports_shape_errors() {
     let mut obj = create_template(1, 2).unwrap();
     obj.core.remove(ATTR_M_INV).unwrap();
@@ -106,12 +139,4 @@ fn observer_reports_shape_errors() {
             got_dim: 2,
         }
     );
-}
-
-#[test]
-fn mean_reducer_handles_empty_and_nonempty_inputs() {
-    let reducer = MeanReducer;
-
-    assert_eq!(reducer.reduce(&[]), 0.0);
-    assert_eq!(reducer.reduce(&[1.0, 2.0, 6.0]), 3.0);
 }

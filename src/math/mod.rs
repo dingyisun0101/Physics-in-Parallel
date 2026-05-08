@@ -3,7 +3,6 @@ Core math foundations.
 */
 
 pub mod io;
-pub mod ndarray_convert;
 pub mod prelude;
 pub mod scalar;
 pub mod tensor;

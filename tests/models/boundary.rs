@@ -1,8 +1,9 @@
-use physics_in_parallel::models::particles::attrs::{ATTR_R, ATTR_V, set_alive};
-use physics_in_parallel::models::particles::boundary::{
-    Boundary, ClampBox, PeriodicBox, ReflectBox,
-};
+use physics_in_parallel::models::particles::attrs::{ATTR_R, ATTR_V, set_alive, set_rigid};
+use physics_in_parallel::models::particles::boundary::{ParticleBoundary, ParticleBoundaryError};
 use physics_in_parallel::models::particles::create_state::create_template;
+use physics_in_parallel::space::continuous::boundary::{
+    BoundaryError, ClampBox, PeriodicBox, ReflectBox,
+};
 
 #[test]
 fn periodic_and_clamp_update_positions() {
@@ -12,7 +13,7 @@ fn periodic_and_clamp_update_positions() {
 
     PeriodicBox::new(&[0.0], &[1.0])
         .unwrap()
-        .apply(&mut obj)
+        .apply_to_particles(&mut obj)
         .unwrap();
     assert!((obj.core.vector_of::<f64>(ATTR_R, 0).unwrap()[0] - 0.3).abs() < 1e-12);
     assert!((obj.core.vector_of::<f64>(ATTR_R, 1).unwrap()[0] - 0.8).abs() < 1e-12);
@@ -22,7 +23,7 @@ fn periodic_and_clamp_update_positions() {
 
     ClampBox::new(&[0.0], &[1.0])
         .unwrap()
-        .apply(&mut obj)
+        .apply_to_particles(&mut obj)
         .unwrap();
     assert_eq!(
         obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
@@ -48,7 +49,7 @@ fn reflect_flips_velocity_and_respects_alive_mask() {
 
     ReflectBox::new(&[0.0], &[1.0])
         .unwrap()
-        .apply(&mut obj)
+        .apply_to_particles(&mut obj)
         .unwrap();
 
     assert!((obj.core.vector_of::<f64>(ATTR_R, 0).unwrap()[0] - 0.8).abs() < 1e-12);
@@ -56,4 +57,82 @@ fn reflect_flips_velocity_and_respects_alive_mask() {
 
     assert!((obj.core.vector_of::<f64>(ATTR_R, 1).unwrap()[0] - 1.2).abs() < 1e-12);
     assert!((obj.core.vector_of::<f64>(ATTR_V, 1).unwrap()[0] - 3.0).abs() < 1e-12);
+}
+
+#[test]
+fn reflect_handles_large_overshoot_per_axis() {
+    let mut obj = create_template(2, 2).unwrap();
+
+    obj.core
+        .set_vector_of::<f64>(ATTR_R, 0, &[1.2, -0.25])
+        .unwrap();
+    obj.core
+        .set_vector_of::<f64>(ATTR_V, 0, &[2.0, -3.0])
+        .unwrap();
+
+    obj.core
+        .set_vector_of::<f64>(ATTR_R, 1, &[2.2, -1.2])
+        .unwrap();
+    obj.core
+        .set_vector_of::<f64>(ATTR_V, 1, &[5.0, 7.0])
+        .unwrap();
+
+    ReflectBox::new(&[0.0, 0.0], &[1.0, 1.0])
+        .unwrap()
+        .apply_to_particles(&mut obj)
+        .unwrap();
+
+    assert_eq!(
+        obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        [0.8, 0.25].as_slice()
+    );
+    assert_eq!(
+        obj.core.vector_of::<f64>(ATTR_V, 0).unwrap(),
+        [-2.0, 3.0].as_slice()
+    );
+
+    assert!((obj.core.vector_of::<f64>(ATTR_R, 1).unwrap()[0] - 0.2).abs() < 1e-12);
+    assert!((obj.core.vector_of::<f64>(ATTR_R, 1).unwrap()[1] - 0.8).abs() < 1e-12);
+    assert_eq!(
+        obj.core.vector_of::<f64>(ATTR_V, 1).unwrap(),
+        [5.0, 7.0].as_slice()
+    );
+}
+
+#[test]
+fn boundary_skips_rigid_particles() {
+    let mut obj = create_template(1, 2).unwrap();
+    obj.core.set_vector_of::<f64>(ATTR_R, 0, &[1.2]).unwrap();
+    obj.core.set_vector_of::<f64>(ATTR_R, 1, &[1.2]).unwrap();
+    set_rigid(&mut obj, 0, true).unwrap();
+    set_rigid(&mut obj, 1, false).unwrap();
+
+    PeriodicBox::new(&[0.0], &[1.0])
+        .unwrap()
+        .apply_to_particles(&mut obj)
+        .unwrap();
+
+    assert_eq!(
+        obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        [1.2].as_slice()
+    );
+    assert!((obj.core.vector_of::<f64>(ATTR_R, 1).unwrap()[0] - 0.2).abs() < 1e-12);
+}
+
+#[test]
+fn boundary_rejects_dimension_mismatch_without_panicking() {
+    let mut obj = create_template(2, 1).unwrap();
+    let err = PeriodicBox::new(&[0.0], &[1.0])
+        .unwrap()
+        .apply_to_particles(&mut obj)
+        .unwrap_err();
+
+    assert_eq!(
+        err,
+        ParticleBoundaryError::Boundary(BoundaryError::InvalidVectorDimension {
+            label: "bounds",
+            expected: 2,
+            got: 1,
+        })
+    );
 }

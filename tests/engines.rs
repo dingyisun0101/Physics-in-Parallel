@@ -2,6 +2,8 @@
 mod interaction;
 #[path = "engines/neighbor_list.rs"]
 mod neighbor_list;
+#[path = "engines/observe.rs"]
+mod observe;
 #[path = "engines/phys_obj.rs"]
 mod phys_obj;
 #[path = "engines/prelude.rs"]

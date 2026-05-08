@@ -1,5 +1,6 @@
+use physics_in_parallel::models::laws::{PowerLawDecay, PowerLawError};
 use physics_in_parallel::models::particles::interactions::power_law::{
-    PowerLawDecay, PowerLawNetwork, PowerLawNetworkError,
+    PowerLawNetwork, PowerLawNetworkError,
 };
 
 #[test]
@@ -59,21 +60,21 @@ fn invalid_power_law_parameters_are_rejected() {
         network
             .add_power_law((0, 1), f64::NAN, 1.0, None)
             .unwrap_err(),
-        PowerLawNetworkError::InvalidStrength { k } if k.is_nan()
+        PowerLawNetworkError::Law(PowerLawError::InvalidStrength { k }) if k.is_nan()
     ));
     assert_eq!(
         network
             .add_power_law((0, 1), 1.0, f64::INFINITY, None)
             .unwrap_err(),
-        PowerLawNetworkError::InvalidExponent {
+        PowerLawNetworkError::Law(PowerLawError::InvalidExponent {
             alpha: f64::INFINITY
-        }
+        })
     );
     assert_eq!(
         network
             .add_power_law((0, 1), 1.0, -2.0, Some((5.0, 1.0)))
             .unwrap_err(),
-        PowerLawNetworkError::InvalidRange { min: 5.0, max: 1.0 }
+        PowerLawNetworkError::Law(PowerLawError::InvalidRange { min: 5.0, max: 1.0 })
     );
 }
 
@@ -98,6 +99,6 @@ fn add_payload_validates_prebuilt_payload_and_mutation_path() {
     };
     assert!(matches!(
         network.add_payload((0, 1), invalid).unwrap_err(),
-        PowerLawNetworkError::InvalidExponent { .. }
+        PowerLawNetworkError::Law(PowerLawError::InvalidExponent { .. })
     ));
 }

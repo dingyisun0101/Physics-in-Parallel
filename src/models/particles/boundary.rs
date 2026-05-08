@@ -1,18 +1,37 @@
 /*!
-General boundary-condition tools for particle models.
+Particle adapter for continuous boundary conditions.
+
+Purpose:
+This module applies the pure geometric boundaries from `space::continuous` to
+canonical particle state. The geometry module knows how to wrap, clamp, or
+reflect one coordinate vector. This adapter knows how particle state is stored:
+positions live in `ATTR_R`, velocities live in `ATTR_V`, dead particles are
+marked by `ATTR_ALIVE`, and rigid particles are marked by `ATTR_RIGID`.
+
+Design:
+The continuous boundary remains the single source of boundary mathematics.
+Particle-specific behavior is limited to storage traversal and masks:
+- dead particles are skipped;
+- rigid particles are skipped;
+- positions are updated in parallel;
+- velocity components are flipped only when the continuous boundary reports an
+  odd number of reflecting wall crossings.
 */
 
-use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V, is_alive_value};
 use rayon::prelude::*;
 
+use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
+use crate::models::particles::attrs::{ATTR_R, ATTR_V, ParticleSelection};
+use crate::models::particles::state::{
+    ParticleMasks, ParticleStateError, gather_masks, validate_vector_attr_f64,
+};
+use crate::space::continuous::boundary::{
+    BoundaryError as ContinuousBoundaryError, ContinuousBoundary,
+};
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum BoundaryError {
-    InvalidBounds {
-        axis: usize,
-        min: f64,
-        max: f64,
-    },
+pub enum ParticleBoundaryError {
+    Boundary(ContinuousBoundaryError),
     Attrs(AttrsError),
     InvalidAttrShape {
         label: &'static str,
@@ -26,247 +45,67 @@ pub enum BoundaryError {
     },
 }
 
-impl From<AttrsError> for BoundaryError {
+impl From<AttrsError> for ParticleBoundaryError {
     #[inline]
     fn from(value: AttrsError) -> Self {
         Self::Attrs(value)
     }
 }
 
-pub trait Boundary: Sync {
-    /// - Purpose: Applies this boundary condition directly to the canonical particle attributes in `PhysObj`.
-    /// - Parameters:
-    ///   - `objects` (`&mut PhysObj`): SoA object storage containing position/velocity attributes to update in-place.
-    fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError>;
+impl From<ContinuousBoundaryError> for ParticleBoundaryError {
+    #[inline]
+    fn from(value: ContinuousBoundaryError) -> Self {
+        Self::Boundary(value)
+    }
 }
 
-fn validate_bounds(min: &[f64], max: &[f64]) -> Result<(), BoundaryError> {
-    if min.len() != max.len() {
-        return Err(BoundaryError::InvalidAttrShape {
-            label: "bounds",
-            expected_dim: min.len(),
-            got_dim: max.len(),
-        });
-    }
-    for d in 0..min.len() {
-        if !min[d].is_finite() || !max[d].is_finite() || max[d] <= min[d] {
-            return Err(BoundaryError::InvalidBounds {
-                axis: d,
-                min: min[d],
-                max: max[d],
-            });
+impl From<ParticleStateError> for ParticleBoundaryError {
+    fn from(value: ParticleStateError) -> Self {
+        match value {
+            ParticleStateError::Attrs(err) => Self::Attrs(err),
+            ParticleStateError::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            },
+            ParticleStateError::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            },
         }
     }
-    Ok(())
 }
 
-#[inline]
-fn shape_alive_rigid(
-    objects: &PhysObj,
-) -> Result<(usize, usize, Option<Vec<bool>>, Option<Vec<bool>>), BoundaryError> {
-    let (dim, n) = {
-        let r = objects.core.get::<f64>(ATTR_R)?;
-        (r.dim(), r.num_vectors())
-    };
+pub trait ParticleBoundary: ContinuousBoundary {
+    /// Apply this continuous boundary to canonical particle positions and
+    /// velocities stored in `PhysObj`.
+    fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError>;
+}
 
-    {
-        let v = objects.core.get::<f64>(ATTR_V)?;
-        if v.dim() != dim {
-            return Err(BoundaryError::InvalidAttrShape {
-                label: ATTR_V,
-                expected_dim: dim,
-                got_dim: v.dim(),
-            });
-        }
-        if v.num_vectors() != n {
-            return Err(BoundaryError::InconsistentParticleCount {
-                label: ATTR_V,
-                expected: n,
-                got: v.num_vectors(),
-            });
-        }
-    }
-
-    let alive_flags = if !objects.core.contains(ATTR_ALIVE) {
-        None
-    } else {
-        let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
-        if alive.dim() != 1 {
-            return Err(BoundaryError::InvalidAttrShape {
-                label: ATTR_ALIVE,
-                expected_dim: 1,
-                got_dim: alive.dim(),
-            });
-        }
-        if alive.num_vectors() != n {
-            return Err(BoundaryError::InconsistentParticleCount {
-                label: ATTR_ALIVE,
-                expected: n,
-                got: alive.num_vectors(),
-            });
+impl<T> ParticleBoundary for T
+where
+    T: ContinuousBoundary,
+{
+    fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError> {
+        let (dim, n, masks) = shape_alive_rigid(objects)?;
+        if self.dim() != dim {
+            return Err(ContinuousBoundaryError::InvalidVectorDimension {
+                label: "bounds",
+                expected: dim,
+                got: self.dim(),
+            }
+            .into());
         }
 
-        let flags = alive
-            .as_tensor()
-            .data
-            .par_iter()
-            .map(|&x| is_alive_value(x))
-            .collect::<Vec<bool>>();
-        Some(flags)
-    };
-
-    let rigid_flags = if !objects.core.contains(ATTR_RIGID) {
-        None
-    } else {
-        let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
-        if rigid.dim() != 1 {
-            return Err(BoundaryError::InvalidAttrShape {
-                label: ATTR_RIGID,
-                expected_dim: 1,
-                got_dim: rigid.dim(),
-            });
-        }
-        if rigid.num_vectors() != n {
-            return Err(BoundaryError::InconsistentParticleCount {
-                label: ATTR_RIGID,
-                expected: n,
-                got: rigid.num_vectors(),
-            });
-        }
-
-        let flags = rigid
-            .as_tensor()
-            .data
-            .par_iter()
-            .map(|&x| x > 0.0)
-            .collect::<Vec<bool>>();
-        Some(flags)
-    };
-
-    Ok((dim, n, alive_flags, rigid_flags))
-}
-
-#[derive(Debug, Clone)]
-pub struct PeriodicBox {
-    min: Vec<f64>,
-    max: Vec<f64>,
-}
-
-impl PeriodicBox {
-    /// - Purpose: Constructs a periodic box from per-axis lower/upper bounds.
-    /// - Parameters:
-    ///   - `min` (`&[f64]`): Per-axis inclusive lower bounds provided by caller.
-    ///   - `max` (`&[f64]`): Per-axis exclusive upper bounds provided by caller.
-    pub fn new(min: &[f64], max: &[f64]) -> Result<Self, BoundaryError> {
-        validate_bounds(min, max)?;
-        Ok(Self {
-            min: min.to_vec(),
-            max: max.to_vec(),
-        })
-    }
-}
-
-impl Boundary for PeriodicBox {
-    fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, _n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
-
-        let r = objects.core.get_mut::<f64>(ATTR_R)?;
-        r.as_tensor_mut()
-            .data
-            .par_chunks_mut(dim)
-            .enumerate()
-            .for_each(|(i, row)| {
-                if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
-                    return;
-                }
-                if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
-                    return;
-                }
-
-                for (d, x) in row.iter_mut().enumerate() {
-                    if !x.is_finite() {
-                        continue;
-                    }
-                    let lo = self.min[d];
-                    let hi = self.max[d];
-                    let w = hi - lo;
-                    *x = lo + (*x - lo).rem_euclid(w);
-                }
-            });
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ClampBox {
-    min: Vec<f64>,
-    max: Vec<f64>,
-}
-
-impl ClampBox {
-    /// - Purpose: Constructs a clamping box from per-axis lower/upper bounds.
-    /// - Parameters:
-    ///   - `min` (`&[f64]`): Per-axis lower clamp values provided by caller.
-    ///   - `max` (`&[f64]`): Per-axis upper clamp values provided by caller.
-    pub fn new(min: &[f64], max: &[f64]) -> Result<Self, BoundaryError> {
-        validate_bounds(min, max)?;
-        Ok(Self {
-            min: min.to_vec(),
-            max: max.to_vec(),
-        })
-    }
-}
-
-impl Boundary for ClampBox {
-    fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, _n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
-
-        let r = objects.core.get_mut::<f64>(ATTR_R)?;
-        r.as_tensor_mut()
-            .data
-            .par_chunks_mut(dim)
-            .enumerate()
-            .for_each(|(i, row)| {
-                if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
-                    return;
-                }
-                if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
-                    return;
-                }
-
-                for (d, x) in row.iter_mut().enumerate() {
-                    *x = x.clamp(self.min[d], self.max[d]);
-                }
-            });
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ReflectBox {
-    min: Vec<f64>,
-    max: Vec<f64>,
-}
-
-impl ReflectBox {
-    /// - Purpose: Constructs a reflecting box from per-axis lower/upper bounds.
-    /// - Parameters:
-    ///   - `min` (`&[f64]`): Per-axis lower bounds used for reflection planes.
-    ///   - `max` (`&[f64]`): Per-axis upper bounds used for reflection planes.
-    pub fn new(min: &[f64], max: &[f64]) -> Result<Self, BoundaryError> {
-        validate_bounds(min, max)?;
-        Ok(Self {
-            min: min.to_vec(),
-            max: max.to_vec(),
-        })
-    }
-}
-
-impl Boundary for ReflectBox {
-    fn apply(&self, objects: &mut PhysObj) -> Result<(), BoundaryError> {
-        let (dim, n, alive_flags, rigid_flags) = shape_alive_rigid(objects)?;
         let mut flip_mask: Vec<u8> = vec![0; n * dim];
 
         {
@@ -276,40 +115,12 @@ impl Boundary for ReflectBox {
                 .par_chunks_mut(dim)
                 .zip(flip_mask.par_chunks_mut(dim))
                 .enumerate()
-                .for_each(|(i, (r_row, mask_row))| {
-                    if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
-                        return;
+                .try_for_each(|(i, (r_row, mask_row))| {
+                    if masks.should_skip(i) {
+                        return Ok(());
                     }
-                    if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
-                        return;
-                    }
-
-                    for d in 0..dim {
-                        let x = r_row[d];
-                        if !x.is_finite() {
-                            continue;
-                        }
-
-                        let lo = self.min[d];
-                        let hi = self.max[d];
-                        if !(x < lo || x > hi) {
-                            continue;
-                        }
-
-                        let w = hi - lo;
-                        let y = (x - lo).rem_euclid(2.0 * w);
-                        r_row[d] = if y <= w { lo + y } else { hi - (y - w) };
-
-                        let flips = if x < lo {
-                            ((lo - x) / w).ceil() as i64
-                        } else {
-                            ((x - hi) / w).ceil() as i64
-                        };
-                        if flips & 1 == 1 {
-                            mask_row[d] = 1;
-                        }
-                    }
-                });
+                    self.apply_position_with_velocity_flip_mask(r_row, mask_row)
+                })?;
         }
 
         {
@@ -320,10 +131,7 @@ impl Boundary for ReflectBox {
                 .zip(flip_mask.par_chunks(dim))
                 .enumerate()
                 .for_each(|(i, (v_row, mask_row))| {
-                    if alive_flags.as_ref().is_some_and(|flags| !flags[i]) {
-                        return;
-                    }
-                    if rigid_flags.as_ref().is_some_and(|flags| flags[i]) {
+                    if masks.should_skip(i) {
                         return;
                     }
 
@@ -337,4 +145,18 @@ impl Boundary for ReflectBox {
 
         Ok(())
     }
+}
+
+#[inline]
+fn shape_alive_rigid(
+    objects: &PhysObj,
+) -> Result<(usize, usize, ParticleMasks), ParticleBoundaryError> {
+    let (dim, n) = {
+        let r = objects.core.get::<f64>(ATTR_R)?;
+        (r.dim(), r.num_vectors())
+    };
+
+    validate_vector_attr_f64(objects, ATTR_V, dim, n)?;
+    let masks = gather_masks(objects, n, ParticleSelection::AliveOnly)?;
+    Ok((dim, n, masks))
 }

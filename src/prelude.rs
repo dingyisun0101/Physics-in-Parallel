@@ -7,4 +7,5 @@ Import with:
 
 pub use crate::engines::prelude::*;
 pub use crate::math::prelude::*;
+pub use crate::models::prelude::*;
 pub use crate::space::prelude::*;

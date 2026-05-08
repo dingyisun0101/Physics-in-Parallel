@@ -13,4 +13,5 @@ pub mod create_state;
 pub mod integrator;
 pub mod interactions;
 pub mod observe;
+pub(crate) mod state;
 pub mod thermostat;

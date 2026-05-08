@@ -2,24 +2,21 @@
 name = "physics_in_parallel"
 version = "3.0.0"
 edition = "2024"
-
 description = "High-performance infrastructure for numerical simulations in physics"
 license = "MIT"
-
-
 readme = "README.md"
 repository = "https://github.com/dingyisun0101/Physics-in-Parallel"
 homepage = "https://github.com/dingyisun0101/Physics-in-Parallel"
-documentation = "https://github.com/dingyisun0101/Physics-in-Parallel"
+documentation = "https://docs.rs/physics_in_parallel"
 keywords = ["physics", "simulation", "math", "tensor", "scientific"]
 categories = ["science"]
-
-
+rust-version = "1.85"
+exclude = ["target/", ".git/", ".idea/", ".vscode/"]
 
 [dependencies]
 # Number traits (real + complex)
 num-traits = "0.2"
-num-complex = { version ="0.4", features = ["serde"]}
+num-complex = { version = "0.4", features = ["serde"] }
 
 # Random number generation
 rand = "0.10.1"
@@ -27,20 +24,19 @@ rand_distr = "0.6"
 rand_chacha = "0.10"
 rand_pcg = "0.10.2"
 
-# Automatic parallelism 
-rayon = { version = "1.12"}
+# Automatic parallelism
+rayon = "1.12"
 
 # Fast hash maps
 ahash = "0.8"
-hashbrown = "0.17.0"
 
 # IO
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0" }
+serde_json = "1.0"
 ndarray = "0.17"
 
 
 [profile.release]
-opt-level = 3  # Maximum optimization
-lto = true     # Enable link-time optimization (slower compile, faster runtime)
-codegen-units = 1  # Better optimization at the cost of compile time
+opt-level = 3
+lto = true
+codegen-units = 1
