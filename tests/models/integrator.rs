@@ -1,4 +1,4 @@
-use physics_in_parallel::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_R, ATTR_V};
+use physics_in_parallel::models::particles::attrs::{ATTR_A, ATTR_R, ATTR_V, set_alive};
 use physics_in_parallel::models::particles::create_state::create_template;
 use physics_in_parallel::models::particles::integrator::{
     ExplicitEuler, Integrator, IntegratorError, SemiImplicitEuler,
@@ -42,10 +42,7 @@ fn euler_updates_v_then_r() {
 #[test]
 fn integrator_respects_alive_mask_and_validates_dt() {
     let mut obj = create_template(1, 1).unwrap();
-    obj.core.allocate::<f64>(ATTR_ALIVE, 1, 1).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_ALIVE, 0, &[0.0])
-        .unwrap();
+    set_alive(&mut obj, 0, false).unwrap();
 
     obj.core.set_vector_of::<f64>(ATTR_R, 0, &[3.0]).unwrap();
     obj.core.set_vector_of::<f64>(ATTR_V, 0, &[4.0]).unwrap();

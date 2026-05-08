@@ -5,7 +5,9 @@ General time-integration tools for massive-particle models.
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V};
+use crate::models::particles::attrs::{
+    ATTR_A, ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V, is_alive_value,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IntegratorError {
@@ -56,7 +58,7 @@ fn gather_alive_flags(objects: &PhysObj, n: usize) -> Result<Option<Vec<bool>>, 
         return Ok(None);
     }
 
-    let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
+    let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
     if alive.dim() != 1 {
         return Err(IntegratorError::InvalidAttrShape {
             label: ATTR_ALIVE,
@@ -74,7 +76,7 @@ fn gather_alive_flags(objects: &PhysObj, n: usize) -> Result<Option<Vec<bool>>, 
 
     let mut flags = Vec::with_capacity(n);
     for i in 0..n {
-        flags.push(alive.get(i as isize, 0) > 0.0);
+        flags.push(is_alive_value(alive.get(i as isize, 0)));
     }
     Ok(Some(flags))
 }

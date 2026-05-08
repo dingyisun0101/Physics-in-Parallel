@@ -4,6 +4,10 @@ mod boundary;
 mod create_state;
 #[path = "models/integrator.rs"]
 mod integrator;
+#[path = "models/observe.rs"]
+mod observe;
+#[path = "models/particle_neighbor_list.rs"]
+mod particle_neighbor_list;
 #[path = "models/power_law.rs"]
 mod power_law;
 #[path = "models/spring_network.rs"]

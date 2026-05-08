@@ -1,4 +1,4 @@
-use physics_in_parallel::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_V};
+use physics_in_parallel::models::particles::attrs::{ATTR_R, ATTR_V, set_alive};
 use physics_in_parallel::models::particles::boundary::{
     Boundary, ClampBox, PeriodicBox, ReflectBox,
 };
@@ -37,19 +37,14 @@ fn periodic_and_clamp_update_positions() {
 #[test]
 fn reflect_flips_velocity_and_respects_alive_mask() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core.allocate::<f64>(ATTR_ALIVE, 1, 2).unwrap();
 
     obj.core.set_vector_of::<f64>(ATTR_R, 0, &[1.2]).unwrap();
     obj.core.set_vector_of::<f64>(ATTR_V, 0, &[2.0]).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_ALIVE, 0, &[1.0])
-        .unwrap();
+    set_alive(&mut obj, 0, true).unwrap();
 
     obj.core.set_vector_of::<f64>(ATTR_R, 1, &[1.2]).unwrap();
     obj.core.set_vector_of::<f64>(ATTR_V, 1, &[3.0]).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_ALIVE, 1, &[0.0])
-        .unwrap();
+    set_alive(&mut obj, 1, false).unwrap();
 
     ReflectBox::new(&[0.0], &[1.0])
         .unwrap()

@@ -3,7 +3,7 @@ General boundary-condition tools for particle models.
 */
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V};
+use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_R, ATTR_RIGID, ATTR_V, is_alive_value};
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +90,7 @@ fn shape_alive_rigid(
     let alive_flags = if !objects.core.contains(ATTR_ALIVE) {
         None
     } else {
-        let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
+        let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
         if alive.dim() != 1 {
             return Err(BoundaryError::InvalidAttrShape {
                 label: ATTR_ALIVE,
@@ -110,7 +110,7 @@ fn shape_alive_rigid(
             .as_tensor()
             .data
             .par_iter()
-            .map(|&x| x > 0.0)
+            .map(|&x| is_alive_value(x))
             .collect::<Vec<bool>>();
         Some(flags)
     };

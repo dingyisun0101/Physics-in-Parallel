@@ -1,5 +1,19 @@
 /*!
-Massive-particle convenience constructors on top of `PhysObj`.
+Canonical massive-particle state construction and randomization.
+
+Purpose:
+This module builds `PhysObj` instances with the particle attributes expected by
+the rest of the particle model code. It also provides common position and
+velocity randomizers that operate on those canonical attributes.
+
+Canonical template attributes:
+- `r`: position vector, initialized to zero.
+- `v`: velocity vector, initialized to zero.
+- `a`: acceleration vector, initialized to zero.
+- `m`: mass scalar, initialized to one.
+- `m_inv`: inverse-mass scalar, initialized to one.
+- `alive`: alive-mask scalar, initialized to one.
+- `rigid`: rigid-mask scalar, initialized to zero.
 */
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
@@ -7,40 +21,78 @@ use crate::math::tensor::{RandType, TensorRandFiller};
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsCore, AttrsError, AttrsMeta, PhysObj};
-pub use crate::models::particles::attrs::{ATTR_A, ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V};
+pub use crate::models::particles::attrs::{
+    ALIVE_TRUE, ATTR_A, ATTR_ALIVE, ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V,
+};
 
+/// Errors returned by massive-particle construction and randomization helpers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MassiveParticlesError {
+    /// Lower-level attribute/core error.
     Attrs(AttrsError),
-    InvalidTau { tau: f64 },
-    InvalidMassInv { index: usize, value: f64 },
-    InvalidMassInvShape { expected_dim: usize, got_dim: usize },
-    InconsistentParticleCount { expected: usize, got: usize },
-    Distribution { msg: String },
+    /// Requested particle vector dimension is zero.
+    InvalidDimension {
+        /// Invalid dimension value.
+        dim: usize,
+    },
+    /// Requested particle count is zero.
+    InvalidParticleCount {
+        /// Invalid particle count.
+        n: usize,
+    },
+    /// Temperature-like Maxwell-Boltzmann parameter is not finite or negative.
+    InvalidTau {
+        /// Invalid tau value.
+        tau: f64,
+    },
+    /// Inverse mass is not finite or is negative.
+    InvalidMassInv {
+        /// Particle row index.
+        index: usize,
+        /// Invalid inverse-mass value.
+        value: f64,
+    },
+    /// Inverse-mass attribute is not scalar-valued.
+    InvalidMassInvShape {
+        /// Expected vector dimension.
+        expected_dim: usize,
+        /// Actual vector dimension.
+        got_dim: usize,
+    },
+    /// Attribute row count does not match the velocity row count.
+    InconsistentParticleCount {
+        /// Expected number of rows.
+        expected: usize,
+        /// Actual number of rows.
+        got: usize,
+    },
+    /// Distribution parameters are invalid.
+    Distribution {
+        /// Human-readable validation message.
+        msg: String,
+    },
 }
 
 impl From<AttrsError> for MassiveParticlesError {
-    #[inline]
-    /// - Purpose: Converts an `AttrsError` into a `MassiveParticlesError`.
-    /// - Parameters:
-    ///   - `value` (`AttrsError`): Attribute-layer error to wrap.
     fn from(value: AttrsError) -> Self {
         Self::Attrs(value)
     }
 }
 
-// =============================================================================
-// -------------------------- Empty Instance Creator ---------------------------
-// =============================================================================
-#[inline]
-/// - Purpose: Constructs a `PhysObj` configured with canonical massive-particle core fields.
-/// - Parameters:
-///   - `dim` (`usize`): Vector dimension used for `r`, `v`, and `a`.
-///   - `num_particles` (`usize`): Number of particles (row count for all attributes).
-pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, AttrsError> {
+/// Constructs a canonical massive-particle `PhysObj`.
+///
+/// `dim` is the vector dimension used by position, velocity, and acceleration.
+/// `num_particles` is the shared row count for all attributes.
+pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, MassiveParticlesError> {
+    if dim == 0 {
+        return Err(MassiveParticlesError::InvalidDimension { dim });
+    }
+    if num_particles == 0 {
+        return Err(MassiveParticlesError::InvalidParticleCount { n: num_particles });
+    }
+
     let mut core = AttrsCore::empty();
 
-    // Vector-valued fields: initialized to 0 by VectorList::empty.
     core.allocate::<f64>(ATTR_R, dim, num_particles)?;
     core.allocate::<f64>(ATTR_V, dim, num_particles)?;
     core.allocate::<f64>(ATTR_A, dim, num_particles)?;
@@ -54,38 +106,38 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Attr
     m_inv.fill(1.0);
     core.insert(ATTR_M_INV, m_inv)?;
 
+    let mut alive = VectorList::<u8>::empty(1, num_particles);
+    alive.fill(ALIVE_TRUE);
+    core.insert(ATTR_ALIVE, alive)?;
+
     let rigid = VectorList::<f64>::empty(1, num_particles);
     core.insert(ATTR_RIGID, rigid)?;
 
-    let meta = AttrsMeta {
-        id: 0,
-        label: "particles".to_string(),
-        comment: String::new(),
-    };
+    let meta = AttrsMeta::new(0, "particles", "canonical massive-particle state");
 
-    Ok(PhysObj { meta, core })
+    Ok(PhysObj::new(meta, core))
 }
 
-// =============================================================================
-// --------------------- Particle States Randomizers ---------------------------
-// =============================================================================
-
+/// Position randomization strategy.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RandPosMethod<'a> {
+    /// Uniform random placement centered at zero.
+    ///
+    /// Each coordinate is sampled in `[-box_size[k] / 2, box_size[k] / 2]`.
     Uniform {
+        /// Full box width on each axis.
         box_size: &'a [f64],
-    }, // truly random asignment for each particle
+    },
+    /// Regular lattice coordinate plus independent Gaussian jitter per axis.
     JitteredLattice {
+        /// Lattice spacing on each axis.
         spacings: &'a [f64],
+        /// Gaussian standard deviation on each axis.
         sigmas: &'a [f64],
-    }, // Lattice site + random jitter
+    },
 }
 
-#[inline]
-/// - Purpose: Randomizes particle positions (`r`) using the requested placement strategy.
-/// - Parameters:
-///   - `phys_obj` (`&mut PhysObj`): Particle container whose `r` field will be overwritten.
-///   - `method` (`RandPosMethod<'_>`): Position randomization strategy and its method-specific parameters.
+/// Randomizes particle positions in `ATTR_R`.
 pub fn randomize_r(
     phys_obj: &mut PhysObj,
     method: RandPosMethod<'_>,
@@ -208,17 +260,18 @@ pub fn randomize_r(
     Ok(())
 }
 
+/// Velocity randomization strategy.
+#[derive(Debug, Clone, PartialEq)]
 pub enum RandVelMethod<'a> {
+    /// Uniform velocity components in `[low, high)`.
     Uniform { low: f64, high: f64 },
+    /// Maxwell-Boltzmann-like Gaussian components with variance `tau * m_inv`.
     MaxwellBoltzmann { tau: f64 },
+    /// Independent Gaussian components with per-axis mean and standard deviation.
     DriftGaussian { avg: &'a [f64], sigma: &'a [f64] },
 }
 
-#[inline]
-/// - Purpose: Randomizes particle velocities using the requested velocity randomization strategy.
-/// - Parameters:
-///   - `phys_obj` (`&mut PhysObj`): Particle container whose `v` field will be overwritten.
-///   - `method` (`RandVelMethod<'_>`): Velocity randomization strategy and its method-specific parameters.
+/// Randomizes particle velocities in `ATTR_V`.
 pub fn randomize_v(
     phys_obj: &mut PhysObj,
     method: RandVelMethod<'_>,

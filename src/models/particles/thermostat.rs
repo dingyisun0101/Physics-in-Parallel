@@ -7,7 +7,9 @@ use rand::rngs::SmallRng;
 use rand_distr::{Distribution, StandardNormal};
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
-use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ATTR_V};
+use crate::models::particles::attrs::{
+    ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ATTR_V, ParticleSelection, is_alive_value,
+};
 
 /// Errors returned by thermostat modules.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +61,7 @@ pub struct LangevinThermostat {
     gamma: f64,
     seed: u64,
     step_counter: u64,
-    include_dead: bool,
+    selection: ParticleSelection,
 }
 
 impl LangevinThermostat {
@@ -67,7 +69,7 @@ impl LangevinThermostat {
         tau_target: f64,
         gamma: f64,
         seed: u64,
-        include_dead: bool,
+        selection: ParticleSelection,
     ) -> Result<Self, ThermostatError> {
         if !tau_target.is_finite() || tau_target < 0.0 {
             return Err(ThermostatError::InvalidParam {
@@ -87,7 +89,7 @@ impl LangevinThermostat {
             gamma,
             seed,
             step_counter: 0,
-            include_dead,
+            selection,
         })
     }
 
@@ -143,10 +145,10 @@ impl Thermostat for LangevinThermostat {
         };
 
         let alive_flags: Option<Vec<bool>> =
-            if self.include_dead || !objects.core.contains(ATTR_ALIVE) {
+            if self.selection.includes_dead() || !objects.core.contains(ATTR_ALIVE) {
                 None
             } else {
-                let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
+                let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
                 if alive.dim() != 1 {
                     return Err(ThermostatError::InvalidAttrShape {
                         label: ATTR_ALIVE,
@@ -164,7 +166,7 @@ impl Thermostat for LangevinThermostat {
 
                 let mut flags = Vec::with_capacity(n);
                 for i in 0..n {
-                    flags.push(alive.get(i as isize, 0) > 0.0);
+                    flags.push(is_alive_value(alive.get(i as isize, 0)));
                 }
                 Some(flags)
             };

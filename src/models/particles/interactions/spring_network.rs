@@ -1,11 +1,25 @@
 /*!
-Spring-network interaction wrapper for particle models.
+Pairwise Hooke-law spring interactions for massive-particle models.
+
+Purpose:
+`SpringNetwork` stores an unordered set of particle pairs, with one `Spring`
+payload on each pair. It can then add Hooke-law acceleration contributions into
+the canonical particle acceleration attribute `ATTR_A`.
+
+Design:
+The network owns only interaction topology and spring parameters. Particle
+state lives in `PhysObj`; `apply_hooke_acceleration` reads `ATTR_R`,
+`ATTR_M_INV`, optional `ATTR_ALIVE`, optional `ATTR_RIGID`, and adds into
+`ATTR_A`. Existing acceleration is preserved and spring contributions are added
+on top of it.
 */
 
-use crate::engines::soa::PhysObj;
 use crate::engines::soa::interaction::InteractionOrder;
+use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::engines::soa::{Interaction, InteractionError, InteractionId};
-use crate::models::particles::attrs::{ATTR_A, ATTR_ALIVE, ATTR_M_INV, ATTR_R, ATTR_RIGID};
+use crate::models::particles::attrs::{
+    ATTR_A, ATTR_ALIVE, ATTR_M_INV, ATTR_R, ATTR_RIGID, ParticleSelection, is_alive_value,
+};
 
 /// Optional distance window `(min, max)` where this spring is active.
 pub type SpringCutoff = (f64, f64);
@@ -19,6 +33,101 @@ pub struct Spring {
     pub l_0: f64,
     /// Optional pair-distance cutoff `(min, max)`.
     pub cutoff: Option<SpringCutoff>,
+}
+
+impl Spring {
+    /// Builds a validated spring payload.
+    pub fn new(k: f64, l_0: f64, cutoff: Option<SpringCutoff>) -> Result<Self, SpringNetworkError> {
+        let spring = Self { k, l_0, cutoff };
+        spring.validate()?;
+        Ok(spring)
+    }
+
+    /// Validates physical spring parameters.
+    pub fn validate(&self) -> Result<(), SpringNetworkError> {
+        if !self.k.is_finite() {
+            return Err(SpringNetworkError::InvalidSpringConstant { k: self.k });
+        }
+        if !self.l_0.is_finite() || self.l_0 < 0.0 {
+            return Err(SpringNetworkError::InvalidRestLength { l_0: self.l_0 });
+        }
+        if let Some((min, max)) = self.cutoff {
+            if !min.is_finite() || !max.is_finite() || min < 0.0 || max < min {
+                return Err(SpringNetworkError::InvalidCutoff { min, max });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Errors returned by spring-network operations.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpringNetworkError {
+    /// Lower-level attribute/core access error.
+    Attrs(AttrsError),
+    /// Lower-level interaction storage error.
+    Interaction(InteractionError),
+    /// Spring constant is not finite.
+    InvalidSpringConstant {
+        /// Invalid spring constant.
+        k: f64,
+    },
+    /// Rest length is not finite or is negative.
+    InvalidRestLength {
+        /// Invalid rest length.
+        l_0: f64,
+    },
+    /// Cutoff bounds are not finite, negative, or ordered incorrectly.
+    InvalidCutoff {
+        /// Lower active distance.
+        min: f64,
+        /// Upper active distance.
+        max: f64,
+    },
+    /// Required particle attribute has the wrong vector dimension.
+    InvalidAttrShape {
+        /// Attribute label that failed validation.
+        label: &'static str,
+        /// Expected vector dimension.
+        expected_dim: usize,
+        /// Actual vector dimension.
+        got_dim: usize,
+    },
+    /// Attribute row count does not match the position row count.
+    InconsistentParticleCount {
+        /// Attribute label that failed validation.
+        label: &'static str,
+        /// Expected number of particle rows.
+        expected: usize,
+        /// Actual number of rows.
+        got: usize,
+    },
+    /// Inverse mass is not finite or is negative.
+    InvalidInverseMass {
+        /// Particle row index.
+        index: usize,
+        /// Invalid inverse mass value.
+        value: f64,
+    },
+    /// Internal interaction storage contained a non-pair entry.
+    InvalidSpringArity {
+        /// Interaction id with the wrong arity.
+        id: InteractionId,
+        /// Actual number of nodes.
+        arity: usize,
+    },
+}
+
+impl From<InteractionError> for SpringNetworkError {
+    fn from(value: InteractionError) -> Self {
+        Self::Interaction(value)
+    }
+}
+
+impl From<AttrsError> for SpringNetworkError {
+    fn from(value: AttrsError) -> Self {
+        Self::Attrs(value)
+    }
 }
 
 /// Undirected network of pairwise springs.
@@ -58,8 +167,8 @@ impl SpringNetwork {
         k: f64,
         l_0: f64,
         cutoff: Option<SpringCutoff>,
-    ) -> Result<InteractionId, InteractionError> {
-        self.add_spring_payload(pair, Spring { k, l_0, cutoff })
+    ) -> Result<InteractionId, SpringNetworkError> {
+        self.add_spring_payload(pair, Spring::new(k, l_0, cutoff)?)
     }
 
     /// Adds or overwrites one spring payload for an undirected particle pair.
@@ -67,16 +176,17 @@ impl SpringNetwork {
         &mut self,
         pair: (usize, usize),
         spring: Spring,
-    ) -> Result<InteractionId, InteractionError> {
+    ) -> Result<InteractionId, SpringNetworkError> {
+        spring.validate()?;
         self.ensure_n_objects_for(pair);
-        self.springs.set_pair(pair.0, pair.1, spring)
+        Ok(self.springs.set_pair(pair.0, pair.1, spring)?)
     }
 
     /// Removes one spring by particle pair.
     pub fn remove_spring(
         &mut self,
         pair: (usize, usize),
-    ) -> Result<Option<Spring>, InteractionError> {
+    ) -> Result<Option<Spring>, SpringNetworkError> {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
@@ -87,22 +197,22 @@ impl SpringNetwork {
     }
 
     /// Returns an immutable spring payload by particle pair.
-    pub fn get_spring(&self, pair: (usize, usize)) -> Result<Option<&Spring>, InteractionError> {
+    pub fn get_spring(&self, pair: (usize, usize)) -> Result<Option<&Spring>, SpringNetworkError> {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
-        self.springs.get_pair(pair.0, pair.1)
+        Ok(self.springs.get_pair(pair.0, pair.1)?)
     }
 
     /// Returns a mutable spring payload by particle pair.
     pub fn get_spring_mut(
         &mut self,
         pair: (usize, usize),
-    ) -> Result<Option<&mut Spring>, InteractionError> {
+    ) -> Result<Option<&mut Spring>, SpringNetworkError> {
         if pair.0.max(pair.1) >= self.springs.topology().n_objects() {
             return Ok(None);
         }
-        self.springs.get_pair_mut(pair.0, pair.1)
+        Ok(self.springs.get_pair_mut(pair.0, pair.1)?)
     }
 
     /// Clears all springs while preserving allocated capacity.
@@ -143,12 +253,13 @@ impl SpringNetwork {
     /// Semantics:
     /// - For rigid/non-rigid pairs, the spring is still evaluated and only the non-rigid endpoint is updated.
     /// - For rigid/rigid pairs, no acceleration is written.
-    /// - If `include_dead` is `false` and `alive` exists, dead endpoints are skipped.
+    /// - With `ParticleSelection::AliveOnly`, springs touching dead particles are skipped.
+    /// - Use `ParticleSelection::All` only when intentionally debugging all allocated slots.
     pub fn apply_hooke_acceleration(
         &self,
         objects: &mut PhysObj,
-        include_dead: bool,
-    ) -> Result<(), InteractionError> {
+        selection: ParticleSelection,
+    ) -> Result<(), SpringNetworkError> {
         let (dim, n, r_data, m_inv_data, alive_flags, rigid_flags) = {
             let r = objects.core.get::<f64>(ATTR_R)?;
             let m_inv = objects.core.get::<f64>(ATTR_M_INV)?;
@@ -157,7 +268,13 @@ impl SpringNetwork {
                 return Ok(());
             }
             if m_inv.dim() != 1 || m_inv.num_vectors() != r.num_vectors() {
-                return Ok(());
+                return Err(invalid_attr_or_count(
+                    ATTR_M_INV,
+                    1,
+                    m_inv.dim(),
+                    r.num_vectors(),
+                    m_inv.num_vectors(),
+                ));
             }
 
             let dim = r.dim();
@@ -173,34 +290,34 @@ impl SpringNetwork {
             let mut m_inv_data = vec![0.0f64; n];
             for i in 0..n {
                 m_inv_data[i] = m_inv.get(i as isize, 0);
+                if !m_inv_data[i].is_finite() || m_inv_data[i] < 0.0 {
+                    return Err(SpringNetworkError::InvalidInverseMass {
+                        index: i,
+                        value: m_inv_data[i],
+                    });
+                }
             }
 
-            let alive_flags = if !include_dead && objects.core.contains(ATTR_ALIVE) {
-                let alive = objects.core.get::<f64>(ATTR_ALIVE)?;
-                if alive.dim() != 1 || alive.num_vectors() != n {
-                    None
-                } else {
-                    Some(
-                        (0..n)
-                            .map(|i| alive.get(i as isize, 0) > 0.0)
-                            .collect::<Vec<bool>>(),
-                    )
-                }
+            let alive_flags = if !selection.includes_dead() && objects.core.contains(ATTR_ALIVE) {
+                let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
+                validate_scalar_mask(ATTR_ALIVE, alive.dim(), alive.num_vectors(), n)?;
+                Some(
+                    (0..n)
+                        .map(|i| is_alive_value(alive.get(i as isize, 0)))
+                        .collect::<Vec<bool>>(),
+                )
             } else {
                 None
             };
 
             let rigid_flags = if objects.core.contains(ATTR_RIGID) {
                 let rigid = objects.core.get::<f64>(ATTR_RIGID)?;
-                if rigid.dim() != 1 || rigid.num_vectors() != n {
-                    None
-                } else {
-                    Some(
-                        (0..n)
-                            .map(|i| rigid.get(i as isize, 0) > 0.0)
-                            .collect::<Vec<bool>>(),
-                    )
-                }
+                validate_scalar_mask(ATTR_RIGID, rigid.dim(), rigid.num_vectors(), n)?;
+                Some(
+                    (0..n)
+                        .map(|i| rigid.get(i as isize, 0) > 0.0)
+                        .collect::<Vec<bool>>(),
+                )
             } else {
                 None
             };
@@ -211,10 +328,15 @@ impl SpringNetwork {
         let mut accum = vec![0.0f64; n * dim];
         let mut dr = vec![0.0f64; dim];
 
-        for (_id, nodes, spring) in self.springs.iter() {
+        for (id, nodes, spring) in self.springs.iter() {
             if nodes.nodes.len() != 2 {
-                continue;
+                return Err(SpringNetworkError::InvalidSpringArity {
+                    id,
+                    arity: nodes.nodes.len(),
+                });
             }
+            spring.validate()?;
+
             let i = nodes.nodes[0];
             let j = nodes.nodes[1];
             if i >= n || j >= n || i == j {
@@ -259,7 +381,13 @@ impl SpringNetwork {
 
         let a = objects.core.get_mut::<f64>(ATTR_A)?;
         if a.dim() != dim || a.num_vectors() != n {
-            return Ok(());
+            return Err(invalid_attr_or_count(
+                ATTR_A,
+                dim,
+                a.dim(),
+                n,
+                a.num_vectors(),
+            ));
         }
 
         for i in 0..n {
@@ -274,7 +402,54 @@ impl SpringNetwork {
     fn ensure_n_objects_for(&mut self, pair: (usize, usize)) {
         let needed = pair.0.max(pair.1).saturating_add(1);
         if needed > self.springs.topology().n_objects() {
-            let _ = self.springs.set_n_objects(needed);
+            self.springs
+                .set_n_objects(needed)
+                .expect("growing spring interaction object bound should not invalidate entries");
+        }
+    }
+}
+
+fn validate_scalar_mask(
+    label: &'static str,
+    got_dim: usize,
+    got_n: usize,
+    expected_n: usize,
+) -> Result<(), SpringNetworkError> {
+    if got_dim != 1 {
+        return Err(SpringNetworkError::InvalidAttrShape {
+            label,
+            expected_dim: 1,
+            got_dim,
+        });
+    }
+    if got_n != expected_n {
+        return Err(SpringNetworkError::InconsistentParticleCount {
+            label,
+            expected: expected_n,
+            got: got_n,
+        });
+    }
+    Ok(())
+}
+
+fn invalid_attr_or_count(
+    label: &'static str,
+    expected_dim: usize,
+    got_dim: usize,
+    expected_n: usize,
+    got_n: usize,
+) -> SpringNetworkError {
+    if got_dim != expected_dim {
+        SpringNetworkError::InvalidAttrShape {
+            label,
+            expected_dim,
+            got_dim,
+        }
+    } else {
+        SpringNetworkError::InconsistentParticleCount {
+            label,
+            expected: expected_n,
+            got: got_n,
         }
     }
 }
