@@ -51,6 +51,21 @@ fn add_twice_same_pair_overwrites_payload() {
 }
 
 #[test]
+fn capacity_constructor_and_batch_payload_insert_work() {
+    let mut network = SpringNetwork::with_capacity(4, 3);
+    let spring = physics_in_parallel::models::laws::Spring::new(5.0, 1.2, None).unwrap();
+
+    network
+        .add_springs_payload(&[(0, 1), (2, 3), (1, 3)], spring)
+        .unwrap();
+
+    assert_eq!(network.len(), 3);
+    assert_eq!(network.get_spring((1, 0)).unwrap().unwrap().k, 5.0);
+    assert_eq!(network.get_spring((3, 2)).unwrap().unwrap().l_0, 1.2);
+    assert!(network.get_spring((0, 2)).unwrap().is_none());
+}
+
+#[test]
 fn remove_nonexistent_pair_returns_none() {
     let mut network = SpringNetwork::empty();
     assert!(network.remove_spring((10, 11)).unwrap().is_none());

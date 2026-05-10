@@ -129,6 +129,13 @@ impl SpringNetwork {
         }
     }
 
+    /// Creates an empty spring network with a known particle bound and spring capacity.
+    pub fn with_capacity(num_particles: usize, spring_capacity: usize) -> Self {
+        let mut springs = Interaction::new(num_particles, InteractionOrder::Unordered);
+        springs.reserve(spring_capacity);
+        Self { springs }
+    }
+
     /// Number of active springs.
     pub fn len(&self) -> usize {
         self.springs.len()
@@ -159,6 +166,23 @@ impl SpringNetwork {
         spring.validate()?;
         self.ensure_n_objects_for(pair);
         Ok(self.springs.set_pair(pair.0, pair.1, spring)?)
+    }
+
+    /// Adds or overwrites many springs that share one payload.
+    pub fn add_springs_payload(
+        &mut self,
+        pairs: &[(usize, usize)],
+        spring: Spring,
+    ) -> Result<(), SpringNetworkError> {
+        spring.validate()?;
+        if let Some(max_obj) = pairs.iter().map(|&(i, j)| i.max(j)).max() {
+            self.ensure_n_objects(max_obj.saturating_add(1));
+        }
+
+        for &(i, j) in pairs {
+            self.springs.set_pair(i, j, spring)?;
+        }
+        Ok(())
     }
 
     /// Removes one spring by particle pair.
@@ -327,6 +351,10 @@ impl SpringNetwork {
 
     fn ensure_n_objects_for(&mut self, pair: (usize, usize)) {
         let needed = pair.0.max(pair.1).saturating_add(1);
+        self.ensure_n_objects(needed);
+    }
+
+    fn ensure_n_objects(&mut self, needed: usize) {
         if needed > self.springs.topology().n_objects() {
             self.springs
                 .set_n_objects(needed)

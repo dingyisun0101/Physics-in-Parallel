@@ -5,6 +5,10 @@ This example measures the total simulation lifecycle:
 - **Initiation**: Allocation of particle storage and population of interaction networks.
 - **Evolution**: Numerical time-stepping including force accumulation and integration.
 
+For a complete PiP model usage example, read `run_pip_version`. It shows the
+full procedure: create canonical particle state, write initial positions, build
+a spring network, apply spring acceleration, and integrate the state.
+
 Metrics are displayed in a comparative chart, including numerical validation between implementations.
 */
 
@@ -26,6 +30,18 @@ struct NaiveParticle {
     v: [f64; 3],
     a: [f64; 3],
     m_inv: f64,
+}
+
+struct NaiveBenchmark {
+    particles: Vec<NaiveParticle>,
+    init_ms: f64,
+    evol_ms_per_step: f64,
+}
+
+struct PipBenchmark {
+    objects: PhysObj,
+    init_ms: f64,
+    evol_ms_per_step: f64,
 }
 
 /// Naive AoS evolution step.
@@ -89,17 +105,16 @@ fn build_spring_pairs(n: usize, m: usize) -> Vec<(usize, usize)> {
     pairs
 }
 
-//===================================================================
-// ------------------------- Benchmark Runner -----------------------
-//===================================================================
-
-fn run_comparison(n: usize, m: usize, steps: usize) {
-    let dt = 0.001;
-    let spring_pairs = build_spring_pairs(n, m);
-
-    // --- NAIVE SETUP ---
-    let start_naive_init = Instant::now();
-    let mut naive_p = vec![
+/// Full naive AoS baseline lifecycle: allocate state, add springs, and evolve.
+fn run_naive_version(
+    n: usize,
+    spring_pairs: &[(usize, usize)],
+    spring: Spring,
+    dt: f64,
+    steps: usize,
+) -> NaiveBenchmark {
+    let start_init = Instant::now();
+    let mut particles = vec![
         NaiveParticle {
             r: [0.0; 3],
             v: [0.0; 3],
@@ -108,58 +123,95 @@ fn run_comparison(n: usize, m: usize, steps: usize) {
         };
         n
     ];
-    let mut naive_s = Vec::with_capacity(spring_pairs.len());
+    let mut springs = Vec::with_capacity(spring_pairs.len());
     for i in 0..n {
-        naive_p[i].r = [i as f64 * 0.001, 0.0, 0.0];
+        particles[i].r = [i as f64 * 0.001, 0.0, 0.0];
     }
-    for &(u, v) in &spring_pairs {
-        naive_s.push((u, v, Spring::new(10.0, 1.0, Some((0.0, 5.0))).unwrap()));
+    for &(u, v) in spring_pairs {
+        springs.push((u, v, spring));
     }
-    let naive_init_time = start_naive_init.elapsed().as_secs_f64() * 1000.0;
+    let init_ms = start_init.elapsed().as_secs_f64() * 1000.0;
 
-    // --- PIP SETUP ---
-    let start_pip_init = Instant::now();
-    let mut pip_obj = create_template(3, n).unwrap();
-    let mut pip_net = SpringNetwork::empty();
+    let start_evol = Instant::now();
+    for _ in 0..steps {
+        naive_step(&mut particles, &springs, dt);
+    }
+    let evol_ms_per_step = start_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+
+    NaiveBenchmark {
+        particles,
+        init_ms,
+        evol_ms_per_step,
+    }
+}
+
+/// Full PiP model lifecycle and usage demonstration.
+///
+/// This is the canonical example to copy from when building a spring-network
+/// particle model with PiP:
+/// 1. Create canonical massive-particle state with `create_template`.
+/// 2. Populate the `ATTR_R` position attribute.
+/// 3. Build a capacity-aware `SpringNetwork`.
+/// 4. Add spring payloads in batch.
+/// 5. For each step, clear acceleration, apply Hooke acceleration, and integrate.
+fn run_pip_version(
+    n: usize,
+    spring_pairs: &[(usize, usize)],
+    spring: Spring,
+    dt: f64,
+    steps: usize,
+) -> PipBenchmark {
+    let start_init = Instant::now();
+    let mut objects = create_template(3, n).unwrap();
+    let mut springs = SpringNetwork::with_capacity(n, spring_pairs.len());
+
     {
-        let r_view = pip_obj.core.get_mut::<f64>(ATTR_R).unwrap();
+        let r = objects.core.get_mut::<f64>(ATTR_R).unwrap();
         for i in 0..n {
-            r_view.set_vec(i as isize, &[i as f64 * 0.001, 0.0, 0.0]);
+            r.set_vec(i as isize, &[i as f64 * 0.001, 0.0, 0.0]);
         }
     }
-    for &pair in &spring_pairs {
-        pip_net
-            .add_spring(pair, 10.0, 1.0, Some((0.0, 5.0)))
-            .unwrap();
-    }
-    let pip_init_time = start_pip_init.elapsed().as_secs_f64() * 1000.0;
 
-    // --- EVOLUTION ---
-    let start_naive_evol = Instant::now();
-    for _ in 0..steps {
-        naive_step(&mut naive_p, &naive_s, dt);
-    }
-    let naive_evol_time = start_naive_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+    springs.add_springs_payload(spring_pairs, spring).unwrap();
+    let init_ms = start_init.elapsed().as_secs_f64() * 1000.0;
 
-    let start_pip_evol = Instant::now();
-    let mut pip_integrator = SemiImplicitEuler;
+    let start_evol = Instant::now();
+    let mut integrator = SemiImplicitEuler;
     for _ in 0..steps {
-        // Note: Explicitly clearing ATTR_A to match naive behavior
-        pip_obj.core.get_mut::<f64>(ATTR_A).unwrap().fill(0.0);
-        pip_net
-            .apply_hooke_acceleration(&mut pip_obj, ParticleSelection::All)
+        objects.core.get_mut::<f64>(ATTR_A).unwrap().fill(0.0);
+        springs
+            .apply_hooke_acceleration(&mut objects, ParticleSelection::All)
             .unwrap();
-        pip_integrator.apply(&mut pip_obj, dt).unwrap();
+        integrator.apply(&mut objects, dt).unwrap();
     }
-    let pip_evol_time = start_pip_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+    let evol_ms_per_step = start_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+
+    PipBenchmark {
+        objects,
+        init_ms,
+        evol_ms_per_step,
+    }
+}
+
+//===================================================================
+// ------------------------- Benchmark Runner -----------------------
+//===================================================================
+
+fn run_comparison(n: usize, m: usize, steps: usize) {
+    let dt = 0.001;
+    let spring_pairs = build_spring_pairs(n, m);
+    let spring = Spring::new(10.0, 1.0, Some((0.0, 5.0))).unwrap();
+
+    let naive = run_naive_version(n, &spring_pairs, spring, dt, steps);
+    let pip = run_pip_version(n, &spring_pairs, spring, dt, steps);
 
     // --- VALIDATION ---
     let mut max_diff: f64 = 0.0;
-    let pip_r = pip_obj.core.get::<f64>(ATTR_R).unwrap();
+    let pip_r = pip.objects.core.get::<f64>(ATTR_R).unwrap();
     for i in 0..n {
         let p_r = pip_r.get_vec(i as isize);
         for axis in 0..3 {
-            max_diff = max_diff.max((naive_p[i].r[axis] - p_r[axis]).abs());
+            max_diff = max_diff.max((naive.particles[i].r[axis] - p_r[axis]).abs());
         }
     }
     let validation_passed = max_diff < 1e-10;
@@ -168,10 +220,10 @@ fn run_comparison(n: usize, m: usize, steps: usize) {
     print_chart(
         n,
         spring_pairs.len(),
-        naive_init_time,
-        pip_init_time,
-        naive_evol_time,
-        pip_evol_time,
+        naive.init_ms,
+        pip.init_ms,
+        naive.evol_ms_per_step,
+        pip.evol_ms_per_step,
         max_diff,
         validation_passed,
     );

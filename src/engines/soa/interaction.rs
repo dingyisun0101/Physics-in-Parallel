@@ -58,6 +58,13 @@ impl InteractionNodes {
         }
     }
 
+    /// Builds an owned pair node list.
+    pub fn from_pair(i: ObjId, j: ObjId) -> Self {
+        Self {
+            nodes: Box::new([i, j]),
+        }
+    }
+
     /// Returns the number of participating objects.
     pub fn arity(&self) -> usize {
         self.nodes.len()
@@ -218,6 +225,11 @@ impl InteractionTopology {
     /// Shrinking fails if an active interaction references an object that would
     /// fall outside the new range.
     pub fn set_n_objects(&mut self, n_objects: usize) -> Result<(), InteractionError> {
+        if n_objects >= self.n_objects {
+            self.n_objects = n_objects;
+            return Ok(());
+        }
+
         for (id, nodes) in self.iter() {
             if let Some(&obj) = nodes.nodes.iter().find(|&&obj| obj >= n_objects) {
                 return Err(InteractionError::ObjectCountWouldInvalidate { n_objects, id, obj });
@@ -226,6 +238,12 @@ impl InteractionTopology {
 
         self.n_objects = n_objects;
         Ok(())
+    }
+
+    /// Reserves storage for at least `additional` more interactions.
+    pub fn reserve(&mut self, additional: usize) {
+        self.id_of_nodes.reserve(additional);
+        self.nodes_of_id.reserve(additional);
     }
 
     /// Shrinks or expands the object-index bound and removes now-invalid entries.
@@ -281,8 +299,12 @@ impl InteractionTopology {
     /// Adds a node list if absent and returns its interaction id.
     pub fn add(&mut self, nodes: &[ObjId]) -> Result<InteractionId, InteractionError> {
         let nodes = self.nodes_from_slice(nodes)?;
+        Ok(self.add_nodes(nodes))
+    }
+
+    fn add_nodes(&mut self, nodes: InteractionNodes) -> InteractionId {
         if let Some(&id) = self.id_of_nodes.get(&nodes) {
-            return Ok(id);
+            return id;
         }
 
         let id = if let Some(id) = self.free_ids.pop() {
@@ -295,19 +317,23 @@ impl InteractionTopology {
         };
 
         self.id_of_nodes.insert(nodes, id);
-        Ok(id)
+        id
     }
 
     /// Removes a node list if active and returns the released interaction id.
     pub fn remove(&mut self, nodes: &[ObjId]) -> Result<Option<InteractionId>, InteractionError> {
         let nodes = self.nodes_from_slice(nodes)?;
+        Ok(self.remove_nodes(nodes))
+    }
+
+    fn remove_nodes(&mut self, nodes: InteractionNodes) -> Option<InteractionId> {
         let Some(id) = self.id_of_nodes.remove(&nodes) else {
-            return Ok(None);
+            return None;
         };
 
         self.nodes_of_id[id] = None;
         self.free_ids.push(id);
-        Ok(Some(id))
+        Some(id)
     }
 
     /// Clears all active interactions while preserving allocated id capacity.
@@ -334,12 +360,14 @@ impl InteractionTopology {
         i: ObjId,
         j: ObjId,
     ) -> Result<Option<InteractionId>, InteractionError> {
-        self.id_of(&[i, j])
+        let nodes = self.nodes_from_pair(i, j)?;
+        Ok(self.id_of_nodes.get(&nodes).copied())
     }
 
     /// Convenience pair add helper.
     pub fn add_pair(&mut self, i: ObjId, j: ObjId) -> Result<InteractionId, InteractionError> {
-        self.add(&[i, j])
+        let nodes = self.nodes_from_pair(i, j)?;
+        Ok(self.add_nodes(nodes))
     }
 
     /// Convenience pair remove helper.
@@ -348,7 +376,8 @@ impl InteractionTopology {
         i: ObjId,
         j: ObjId,
     ) -> Result<Option<InteractionId>, InteractionError> {
-        self.remove(&[i, j])
+        let nodes = self.nodes_from_pair(i, j)?;
+        Ok(self.remove_nodes(nodes))
     }
 
     fn nodes_from_slice(&self, nodes: &[ObjId]) -> Result<InteractionNodes, InteractionError> {
@@ -358,18 +387,36 @@ impl InteractionTopology {
         )))
     }
 
+    fn nodes_from_pair(&self, i: ObjId, j: ObjId) -> Result<InteractionNodes, InteractionError> {
+        self.validate_obj(i)?;
+        self.validate_obj(j)?;
+
+        let (i, j) = if self.order == InteractionOrder::Unordered && j < i {
+            (j, i)
+        } else {
+            (i, j)
+        };
+        Ok(InteractionNodes::from_pair(i, j))
+    }
+
     fn validate_nodes(&self, nodes: &[ObjId]) -> Result<(), InteractionError> {
         if nodes.is_empty() {
             return Err(InteractionError::EmptyNodes);
         }
 
         for &obj in nodes {
-            if obj >= self.n_objects {
-                return Err(InteractionError::InvalidObjId {
-                    obj,
-                    n_objects: self.n_objects,
-                });
-            }
+            self.validate_obj(obj)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_obj(&self, obj: ObjId) -> Result<(), InteractionError> {
+        if obj >= self.n_objects {
+            return Err(InteractionError::InvalidObjId {
+                obj,
+                n_objects: self.n_objects,
+            });
         }
 
         Ok(())
@@ -423,6 +470,11 @@ impl<T> PayloadStore<T> {
     /// Returns number of allocated payload slots.
     pub fn capacity_slots(&self) -> usize {
         self.slots.len()
+    }
+
+    /// Reserves storage for at least `additional` more payload slots.
+    pub fn reserve(&mut self, additional: usize) {
+        self.slots.reserve(additional);
     }
 
     /// Inserts or overwrites payload at interaction id.
@@ -575,6 +627,12 @@ impl<T> Interaction<T> {
         self.topology.capacity_slots()
     }
 
+    /// Reserves storage for at least `additional` more interactions and payloads.
+    pub fn reserve(&mut self, additional: usize) {
+        self.topology.reserve(additional);
+        self.payloads.reserve(additional);
+    }
+
     /// Changes ordering semantics while preserving synchronized payload ids.
     pub fn set_order(&mut self, order: InteractionOrder) -> Result<(), InteractionError> {
         self.topology.set_order(order)
@@ -652,7 +710,9 @@ impl<T> Interaction<T> {
         j: ObjId,
         payload: T,
     ) -> Result<InteractionId, InteractionError> {
-        self.set(&[i, j], payload)
+        let id = self.topology.add_pair(i, j)?;
+        self.payloads.set(id, payload);
+        Ok(id)
     }
 
     /// Returns immutable payload reference by pair.
