@@ -1,0 +1,256 @@
+/*!
+A **particle model benchmark** comparing the high-performance SoA backend against a naive AoS baseline.
+
+This example measures the total simulation lifecycle:
+- **Initiation**: Allocation of particle storage and population of interaction networks.
+- **Evolution**: Numerical time-stepping including force accumulation and integration.
+
+Metrics are displayed in a comparative chart, including numerical validation between implementations.
+*/
+
+use physics_in_parallel::prelude::*;
+use rayon::prelude::*;
+use std::time::Instant;
+
+const DEFAULT_NUM_PARTICLES: usize = 10_000;
+const DEFAULT_NUM_SPRINGS: usize = 4_000;
+const DEFAULT_STEPS: usize = 1_000;
+
+//===================================================================
+// -------------------------- Naive Baseline ------------------------
+//===================================================================
+
+#[derive(Clone, Copy, Debug)]
+struct NaiveParticle {
+    r: [f64; 3],
+    v: [f64; 3],
+    a: [f64; 3],
+    m_inv: f64,
+}
+
+/// Naive AoS evolution step.
+/// Uses Rayon for integration but serial loops for force accumulation.
+fn naive_step(particles: &mut [NaiveParticle], springs: &[(usize, usize, Spring)], dt: f64) {
+    // 1. Reset acceleration (Rayon)
+    particles.par_iter_mut().for_each(|p| p.a = [0.0; 3]);
+
+    // 2. Accumulate forces (Serial)
+    for (i, j, law) in springs {
+        let p1 = particles[*i];
+        let p2 = particles[*j];
+        let dx = [p1.r[0] - p2.r[0], p1.r[1] - p2.r[1], p1.r[2] - p2.r[2]];
+        let d2 = dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2];
+        let dist = d2.sqrt();
+
+        let max_dist = law.cutoff.map(|(_, max)| max).unwrap_or(f64::INFINITY);
+        if dist > 0.0 && dist < max_dist {
+            let f_mag = -law.k * (dist - law.l_0);
+            let fx = (f_mag * dx[0]) / dist;
+            let fy = (f_mag * dx[1]) / dist;
+            let fz = (f_mag * dx[2]) / dist;
+
+            particles[*i].a[0] += fx * p1.m_inv;
+            particles[*i].a[1] += fy * p1.m_inv;
+            particles[*i].a[2] += fz * p1.m_inv;
+
+            particles[*j].a[0] -= fx * p2.m_inv;
+            particles[*j].a[1] -= fy * p2.m_inv;
+            particles[*j].a[2] -= fz * p2.m_inv;
+        }
+    }
+
+    // 3. Integrate (Rayon)
+    particles.par_iter_mut().for_each(|p| {
+        p.v[0] += p.a[0] * dt;
+        p.r[0] += p.v[0] * dt;
+        p.v[1] += p.a[1] * dt;
+        p.r[1] += p.v[1] * dt;
+        p.v[2] += p.a[2] * dt;
+        p.r[2] += p.v[2] * dt;
+    });
+}
+
+fn build_spring_pairs(n: usize, m: usize) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::with_capacity(m);
+
+    for offset in 1..n {
+        for u in 0..n {
+            if pairs.len() == m {
+                return pairs;
+            }
+
+            let v = (u + offset) % n;
+            if u < v {
+                pairs.push((u, v));
+            }
+        }
+    }
+
+    pairs
+}
+
+//===================================================================
+// ------------------------- Benchmark Runner -----------------------
+//===================================================================
+
+fn run_comparison(n: usize, m: usize, steps: usize) {
+    let dt = 0.001;
+    let spring_pairs = build_spring_pairs(n, m);
+
+    // --- NAIVE SETUP ---
+    let start_naive_init = Instant::now();
+    let mut naive_p = vec![
+        NaiveParticle {
+            r: [0.0; 3],
+            v: [0.0; 3],
+            a: [0.0; 3],
+            m_inv: 1.0
+        };
+        n
+    ];
+    let mut naive_s = Vec::with_capacity(spring_pairs.len());
+    for i in 0..n {
+        naive_p[i].r = [i as f64 * 0.001, 0.0, 0.0];
+    }
+    for &(u, v) in &spring_pairs {
+        naive_s.push((u, v, Spring::new(10.0, 1.0, Some((0.0, 5.0))).unwrap()));
+    }
+    let naive_init_time = start_naive_init.elapsed().as_secs_f64() * 1000.0;
+
+    // --- PIP SETUP ---
+    let start_pip_init = Instant::now();
+    let mut pip_obj = create_template(3, n).unwrap();
+    let mut pip_net = SpringNetwork::empty();
+    {
+        let r_view = pip_obj.core.get_mut::<f64>(ATTR_R).unwrap();
+        for i in 0..n {
+            r_view.set_vec(i as isize, &[i as f64 * 0.001, 0.0, 0.0]);
+        }
+    }
+    for &pair in &spring_pairs {
+        pip_net
+            .add_spring(pair, 10.0, 1.0, Some((0.0, 5.0)))
+            .unwrap();
+    }
+    let pip_init_time = start_pip_init.elapsed().as_secs_f64() * 1000.0;
+
+    // --- EVOLUTION ---
+    let start_naive_evol = Instant::now();
+    for _ in 0..steps {
+        naive_step(&mut naive_p, &naive_s, dt);
+    }
+    let naive_evol_time = start_naive_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+
+    let start_pip_evol = Instant::now();
+    let mut pip_integrator = SemiImplicitEuler;
+    for _ in 0..steps {
+        // Note: Explicitly clearing ATTR_A to match naive behavior
+        pip_obj.core.get_mut::<f64>(ATTR_A).unwrap().fill(0.0);
+        pip_net
+            .apply_hooke_acceleration(&mut pip_obj, ParticleSelection::All)
+            .unwrap();
+        pip_integrator.apply(&mut pip_obj, dt).unwrap();
+    }
+    let pip_evol_time = start_pip_evol.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+
+    // --- VALIDATION ---
+    let mut max_diff: f64 = 0.0;
+    let pip_r = pip_obj.core.get::<f64>(ATTR_R).unwrap();
+    for i in 0..n {
+        let p_r = pip_r.get_vec(i as isize);
+        for axis in 0..3 {
+            max_diff = max_diff.max((naive_p[i].r[axis] - p_r[axis]).abs());
+        }
+    }
+    let validation_passed = max_diff < 1e-10;
+
+    // --- OUTPUT CHART ---
+    print_chart(
+        n,
+        spring_pairs.len(),
+        naive_init_time,
+        pip_init_time,
+        naive_evol_time,
+        pip_evol_time,
+        max_diff,
+        validation_passed,
+    );
+}
+
+fn print_chart(
+    n: usize,
+    m: usize,
+    n_init: f64,
+    p_init: f64,
+    n_evol: f64,
+    p_evol: f64,
+    diff: f64,
+    passed: bool,
+) {
+    println!("\n================================================================================");
+    println!(
+        " PIP BENCHMARK: Spring Network Evolution (N={}, M={})",
+        n, m
+    );
+    println!("================================================================================");
+    println!(
+        "| {:<24} | {:>15} | {:>15} | {:>10} |",
+        "Metric", "Naive (AoS)", "PiP (SoA)", "Speedup"
+    );
+    println!("|{:-<26}|{:-<17}|{:-<17}|{:-<12}|", "", "", "", "");
+
+    println!(
+        "| {:<24} | {:>12.3} ms | {:>12.3} ms | {:>9.2}x |",
+        "Initiation Time",
+        n_init,
+        p_init,
+        n_init / p_init
+    );
+
+    println!(
+        "| {:<24} | {:>9.3} ms/step | {:>9.3} ms/step | {:>9.2}x |",
+        "Evolution Time",
+        n_evol,
+        p_evol,
+        n_evol / p_evol
+    );
+
+    let n_tp = (n as f64 / n_evol) * 1000.0;
+    let p_tp = (n as f64 / p_evol) * 1000.0;
+    println!(
+        "| {:<24} | {:>11.2}k p/s | {:>11.2}k p/s | {:>9.2}x |",
+        "Throughput",
+        n_tp / 1000.0,
+        p_tp / 1000.0,
+        p_tp / n_tp
+    );
+
+    println!("|{:-<26}|{:-<17}|{:-<17}|{:-<12}|", "", "", "", "");
+    println!(
+        "| {:<24} | {:<47} |",
+        "Numerical Validation",
+        if passed {
+            format!("PASSED (Max Diff: {:.2e})", diff)
+        } else {
+            "FAILED".to_string()
+        }
+    );
+    println!("================================================================================");
+}
+
+fn main() {
+    let n = parse_arg(1).unwrap_or(DEFAULT_NUM_PARTICLES);
+    let m = parse_arg(2).unwrap_or(DEFAULT_NUM_SPRINGS);
+    let steps = parse_arg(3).unwrap_or(DEFAULT_STEPS);
+
+    println!("Starting benchmark...");
+    println!("particles: {n}");
+    println!("springs: {m}");
+    println!("steps: {steps}");
+
+    run_comparison(n, m, steps);
+}
+
+fn parse_arg(position: usize) -> Option<usize> {
+    std::env::args().nth(position)?.parse().ok()
+}

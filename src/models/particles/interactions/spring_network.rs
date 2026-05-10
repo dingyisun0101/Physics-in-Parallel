@@ -249,12 +249,7 @@ impl SpringNetwork {
             let dim = r.dim();
             let n = r.num_vectors();
 
-            let mut r_data = vec![0.0f64; n * dim];
-            for i in 0..n {
-                for k in 0..dim {
-                    r_data[i * dim + k] = r.get(i as isize, k as isize);
-                }
-            }
+            let r_data = r.as_tensor().data.clone();
 
             let m_inv_data = gather_inverse_mass(objects, n)?;
             for i in 0..n {
@@ -272,55 +267,45 @@ impl SpringNetwork {
         };
 
         let mut accum = vec![0.0f64; n * dim];
-        let mut dr = vec![0.0f64; dim];
 
-        for (id, nodes, spring) in self.springs.iter() {
-            if nodes.nodes.len() != 2 {
-                return Err(SpringNetworkError::InvalidSpringArity {
-                    id,
-                    arity: nodes.nodes.len(),
-                });
-            }
-            spring.validate()?;
-
-            let i = nodes.nodes[0];
-            let j = nodes.nodes[1];
-            if i >= n || j >= n || i == j {
-                continue;
-            }
-
-            if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
-                continue;
-            }
-
-            for k in 0..dim {
-                dr[k] = r_data[i * dim + k] - r_data[j * dim + k];
-            }
-            let norm_sq = dr.iter().map(|x| x * x).sum::<f64>();
-            if !norm_sq.is_finite() || norm_sq <= f64::EPSILON {
-                continue;
-            }
-            let norm = norm_sq.sqrt();
-
-            if let Some((cut_min, cut_max)) = spring.cutoff {
-                if norm < cut_min || norm > cut_max {
-                    continue;
-                }
-            }
-
-            let f_mag = -spring.k * (norm - spring.l_0);
-            let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
-            let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
-
-            for k in 0..dim {
-                let force = f_mag * (dr[k] / norm);
-                if !i_rigid {
-                    accum[i * dim + k] += force * m_inv_data[i];
-                }
-                if !j_rigid {
-                    accum[j * dim + k] -= force * m_inv_data[j];
-                }
-            }
+        match dim {
+            1 => accumulate_hooke_1d(
+                &self.springs,
+                &r_data,
+                &m_inv_data,
+                &masks,
+                selection,
+                n,
+                &mut accum,
+            )?,
+            2 => accumulate_hooke_2d(
+                &self.springs,
+                &r_data,
+                &m_inv_data,
+                &masks,
+                selection,
+                n,
+                &mut accum,
+            )?,
+            3 => accumulate_hooke_3d(
+                &self.springs,
+                &r_data,
+                &m_inv_data,
+                &masks,
+                selection,
+                n,
+                &mut accum,
+            )?,
+            _ => accumulate_hooke_generic(
+                &self.springs,
+                &r_data,
+                &m_inv_data,
+                &masks,
+                selection,
+                n,
+                dim,
+                &mut accum,
+            )?,
         }
 
         let a = objects.core.get_mut::<f64>(ATTR_A)?;
@@ -334,11 +319,8 @@ impl SpringNetwork {
             ));
         }
 
-        for i in 0..n {
-            for k in 0..dim {
-                let old = a.get(i as isize, k as isize);
-                a.set(i as isize, k as isize, old + accum[i * dim + k]);
-            }
+        for (dst, src) in a.as_tensor_mut().data.iter_mut().zip(accum) {
+            *dst += src;
         }
         Ok(())
     }
@@ -351,6 +333,254 @@ impl SpringNetwork {
                 .expect("growing spring interaction object bound should not invalidate entries");
         }
     }
+}
+
+fn accumulate_hooke_1d(
+    springs: &Interaction<Spring>,
+    r_data: &[f64],
+    m_inv_data: &[f64],
+    masks: &crate::models::particles::state::ParticleMasks,
+    selection: ParticleSelection,
+    n: usize,
+    accum: &mut [f64],
+) -> Result<(), SpringNetworkError> {
+    for (id, nodes, spring) in springs.iter() {
+        if nodes.nodes.len() != 2 {
+            return Err(SpringNetworkError::InvalidSpringArity {
+                id,
+                arity: nodes.nodes.len(),
+            });
+        }
+        spring.validate()?;
+
+        let i = nodes.nodes[0];
+        let j = nodes.nodes[1];
+        if i >= n || j >= n || i == j {
+            continue;
+        }
+
+        if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
+            continue;
+        }
+
+        let dx = r_data[i] - r_data[j];
+        let norm = dx.abs();
+        if !norm.is_finite() || norm <= f64::EPSILON {
+            continue;
+        }
+
+        if let Some((cut_min, cut_max)) = spring.cutoff
+            && (norm < cut_min || norm > cut_max)
+        {
+            continue;
+        }
+
+        let force = dx * (-spring.k * (norm - spring.l_0) / norm);
+        let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
+        let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
+
+        if !i_rigid {
+            accum[i] += force * m_inv_data[i];
+        }
+        if !j_rigid {
+            accum[j] -= force * m_inv_data[j];
+        }
+    }
+
+    Ok(())
+}
+
+fn accumulate_hooke_2d(
+    springs: &Interaction<Spring>,
+    r_data: &[f64],
+    m_inv_data: &[f64],
+    masks: &crate::models::particles::state::ParticleMasks,
+    selection: ParticleSelection,
+    n: usize,
+    accum: &mut [f64],
+) -> Result<(), SpringNetworkError> {
+    for (id, nodes, spring) in springs.iter() {
+        if nodes.nodes.len() != 2 {
+            return Err(SpringNetworkError::InvalidSpringArity {
+                id,
+                arity: nodes.nodes.len(),
+            });
+        }
+        spring.validate()?;
+
+        let i = nodes.nodes[0];
+        let j = nodes.nodes[1];
+        if i >= n || j >= n || i == j {
+            continue;
+        }
+
+        if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
+            continue;
+        }
+
+        let i_base = i * 2;
+        let j_base = j * 2;
+        let dx = r_data[i_base] - r_data[j_base];
+        let dy = r_data[i_base + 1] - r_data[j_base + 1];
+        let norm_sq = dx * dx + dy * dy;
+        if !norm_sq.is_finite() || norm_sq <= f64::EPSILON {
+            continue;
+        }
+        let norm = norm_sq.sqrt();
+
+        if let Some((cut_min, cut_max)) = spring.cutoff
+            && (norm < cut_min || norm > cut_max)
+        {
+            continue;
+        }
+
+        let scale = -spring.k * (norm - spring.l_0) / norm;
+        let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
+        let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
+
+        if !i_rigid {
+            let i_scale = scale * m_inv_data[i];
+            accum[i_base] += dx * i_scale;
+            accum[i_base + 1] += dy * i_scale;
+        }
+        if !j_rigid {
+            let j_scale = scale * m_inv_data[j];
+            accum[j_base] -= dx * j_scale;
+            accum[j_base + 1] -= dy * j_scale;
+        }
+    }
+
+    Ok(())
+}
+
+fn accumulate_hooke_3d(
+    springs: &Interaction<Spring>,
+    r_data: &[f64],
+    m_inv_data: &[f64],
+    masks: &crate::models::particles::state::ParticleMasks,
+    selection: ParticleSelection,
+    n: usize,
+    accum: &mut [f64],
+) -> Result<(), SpringNetworkError> {
+    for (id, nodes, spring) in springs.iter() {
+        if nodes.nodes.len() != 2 {
+            return Err(SpringNetworkError::InvalidSpringArity {
+                id,
+                arity: nodes.nodes.len(),
+            });
+        }
+        spring.validate()?;
+
+        let i = nodes.nodes[0];
+        let j = nodes.nodes[1];
+        if i >= n || j >= n || i == j {
+            continue;
+        }
+
+        if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
+            continue;
+        }
+
+        let i_base = i * 3;
+        let j_base = j * 3;
+        let dx = r_data[i_base] - r_data[j_base];
+        let dy = r_data[i_base + 1] - r_data[j_base + 1];
+        let dz = r_data[i_base + 2] - r_data[j_base + 2];
+        let norm_sq = dx * dx + dy * dy + dz * dz;
+        if !norm_sq.is_finite() || norm_sq <= f64::EPSILON {
+            continue;
+        }
+        let norm = norm_sq.sqrt();
+
+        if let Some((cut_min, cut_max)) = spring.cutoff
+            && (norm < cut_min || norm > cut_max)
+        {
+            continue;
+        }
+
+        let scale = -spring.k * (norm - spring.l_0) / norm;
+        let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
+        let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
+
+        if !i_rigid {
+            let i_scale = scale * m_inv_data[i];
+            accum[i_base] += dx * i_scale;
+            accum[i_base + 1] += dy * i_scale;
+            accum[i_base + 2] += dz * i_scale;
+        }
+        if !j_rigid {
+            let j_scale = scale * m_inv_data[j];
+            accum[j_base] -= dx * j_scale;
+            accum[j_base + 1] -= dy * j_scale;
+            accum[j_base + 2] -= dz * j_scale;
+        }
+    }
+
+    Ok(())
+}
+
+fn accumulate_hooke_generic(
+    springs: &Interaction<Spring>,
+    r_data: &[f64],
+    m_inv_data: &[f64],
+    masks: &crate::models::particles::state::ParticleMasks,
+    selection: ParticleSelection,
+    n: usize,
+    dim: usize,
+    accum: &mut [f64],
+) -> Result<(), SpringNetworkError> {
+    let mut dr = vec![0.0f64; dim];
+
+    for (id, nodes, spring) in springs.iter() {
+        if nodes.nodes.len() != 2 {
+            return Err(SpringNetworkError::InvalidSpringArity {
+                id,
+                arity: nodes.nodes.len(),
+            });
+        }
+        spring.validate()?;
+
+        let i = nodes.nodes[0];
+        let j = nodes.nodes[1];
+        if i >= n || j >= n || i == j {
+            continue;
+        }
+
+        if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
+            continue;
+        }
+
+        for k in 0..dim {
+            dr[k] = r_data[i * dim + k] - r_data[j * dim + k];
+        }
+        let norm_sq = dr.iter().map(|x| x * x).sum::<f64>();
+        if !norm_sq.is_finite() || norm_sq <= f64::EPSILON {
+            continue;
+        }
+        let norm = norm_sq.sqrt();
+
+        if let Some((cut_min, cut_max)) = spring.cutoff
+            && (norm < cut_min || norm > cut_max)
+        {
+            continue;
+        }
+
+        let scale = -spring.k * (norm - spring.l_0) / norm;
+        let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
+        let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
+
+        for k in 0..dim {
+            let dr_k = dr[k];
+            if !i_rigid {
+                accum[i * dim + k] += dr_k * scale * m_inv_data[i];
+            }
+            if !j_rigid {
+                accum[j * dim + k] -= dr_k * scale * m_inv_data[j];
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn invalid_attr_or_count(

@@ -296,6 +296,85 @@ impl AttrsCore {
         id: AttrId,
     ) -> Result<&mut VectorList<T>, AttrsError> {
         let entry = self.entry_mut(id)?;
+        Self::entry_data_mut(entry)
+    }
+
+    pub fn get_two_mut<T: Scalar + 'static>(
+        &mut self,
+        first: &str,
+        second: &str,
+    ) -> Result<(&mut VectorList<T>, &mut VectorList<T>), AttrsError> {
+        let first_id = self.id_of(first)?;
+        let second_id = self.id_of(second)?;
+        if first_id == second_id {
+            return Err(AttrsError::DuplicateLabel {
+                label: first.to_string(),
+            });
+        }
+
+        let [first_entry, second_entry] = self
+            .entries
+            .get_disjoint_mut([first_id, second_id])
+            .expect("distinct valid attribute ids should be disjoint");
+
+        let first_entry = first_entry
+            .as_mut()
+            .ok_or(AttrsError::UnknownId { id: first_id })?;
+        let second_entry = second_entry
+            .as_mut()
+            .ok_or(AttrsError::UnknownId { id: second_id })?;
+
+        Ok((
+            Self::entry_data_mut(first_entry)?,
+            Self::entry_data_mut(second_entry)?,
+        ))
+    }
+
+    pub fn get_three_mut<T: Scalar + 'static>(
+        &mut self,
+        first: &str,
+        second: &str,
+        third: &str,
+    ) -> Result<(&mut VectorList<T>, &mut VectorList<T>, &mut VectorList<T>), AttrsError> {
+        let first_id = self.id_of(first)?;
+        let second_id = self.id_of(second)?;
+        let third_id = self.id_of(third)?;
+        if first_id == second_id || first_id == third_id {
+            return Err(AttrsError::DuplicateLabel {
+                label: first.to_string(),
+            });
+        }
+        if second_id == third_id {
+            return Err(AttrsError::DuplicateLabel {
+                label: second.to_string(),
+            });
+        }
+
+        let [first_entry, second_entry, third_entry] = self
+            .entries
+            .get_disjoint_mut([first_id, second_id, third_id])
+            .expect("distinct valid attribute ids should be disjoint");
+
+        let first_entry = first_entry
+            .as_mut()
+            .ok_or(AttrsError::UnknownId { id: first_id })?;
+        let second_entry = second_entry
+            .as_mut()
+            .ok_or(AttrsError::UnknownId { id: second_id })?;
+        let third_entry = third_entry
+            .as_mut()
+            .ok_or(AttrsError::UnknownId { id: third_id })?;
+
+        Ok((
+            Self::entry_data_mut(first_entry)?,
+            Self::entry_data_mut(second_entry)?,
+            Self::entry_data_mut(third_entry)?,
+        ))
+    }
+
+    fn entry_data_mut<T: Scalar + 'static>(
+        entry: &mut AttrEntry,
+    ) -> Result<&mut VectorList<T>, AttrsError> {
         let got = entry.data.type_name().to_string();
 
         entry

@@ -137,11 +137,56 @@ fn apply_explicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), Integrator
     validate_dt(dt)?;
     let ctx = validate_core_shapes(objects)?;
 
-    let a_data = objects.core.get::<f64>(ATTR_A)?.as_tensor().data.clone();
-    let v_old = objects.core.get::<f64>(ATTR_V)?.as_tensor().data.clone();
-    let mut v_new = v_old.clone();
+    {
+        let (r, v) = objects.core.get_two_mut::<f64>(ATTR_R, ATTR_V)?;
+        let v_data = &v.as_tensor().data;
+        r.as_tensor_mut()
+            .data
+            .par_chunks_mut(ctx.dim)
+            .enumerate()
+            .for_each(|(i, r_row)| {
+                if should_skip(&ctx, i) {
+                    return;
+                }
 
-    v_new
+                let v_row = &v_data[i * ctx.dim..(i + 1) * ctx.dim];
+                for k in 0..ctx.dim {
+                    r_row[k] += v_row[k] * dt;
+                }
+            });
+    }
+
+    {
+        let (v, a) = objects.core.get_two_mut::<f64>(ATTR_V, ATTR_A)?;
+        let a_data = &a.as_tensor().data;
+        v.as_tensor_mut()
+            .data
+            .par_chunks_mut(ctx.dim)
+            .enumerate()
+            .for_each(|(i, v_row)| {
+                if should_skip(&ctx, i) {
+                    return;
+                }
+
+                let a_row = &a_data[i * ctx.dim..(i + 1) * ctx.dim];
+                for k in 0..ctx.dim {
+                    v_row[k] += a_row[k] * dt;
+                }
+            });
+    }
+
+    Ok(())
+}
+
+fn apply_semi_implicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
+    validate_dt(dt)?;
+    let ctx = validate_core_shapes(objects)?;
+
+    let (a, v, r) = objects.core.get_three_mut::<f64>(ATTR_A, ATTR_V, ATTR_R)?;
+    let a_data = &a.as_tensor().data;
+
+    v.as_tensor_mut()
+        .data
         .par_chunks_mut(ctx.dim)
         .enumerate()
         .for_each(|(i, v_row)| {
@@ -156,7 +201,7 @@ fn apply_explicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), Integrator
         });
 
     {
-        let r = objects.core.get_mut::<f64>(ATTR_R)?;
+        let v_data = &v.as_tensor().data;
         r.as_tensor_mut()
             .data
             .par_chunks_mut(ctx.dim)
@@ -166,61 +211,7 @@ fn apply_explicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), Integrator
                     return;
                 }
 
-                let v_row = &v_old[i * ctx.dim..(i + 1) * ctx.dim];
-                for k in 0..ctx.dim {
-                    r_row[k] += v_row[k] * dt;
-                }
-            });
-    }
-
-    objects
-        .core
-        .get_mut::<f64>(ATTR_V)?
-        .as_tensor_mut()
-        .data
-        .copy_from_slice(&v_new);
-
-    Ok(())
-}
-
-fn apply_semi_implicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-    validate_dt(dt)?;
-    let ctx = validate_core_shapes(objects)?;
-
-    let a_data = objects.core.get::<f64>(ATTR_A)?.as_tensor().data.clone();
-    let updated_v_data = {
-        let v = objects.core.get_mut::<f64>(ATTR_V)?;
-        let v_data = &mut v.as_tensor_mut().data;
-
-        v_data
-            .par_chunks_mut(ctx.dim)
-            .enumerate()
-            .for_each(|(i, v_row)| {
-                if should_skip(&ctx, i) {
-                    return;
-                }
-
-                let a_row = &a_data[i * ctx.dim..(i + 1) * ctx.dim];
-                for k in 0..ctx.dim {
-                    v_row[k] += a_row[k] * dt;
-                }
-            });
-
-        v_data.clone()
-    };
-
-    {
-        let r = objects.core.get_mut::<f64>(ATTR_R)?;
-        r.as_tensor_mut()
-            .data
-            .par_chunks_mut(ctx.dim)
-            .enumerate()
-            .for_each(|(i, r_row)| {
-                if should_skip(&ctx, i) {
-                    return;
-                }
-
-                let v_row = &updated_v_data[i * ctx.dim..(i + 1) * ctx.dim];
+                let v_row = &v_data[i * ctx.dim..(i + 1) * ctx.dim];
                 for k in 0..ctx.dim {
                     r_row[k] += v_row[k] * dt;
                 }
