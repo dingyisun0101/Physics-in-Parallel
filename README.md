@@ -28,6 +28,12 @@ use physics_in_parallel::engines::prelude::*;
 use physics_in_parallel::models::prelude::*;
 ```
 
+## Examples
+
+The runnable examples are documented in [EXAMPLES.md](EXAMPLES.md). That guide
+introduces each example, explains what it does, shows the command-line
+arguments, and describes how to interpret benchmark or demonstration output.
+
 ## Design Rules
 
 Core consistency rules used across the crate:
@@ -790,9 +796,12 @@ Core types:
 
 ## Examples
 
-Runnable examples:
+Runnable examples and benchmark usage are documented in [EXAMPLES.md](EXAMPLES.md).
+Common entry points:
 
 ```bash
+cargo run --release --example spring_network_benchmark
+cargo run --release --example power_law_network_benchmark
 cargo run --example serde_flat_json
 cargo run --example vector_list_ndarray
 cargo run --release --example tensor_rand_large_benchmark
