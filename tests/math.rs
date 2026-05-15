@@ -1,5 +1,7 @@
 #[path = "math/matrix_basic.rs"]
 mod matrix_basic;
+#[path = "math/matrix_io.rs"]
+mod matrix_io;
 #[path = "math/matrix_ops.rs"]
 mod matrix_ops;
 #[path = "math/matrix_structured.rs"]
