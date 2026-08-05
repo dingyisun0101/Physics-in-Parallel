@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::math::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_n::{
     Dense, Sparse, Tensor, dense::Tensor as DenseStorage, sparse::Tensor as SparseStorage,
@@ -19,9 +19,12 @@ where
     where
         S: Serializer,
     {
-        self.to_json_payload()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+        FlatPayloadRef {
+            kind: "tensor",
+            shape: self.shape(),
+            data: self.data(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -129,9 +132,7 @@ where
     where
         S: Serializer,
     {
-        self.to_json_value()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+        self.storage().serialize(serializer)
     }
 }
 
@@ -156,9 +157,7 @@ where
     where
         S: Serializer,
     {
-        self.to_json_value()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+        self.storage().serialize(serializer)
     }
 }
 

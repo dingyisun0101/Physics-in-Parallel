@@ -34,6 +34,16 @@ pub trait MatrixBackend<T: Scalar>: Send + Sync + Clone {
     /// invariants, such as a nonzero value outside a triangular support.
     fn set(&mut self, row: isize, col: isize, value: T);
 
+    /// Borrows a complete row-major buffer when this backend stores one.
+    ///
+    /// Backends without contiguous logical storage return `None`. Consumers
+    /// must then use [`MatrixBackend::get`] to visit logical entries instead
+    /// of assuming a particular physical representation.
+    #[inline]
+    fn contiguous_data(&self) -> Option<&[T]> {
+        None
+    }
+
     /// Return `[rows, cols]`.
     #[inline]
     fn shape(&self) -> [usize; 2] {

@@ -49,6 +49,13 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         }
     }
 
+    /// Borrows the complete logical matrix buffer when the selected backend
+    /// exposes contiguous row-major storage.
+    #[inline]
+    pub(crate) fn contiguous_data(&self) -> Option<&[T]> {
+        self.backend.contiguous_data()
+    }
+
     /// Construct a zero matrix with backend-specific storage.
     #[inline]
     pub fn empty(rows: usize, cols: usize) -> Self {
@@ -531,6 +538,11 @@ impl<T: Scalar> MatrixBackend<T> for RankNDense<T> {
     #[inline]
     fn set(&mut self, row: isize, col: isize, value: T) {
         self.tensor.set(&[row, col], value);
+    }
+
+    #[inline]
+    fn contiguous_data(&self) -> Option<&[T]> {
+        Some(self.tensor.data())
     }
 }
 

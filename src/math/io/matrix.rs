@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::math::io::json::{FlatPayload, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
 use crate::math::io::ndarray::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::matrix::{Matrix, MatrixBackend, RankNDense, RankNSparse};
@@ -19,9 +19,19 @@ where
     where
         S: Serializer,
     {
-        self.to_json_payload()
-            .map_err(serde::ser::Error::custom)?
+        if let Some(data) = self.contiguous_data() {
+            let shape = self.shape();
+            FlatPayloadRef {
+                kind: "matrix",
+                shape: &shape,
+                data,
+            }
             .serialize(serializer)
+        } else {
+            self.to_json_payload()
+                .map_err(serde::ser::Error::custom)?
+                .serialize(serializer)
+        }
     }
 }
 

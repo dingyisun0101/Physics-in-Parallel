@@ -359,6 +359,13 @@ where
 }
 
 impl<T: Scalar> Tensor<T, Dense> {
+    /// Borrows the dense row-major backing buffer for internal zero-copy
+    /// adapters such as matrix serialization.
+    #[inline]
+    pub(crate) fn data(&self) -> &[T] {
+        self.inner.data()
+    }
+
     #[inline]
     pub fn from_vec(shape: &[usize], data: Vec<T>) -> Self {
         Self::from_storage(DenseStorage::<T>::from_vec(shape, data))

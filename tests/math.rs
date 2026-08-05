@@ -14,6 +14,8 @@ mod scalar_algebra;
 mod tensor_access;
 #[path = "math/tensor_basic.rs"]
 mod tensor_basic;
+#[path = "math/tensor_io.rs"]
+mod tensor_io;
 #[path = "math/tensor_linalg.rs"]
 mod tensor_linalg;
 #[path = "math/tensor_rand.rs"]

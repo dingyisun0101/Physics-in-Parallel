@@ -43,9 +43,12 @@ where
     where
         S: Serializer,
     {
-        self.to_json_payload()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+        FlatPayloadRef {
+            kind: self.cfg.boundary.kind_tag(),
+            shape: self.cfg.shape(),
+            data: self.data(),
+        }
+        .serialize(serializer)
     }
 }
 
