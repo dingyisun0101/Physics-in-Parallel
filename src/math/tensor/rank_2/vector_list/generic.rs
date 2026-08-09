@@ -49,16 +49,19 @@ pub struct VectorList<T: Scalar> {
     tensor: Tensor<T, Dense>,
 }
 
-pub trait DynVectorList: std::fmt::Debug + Send + Sync {
+pub trait DynVectorList: std::fmt::Debug + Send + Sync + erased_serde::Serialize {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn dim(&self) -> usize;
     fn num_vecs(&self) -> usize;
     fn type_name(&self) -> &'static str;
+    fn scalar_kind(&self) -> &'static str;
     fn clone_box(&self) -> Box<dyn DynVectorList>;
     fn serialize_value(&self) -> Result<Value, serde_json::Error>;
     fn serialize(&self) -> Result<String, serde_json::Error>;
 }
+
+erased_serde::serialize_trait_object!(DynVectorList);
 
 impl Clone for Box<dyn DynVectorList> {
     fn clone(&self) -> Self {
@@ -88,6 +91,10 @@ where
 
     fn type_name(&self) -> &'static str {
         std::any::type_name::<T>()
+    }
+
+    fn scalar_kind(&self) -> &'static str {
+        crate::math::io::json::scalar_kind::<T>()
     }
 
     fn clone_box(&self) -> Box<dyn DynVectorList> {

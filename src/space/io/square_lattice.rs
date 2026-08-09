@@ -1,14 +1,16 @@
 //! IO and external-format interop for square lattices.
 
 use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use ndarray::{ArrayD, IxDyn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{
+    FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
+};
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::discrete::square_lattice::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, VacancyValue,
@@ -43,12 +45,9 @@ where
     where
         S: Serializer,
     {
-        FlatPayloadRef {
-            kind: self.cfg.boundary.kind_tag(),
-            shape: self.cfg.shape(),
-            data: self.data(),
-        }
-        .serialize(serializer)
+        ensure_finite(self.data(), "square_lattice").map_err(serde::ser::Error::custom)?;
+        FlatPayloadRef::new(self.cfg.boundary.kind_tag(), self.cfg.shape(), self.data())
+            .serialize(serializer)
     }
 }
 
@@ -72,6 +71,8 @@ where
     type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        ensure_finite(self.data(), "square_lattice")
+            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
         Ok(FlatPayload::new(
             self.cfg.boundary.kind_tag(),
             self.tensor_shape(),
@@ -87,6 +88,8 @@ where
     type Payload = FlatPayload<T>;
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
+        payload.validate_version("square_lattice")?;
+        payload.validate_scalar("square_lattice")?;
         let boundary = BoundaryCondition::from_kind_tag(&payload.kind)?;
         let expected_len = payload.validate_shape("lattice")?;
         if payload.data.len() != expected_len {
@@ -95,6 +98,7 @@ where
                 payload.data.len()
             ));
         }
+        ensure_finite(&payload.data, "square_lattice")?;
 
         let cfg = SquareLatticeConfig::new(&payload.shape, boundary);
         Ok(SquareLattice::from_parts(cfg, payload.data))
@@ -126,24 +130,24 @@ impl<T: ScalarSerde + VacancyValue> SquareLattice<T> {
     }
 }
 
-pub fn save_square_lattice<T>(
+pub fn save_square_lattice<T, P>(
     lattice: &SquareLattice<T>,
     target_shape: &[usize],
-    output_file: &PathBuf,
+    output_file: P,
 ) -> std::io::Result<()>
 where
     T: ScalarSerde + VacancyValue,
+    P: AsRef<Path>,
 {
     let lattice_to_save = lattice.downsample(target_shape);
     let shape = lattice_to_save.tensor_shape();
-    let json_data = FlatPayloadRef {
-        kind: lattice_to_save.cfg.boundary.kind_tag(),
-        shape: &shape,
-        data: lattice_to_save.data(),
-    };
-    let json = serde_json::to_string_pretty(&json_data).expect("failed to serialize lattice");
-
-    let mut file = File::create(output_file)?;
-    file.write_all(json.as_bytes())?;
-    Ok(())
+    ensure_finite(lattice_to_save.data(), "square_lattice").map_err(std::io::Error::other)?;
+    let json_data = FlatPayloadRef::new(
+        lattice_to_save.cfg.boundary.kind_tag(),
+        &shape,
+        lattice_to_save.data(),
+    );
+    let mut writer = BufWriter::new(File::create(output_file)?);
+    serde_json::to_writer(&mut writer, &json_data).map_err(std::io::Error::other)?;
+    writer.flush()
 }

@@ -25,6 +25,8 @@ fn lattice_periodic_roundtrip_uses_lattice_schema() {
 
     let value = serde_json::to_value(&lattice).expect("serialize lattice");
     assert_eq!(value["kind"], "square_lattice_periodic");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["scalar"], "usize");
     assert_eq!(value["shape"], serde_json::json!([3, 3]));
     assert_eq!(value["data"].as_array().expect("data array").len(), 9);
 
@@ -43,6 +45,8 @@ fn lattice_reflective_roundtrip_uses_kind_tag() {
 
     let value = serde_json::to_value(&lattice).expect("serialize lattice");
     assert_eq!(value["kind"], "square_lattice_reflective");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["scalar"], "usize");
     assert_eq!(value["shape"], serde_json::json!([2, 2, 2]));
 
     let back: SquareLattice<usize> = serde_json::from_value(value).expect("deserialize lattice");
@@ -54,6 +58,8 @@ fn lattice_reflective_roundtrip_uses_kind_tag() {
 fn lattice_deserialize_rejects_bad_kind_and_shape() {
     let bad_kind = serde_json::json!({
         "kind": "grid_periodic",
+        "version": 1,
+        "scalar": "usize",
         "shape": [2, 2],
         "data": [0, 0, 0, 0]
     });
@@ -64,6 +70,8 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
 
     let bad_shape = serde_json::json!({
         "kind": "square_lattice_periodic",
+        "version": 1,
+        "scalar": "usize",
         "shape": [2, 0],
         "data": []
     });
@@ -74,6 +82,8 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
 
     let bad_len = serde_json::json!({
         "kind": "square_lattice_periodic",
+        "version": 1,
+        "scalar": "usize",
         "shape": [2, 2],
         "data": [0, 0, 0]
     });
@@ -81,6 +91,18 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
         .expect_err("lattice len mismatch must fail")
         .to_string();
     assert!(err.contains("data length mismatch"));
+
+    let wrong_scalar = serde_json::json!({
+        "kind": "square_lattice_periodic",
+        "version": 1,
+        "scalar": "u64",
+        "shape": [2, 2],
+        "data": [1, 2, 3, 4]
+    });
+    let err = serde_json::from_value::<SquareLattice<usize>>(wrong_scalar)
+        .expect_err("scalar mismatch must fail")
+        .to_string();
+    assert!(err.contains("scalar mismatch"));
 }
 
 #[test]
@@ -96,6 +118,8 @@ fn save_square_lattice_writes_flat_payload_schema() {
     let raw = fs::read_to_string(&out).expect("read saved json");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parse saved json");
     assert_eq!(value["kind"], "square_lattice_periodic");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["scalar"], "usize");
     assert_eq!(value["shape"], serde_json::json!([2, 2]));
     assert_eq!(value["data"].as_array().expect("data array").len(), 4);
 

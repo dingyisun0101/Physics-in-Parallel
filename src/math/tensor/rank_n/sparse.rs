@@ -253,7 +253,7 @@ impl<T: Scalar> Tensor<T> {
     ///     domain for the flat indices.
     ///   - `pairs` (`Vec<(usize, T)>`): Candidate stored entries, where each
     ///     key is a row-major flat index.
-    fn from_flat_pairs(shape: Vec<usize>, pairs: Vec<(usize, T)>) -> Self {
+    pub(crate) fn from_flat_pairs(shape: Vec<usize>, pairs: Vec<(usize, T)>) -> Self {
         let size = checked_num_elements(&shape, "sparse tensor from flat pairs");
         let mut map = AHashMap::with_capacity(pairs.len());
         for (k, v) in pairs {

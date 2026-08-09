@@ -11,9 +11,11 @@ fn dense_matrix_serializes_as_flat_matrix_payload() {
     let value = matrix.serialize_value().expect("serialize matrix value");
 
     assert_eq!(value["kind"], "matrix");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["scalar"], "f64");
     assert_eq!(value["shape"], json!([2, 3]));
     assert_eq!(value["data"], json!([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]));
-    assert_eq!(value.as_object().expect("matrix object").len(), 3);
+    assert_eq!(value.as_object().expect("matrix object").len(), 5);
 }
 
 #[test]
@@ -31,13 +33,17 @@ fn dense_matrix_json_round_trip_preserves_entries() {
 }
 
 #[test]
-fn sparse_matrix_serializes_as_logical_dense_payload_and_round_trips() {
+fn sparse_matrix_serializes_as_compact_sparse_payload_and_round_trips() {
     let sparse = SparseMatrix::<i64>::from_triplets(2, 3, [(0, 1, 5), (1, 2, -7)]);
 
     let value = sparse.serialize_value().expect("serialize sparse matrix");
-    assert_eq!(value["kind"], "matrix");
+    assert_eq!(value["kind"], "matrix_sparse");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["scalar"], "i64");
     assert_eq!(value["shape"], json!([2, 3]));
-    assert_eq!(value["data"], json!([0, 5, 0, 0, 0, -7]));
+    assert_eq!(value["indices"], json!([1, 5]));
+    assert_eq!(value["values"], json!([5, -7]));
+    assert!(value.get("data").is_none());
 
     let decoded: SparseMatrix<i64> =
         serde_json::from_value(value).expect("deserialize sparse matrix");
@@ -51,6 +57,8 @@ fn sparse_matrix_serializes_as_logical_dense_payload_and_round_trips() {
 fn matrix_deserialization_rejects_non_matrix_payloads() {
     let err = serde_json::from_value::<DenseMatrix<i64>>(json!({
         "kind": "tensor",
+        "version": 1,
+        "scalar": "i64",
         "shape": [2, 2],
         "data": [1, 2, 3, 4]
     }))
@@ -63,6 +71,8 @@ fn matrix_deserialization_rejects_non_matrix_payloads() {
 fn matrix_deserialization_rejects_non_rank_two_shape() {
     let err = serde_json::from_value::<DenseMatrix<i64>>(json!({
         "kind": "matrix",
+        "version": 1,
+        "scalar": "i64",
         "shape": [4],
         "data": [1, 2, 3, 4]
     }))

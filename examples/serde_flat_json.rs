@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&dense_t)?
     );
     println!(
-        "sparse tensor JSON (serialized densely):\n{}\n",
+        "sparse tensor JSON (indices and values only):\n{}\n",
         serde_json::to_string_pretty(&sparse_t)?
     );
     println!(

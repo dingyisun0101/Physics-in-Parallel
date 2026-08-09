@@ -56,6 +56,12 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         self.backend.contiguous_data()
     }
 
+    /// Borrows the backend for format-specific crate-internal IO.
+    #[inline]
+    pub(crate) fn backend(&self) -> &B {
+        &self.backend
+    }
+
     /// Construct a zero matrix with backend-specific storage.
     #[inline]
     pub fn empty(rows: usize, cols: usize) -> Self {
@@ -572,5 +578,16 @@ impl<T: Scalar> MatrixBackend<T> for RankNSparse<T> {
     #[inline]
     fn set(&mut self, row: isize, col: isize, value: T) {
         self.tensor.set(&[row, col], value);
+    }
+
+    #[inline]
+    fn sparse_entries(&self) -> Option<Vec<(usize, T)>> {
+        Some(
+            self.tensor
+                .storage()
+                .iter()
+                .map(|(&index, &value)| (index, value))
+                .collect(),
+        )
     }
 }

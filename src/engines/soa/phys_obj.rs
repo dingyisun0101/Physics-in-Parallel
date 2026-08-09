@@ -23,13 +23,16 @@ Invariants:
 */
 
 use std::fs::{self, File};
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use ahash::AHashMap;
-use serde::Serialize;
+use num_complex::Complex;
+use serde::ser::{SerializeSeq, SerializeStruct};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::value::RawValue;
 
-use crate::math::io::json::{AttrsCorePayload, LabeledPayload, PhysObjPayload, ToJsonPayload};
+use crate::math::io::json::JSON_SCHEMA_VERSION;
 use crate::math::{
     scalar::Scalar,
     tensor::rank_2::vector_list::{DynVectorList, VectorList},
@@ -37,7 +40,8 @@ use crate::math::{
 
 pub type AttrId = usize;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AttrsMeta {
     pub id: AttrId,
     pub label: String,
@@ -153,7 +157,7 @@ impl AttrsCore {
 
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
+        serde_json::to_string_pretty(self)
     }
 
     #[inline]
@@ -481,38 +485,213 @@ impl AttrsCore {
             .and_then(|entry| entry.as_mut())
             .ok_or(AttrsError::UnknownId { id })
     }
+
+    /// Inserts one decoded attribute at its persisted stable slot.
+    fn insert_decoded<T>(
+        &mut self,
+        id: AttrId,
+        label: String,
+        values: VectorList<T>,
+    ) -> Result<(), String>
+    where
+        T: Scalar + Serialize + Copy + 'static,
+    {
+        if id >= self.entries.len() {
+            return Err(format!(
+                "attribute id {id} exceeds persisted slot count {}",
+                self.entries.len()
+            ));
+        }
+        if self.entries[id].is_some() {
+            return Err(format!("duplicate attribute id {id}"));
+        }
+        if self.label_to_id.contains_key(&label) {
+            return Err(format!("duplicate attribute label '{label}'"));
+        }
+        let count = values.num_vectors();
+        if let Some(expected) = self.n_objects
+            && count != expected
+        {
+            return Err(format!(
+                "attribute '{label}' object count mismatch: expected {expected}, got {count}"
+            ));
+        }
+        self.entries[id] = Some(AttrEntry {
+            label: label.clone(),
+            data: Box::new(values),
+        });
+        self.label_to_id.insert(label, id);
+        if self.n_objects.is_none() {
+            self.n_objects = Some(count);
+        }
+        Ok(())
+    }
 }
 
-impl ToJsonPayload for AttrsCore {
-    type Payload = AttrsCorePayload;
+impl Serialize for AttrsCore {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut document = serializer.serialize_struct("AttrsCore", 6)?;
+        document.serialize_field("kind", "attrs_core")?;
+        document.serialize_field("version", &JSON_SCHEMA_VERSION)?;
+        document.serialize_field("n_objects", &self.n_objects)?;
+        document.serialize_field("num_attrs", &self.len())?;
+        document.serialize_field("slot_count", &self.entries.len())?;
+        document.serialize_field("attrs", &AttributeSequence { core: self })?;
+        document.end()
+    }
+}
 
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        let mut labels: Vec<&str> = self.labels().collect();
-        labels.sort_unstable();
+/// Streams active attributes in stable slot order without materializing JSON values.
+struct AttributeSequence<'a> {
+    core: &'a AttrsCore,
+}
 
-        let mut attrs: Vec<LabeledPayload> = Vec::with_capacity(labels.len());
-        for label in labels {
-            let id = self.id_of(label).map_err(|e| {
-                serde_json::Error::io(std::io::Error::other(format!(
-                    "label disappeared during serialization: {e:?}"
-                )))
-            })?;
-            let entry = self.entry(id).map_err(|e| {
-                serde_json::Error::io(std::io::Error::other(format!(
-                    "entry disappeared during serialization: {e:?}"
-                )))
-            })?;
-            attrs.push(LabeledPayload {
-                label: label.to_string(),
-                payload: entry.data.serialize_value()?,
-            });
+impl Serialize for AttributeSequence<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.core.len()))?;
+        for (id, entry) in self.core.entries.iter().enumerate() {
+            if let Some(entry) = entry {
+                sequence.serialize_element(&AttributeRef { id, entry })?;
+            }
+        }
+        sequence.end()
+    }
+}
+
+/// Borrowed representation of one heterogeneous typed attribute.
+struct AttributeRef<'a> {
+    id: AttrId,
+    entry: &'a AttrEntry,
+}
+
+impl Serialize for AttributeRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut attribute = serializer.serialize_struct("Attribute", 4)?;
+        attribute.serialize_field("id", &self.id)?;
+        attribute.serialize_field("label", &self.entry.label)?;
+        attribute.serialize_field("scalar", self.entry.data.scalar_kind())?;
+        attribute.serialize_field("payload", self.entry.data.as_ref())?;
+        attribute.end()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttrsCoreDocument {
+    kind: String,
+    version: u32,
+    n_objects: Option<usize>,
+    num_attrs: usize,
+    slot_count: usize,
+    attrs: Vec<EncodedAttribute>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EncodedAttribute {
+    id: AttrId,
+    label: String,
+    scalar: String,
+    payload: Box<RawValue>,
+}
+
+impl<'de> Deserialize<'de> for AttrsCore {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = AttrsCoreDocument::deserialize(deserializer)?;
+        if document.kind != "attrs_core" {
+            return Err(serde::de::Error::custom(format!(
+                "AttrsCore kind must be 'attrs_core', got '{}'",
+                document.kind
+            )));
+        }
+        if document.version != JSON_SCHEMA_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "AttrsCore version mismatch: expected {JSON_SCHEMA_VERSION}, got {}",
+                document.version
+            )));
+        }
+        if document.num_attrs != document.attrs.len() {
+            return Err(serde::de::Error::custom(format!(
+                "AttrsCore attribute count mismatch: declared {}, got {}",
+                document.num_attrs,
+                document.attrs.len()
+            )));
+        }
+        if document.num_attrs > document.slot_count {
+            return Err(serde::de::Error::custom(
+                "AttrsCore active attribute count exceeds slot count",
+            ));
         }
 
-        Ok(AttrsCorePayload {
-            n_objects: self.n_objects,
-            num_attrs: self.len(),
-            attrs,
-        })
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(document.slot_count)
+            .map_err(serde::de::Error::custom)?;
+        entries.resize_with(document.slot_count, || None);
+        let mut core = AttrsCore {
+            label_to_id: AHashMap::with_capacity(document.num_attrs),
+            entries,
+            n_objects: None,
+        };
+        for attribute in document.attrs {
+            decode_attribute(&mut core, attribute).map_err(serde::de::Error::custom)?;
+        }
+        if core.n_objects != document.n_objects {
+            return Err(serde::de::Error::custom(format!(
+                "AttrsCore object count mismatch: declared {:?}, decoded {:?}",
+                document.n_objects, core.n_objects
+            )));
+        }
+        Ok(core)
+    }
+}
+
+fn decode_attribute(core: &mut AttrsCore, attribute: EncodedAttribute) -> Result<(), String> {
+    macro_rules! decode {
+        ($scalar:ty) => {{
+            let values = serde_json::from_str::<VectorList<$scalar>>(attribute.payload.get())
+                .map_err(|error| {
+                    format!(
+                        "failed to decode attribute '{}' as {}: {error}",
+                        attribute.label, attribute.scalar
+                    )
+                })?;
+            core.insert_decoded(attribute.id, attribute.label, values)
+        }};
+    }
+    match attribute.scalar.as_str() {
+        "f32" => decode!(f32),
+        "f64" => decode!(f64),
+        "i8" => decode!(i8),
+        "i16" => decode!(i16),
+        "i32" => decode!(i32),
+        "i64" => decode!(i64),
+        "i128" => decode!(i128),
+        "isize" => decode!(isize),
+        "u8" => decode!(u8),
+        "u16" => decode!(u16),
+        "u32" => decode!(u32),
+        "u64" => decode!(u64),
+        "u128" => decode!(u128),
+        "usize" => decode!(usize),
+        "complex_f32" => decode!(Complex<f32>),
+        "complex_f64" => decode!(Complex<f64>),
+        scalar => Err(format!(
+            "attribute '{}' uses unsupported scalar kind '{scalar}'",
+            attribute.label
+        )),
     }
 }
 
@@ -538,29 +717,66 @@ impl PhysObj {
 
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
+        serde_json::to_string_pretty(self)
     }
 
-    pub fn save_to_json(&self, output_dir: &PathBuf, filename: &str) -> std::io::Result<()> {
-        fs::create_dir_all(output_dir)?;
-        let text = self
-            .serialize()
-            .map_err(|e| std::io::Error::other(format!("failed to serialize phys_obj: {e}")))?;
-
-        let output_file = output_dir.join(filename);
-        let mut file = File::create(output_file)?;
-        file.write_all(text.as_bytes())?;
-        Ok(())
+    pub fn save_to_json<P, N>(&self, output_dir: P, filename: N) -> std::io::Result<()>
+    where
+        P: AsRef<Path>,
+        N: AsRef<Path>,
+    {
+        fs::create_dir_all(output_dir.as_ref())?;
+        let output_file = output_dir.as_ref().join(filename);
+        let mut writer = BufWriter::new(File::create(output_file)?);
+        serde_json::to_writer(&mut writer, self).map_err(std::io::Error::other)?;
+        writer.flush()
     }
 }
 
-impl ToJsonPayload for PhysObj {
-    type Payload = PhysObjPayload;
+impl Serialize for PhysObj {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut document = serializer.serialize_struct("PhysObj", 4)?;
+        document.serialize_field("kind", "phys_obj")?;
+        document.serialize_field("version", &JSON_SCHEMA_VERSION)?;
+        document.serialize_field("meta", &self.meta)?;
+        document.serialize_field("core", &self.core)?;
+        document.end()
+    }
+}
 
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        Ok(PhysObjPayload {
-            meta: serde_json::to_value(&self.meta)?,
-            core: self.core.to_json_payload()?,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PhysObjDocument {
+    kind: String,
+    version: u32,
+    meta: AttrsMeta,
+    core: AttrsCore,
+}
+
+impl<'de> Deserialize<'de> for PhysObj {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = PhysObjDocument::deserialize(deserializer)?;
+        if document.kind != "phys_obj" {
+            return Err(serde::de::Error::custom(format!(
+                "PhysObj kind must be 'phys_obj', got '{}'",
+                document.kind
+            )));
+        }
+        if document.version != JSON_SCHEMA_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "PhysObj version mismatch: expected {JSON_SCHEMA_VERSION}, got {}",
+                document.version
+            )));
+        }
+        Ok(Self {
+            meta: document.meta,
+            core: document.core,
         })
     }
 }

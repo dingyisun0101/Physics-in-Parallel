@@ -233,14 +233,17 @@ finishes without panicking, conversion preserved the data.
 ### `serde_flat_json`
 
 What it is:
-A serialization demonstration for core data structures.
+A demonstration of PiP's framework-independent Serde contract for core data
+structures.
 
 What it does:
 - creates a dense tensor;
 - creates a sparse tensor;
 - creates a `VectorList`;
 - creates a periodic square lattice;
-- prints each structure as pretty JSON.
+- serializes each structure directly through `serde_json`; and
+- prints the versioned, scalar-tagged JSON, including compact sparse indices
+  and values.
 
 How to run:
 
@@ -251,7 +254,7 @@ cargo run --example serde_flat_json
 How to interpret results:
 The output is intended for inspection. It shows the JSON shape used by PiP data
 structures and is useful when checking persistence, interchange, or debugging
-serialized state.
+serialized state. No workflow or storage framework is involved.
 
 ## Practical Notes
 

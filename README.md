@@ -34,6 +34,48 @@ The runnable examples are documented in [EXAMPLES.md](EXAMPLES.md). That guide
 introduces each example, explains what it does, shows the command-line
 arguments, and describes how to interpret benchmark or demonstration output.
 
+## Serialization and Persistence Interop
+
+PiP's scientific containers implement Serde directly. They can therefore be
+encoded with `serde_json`, embedded in an application's own serializable
+records, or passed to any independent storage or workflow library that accepts
+`Serialize`. Typed JSON reconstruction uses the corresponding `Deserialize`
+implementation:
+
+```rust
+use physics_in_parallel::math::{Dense, Tensor};
+
+let tensor = Tensor::<f64, Dense>::from_vec(&[2, 2], vec![1.0, 2.0, 3.0, 4.0]);
+let json = serde_json::to_string(&tensor)?;
+let restored: Tensor<f64, Dense> = serde_json::from_str(&json)?;
+assert_eq!(restored.shape(), tensor.shape());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Direct Serde calls are the canonical path. They serialize dense storage from
+borrowed slices and stream heterogeneous attribute columns without cloning the
+scientific payload first. Encoding must still allocate or write the resulting
+JSON bytes. Convenience methods that return a `String`, `serde_json::Value`, or
+owned payload representation necessarily allocate and are intended for
+inspection and small standalone operations.
+
+The wire format is explicit and self-describing:
+
+- every current document carries `version: 1`;
+- homogeneous numeric payloads carry a stable `scalar` identifier;
+- dense containers use row-major `shape` and `data`;
+- sparse tensors and matrices use sorted flat `indices` and matching `values`;
+- `AttrsCore` and `PhysObj` preserve heterogeneous column types and stable
+  attribute IDs; and
+- malformed shapes, scalar mismatches, non-canonical sparse entries, and
+  non-finite JSON numbers are rejected during reconstruction.
+
+PiP deliberately does not own chunking, queues, checkpoint cadence, directory
+layouts, or run metadata. Those policies belong to the consuming application
+or workflow layer. The dependency direction is one-way: such systems may
+depend on PiP's Serde types, while PiP has no dependency on
+`scientific-workflow` or any other workflow framework.
+
 ## Design Rules
 
 Core consistency rules used across the crate:
@@ -292,7 +334,32 @@ Core types:
 
 Purpose:
 
-`math::io` handles external-format interop for math containers. JSON payloads use compact shape/data schemas, while ndarray conversions preserve logical shape and row-major element order.
+`math::io` handles external-format interop for math containers. Every current
+JSON payload carries `version: 1`. Dense containers borrow their row-major data
+directly during Serde encoding:
+
+```json
+{"kind":"tensor","version":1,"scalar":"f64","shape":[2,2],"data":[1.0,2.0,3.0,4.0]}
+```
+
+Sparse tensors and matrices encode only explicit nonzeros through strictly
+increasing row-major flat indices:
+
+```json
+{"kind":"tensor_sparse","version":1,"scalar":"f64","shape":[1000,1000],"indices":[12,9004],"values":[2.5,-1.0]}
+```
+
+Sparse encoding is proportional to `nnz`, never materializes implicit zeros,
+and is deterministic regardless of hash-map order. Decoding validates version,
+shape, lengths, bounds, ordering, duplicates, and explicit zeros before direct
+sparse construction. PiP rejects non-finite numeric values because ordinary
+JSON numbers cannot represent NaN or infinity faithfully. Finite `f32` and
+`f64` values use exact round-trip parsing.
+
+Prefer `serde_json::to_writer` when writing to a file or buffered stream, and
+`serde_json::to_string` only when an owned JSON string is actually needed.
+`ToJsonPayload` and `FromJsonPayload` expose owned schema representations for
+specialized manipulation; they are not required for ordinary serialization.
 
 Core API:
 
@@ -311,6 +378,7 @@ Core types:
 - `ToJsonPayload`
 - `FromJsonPayload`
 - `FlatPayload<T>`
+- `SparsePayload<T>`
 - `TensorStringConvert`
 
 ## Space
@@ -501,6 +569,13 @@ Core types:
 Purpose:
 
 `PhysObj` stores many simulation objects as named typed attribute columns. Each column is a `VectorList<T>` with shape `[n_objects, dim]`. Attribute labels are the normal user path; generated attribute IDs are available for repeated expert lookups.
+
+`AttrsCore` and `PhysObj` implement direct streaming Serde serialization and
+typed deserialization. The versioned representation stores each column's stable
+attribute ID and scalar kind, so mixed built-in PiP scalar columns reconstruct
+without an intermediate `serde_json::Value` tree. Consequently, `PhysObj` can
+be used as a typed payload by any independent application or storage framework
+that accepts Serde values.
 
 Core API:
 

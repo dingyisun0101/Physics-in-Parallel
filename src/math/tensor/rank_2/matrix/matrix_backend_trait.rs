@@ -44,6 +44,16 @@ pub trait MatrixBackend<T: Scalar>: Send + Sync + Clone {
         None
     }
 
+    /// Returns explicitly stored row-major entries for a genuinely sparse backend.
+    ///
+    /// Structured matrices return `None` because their canonical storage does
+    /// not describe the complete logical matrix without applying symmetry or
+    /// triangular rules.
+    #[inline]
+    fn sparse_entries(&self) -> Option<Vec<(usize, T)>> {
+        None
+    }
+
     /// Return `[rows, cols]`.
     #[inline]
     fn shape(&self) -> [usize; 2] {

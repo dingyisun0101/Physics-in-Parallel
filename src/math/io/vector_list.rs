@@ -5,7 +5,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{
+    FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
+};
 use crate::math::io::ndarray::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::vector_list::VectorList;
@@ -19,12 +21,8 @@ where
         S: Serializer,
     {
         let shape = [self.num_vecs(), self.dim()];
-        FlatPayloadRef {
-            kind: "vector_list",
-            shape: &shape,
-            data: self.as_tensor().data(),
-        }
-        .serialize(serializer)
+        ensure_finite(self.as_tensor().data(), "vector_list").map_err(serde::ser::Error::custom)?;
+        FlatPayloadRef::new("vector_list", &shape, self.as_tensor().data()).serialize(serializer)
     }
 }
 
@@ -48,6 +46,8 @@ where
     type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        ensure_finite(self.as_tensor().data(), "vector_list")
+            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
         Ok(FlatPayload::new(
             "vector_list",
             vec![self.num_vecs(), self.dim()],
@@ -64,6 +64,7 @@ where
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
         payload.validate_dense("vector_list")?;
+        ensure_finite(&payload.data, "vector_list")?;
         if payload.shape.len() != 2 {
             return Err(format!(
                 "vector_list shape rank mismatch: expected 2, got {}",

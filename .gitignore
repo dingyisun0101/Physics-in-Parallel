@@ -1,2 +1,4 @@
 /target
 /todo.md
+__pycache__/
+*.py[cod]

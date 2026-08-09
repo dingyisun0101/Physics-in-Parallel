@@ -21,12 +21,19 @@ PiP now serializes numeric payloads as:
 ```json
 {
   "kind": "...",
+  "version": 1,
+  "scalar": "f64",
   "shape": [...],
   "data": [...]
 }
 ```
 
 `to_ndarray(path)` reshapes `data` using `shape` (NumPy convention, row-major/C order).
+The stable `scalar` tag restores the intended NumPy dtype, including complex
+PiP scalars. `i128` and `u128` use NumPy object arrays because NumPy has no
+native 128-bit integer dtype. The loader rejects non-finite floats, integer
+values outside the declared scalar range, and values that would require a
+lossy integer conversion.
 
 ## Supported Kinds
 
@@ -35,6 +42,8 @@ PiP now serializes numeric payloads as:
 ```json
 {
   "kind": "tensor",
+  "version": 1,
+  "scalar": "f64",
   "shape": [2, 2],
   "data": [1.0, 2.0, 3.0, 4.0]
 }
@@ -46,13 +55,16 @@ Output:
 arr.shape == (2, 2)
 ```
 
-### Sparse tensor (serialized densely)
+### Sparse tensor
 
 ```json
 {
   "kind": "tensor_sparse",
+  "version": 1,
+  "scalar": "f64",
   "shape": [2, 3],
-  "data": [0.0, 2.0, 0.0, 0.0, 0.0, 5.0]
+  "indices": [1, 5],
+  "values": [2.0, 5.0]
 }
 ```
 
@@ -62,11 +74,17 @@ Output:
 arr.shape == (2, 3)
 ```
 
+Sparse matrices use the same representation with `kind: "matrix_sparse"`.
+Indices are strictly increasing row-major flat positions. The Python helper
+materializes the requested NumPy array only during readback.
+
 ### Tensor2D / Matrix
 
 ```json
 {
   "kind": "matrix",
+  "version": 1,
+  "scalar": "f64",
   "shape": [2, 3],
   "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 }
@@ -85,6 +103,8 @@ Current VectorList convention is `[n, dim]`.
 ```json
 {
   "kind": "vector_list",
+  "version": 1,
+  "scalar": "f64",
   "shape": [2, 3],
   "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 }
@@ -96,17 +116,19 @@ Output:
 arr.shape == (2, 3)
 ```
 
-### Grid
+### Square lattice
 
 `kind` indicates boundary mode:
-- `grid_periodic`
-- `grid_clamped`
+- `square_lattice_periodic`
+- `square_lattice_reflective`
 
 Shape follows ndarray axes directly (e.g. 2D side length 4 is `[4, 4]`).
 
 ```json
 {
-  "kind": "grid_periodic",
+  "kind": "square_lattice_periodic",
+  "version": 1,
+  "scalar": "f64",
   "shape": [4, 4],
   "data": [...]
 }
@@ -139,3 +161,9 @@ payload = arr[()]
 ## Requirements
 
 `numpy_support.py` requires `numpy` to be installed in the Python environment.
+
+Run its schema tests with:
+
+```bash
+python -m unittest python/test_numpy_support.py
+```

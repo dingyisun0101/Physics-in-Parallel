@@ -5,7 +5,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::math::io::json::{FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload};
+use crate::math::io::json::{
+    FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
+};
 use crate::math::io::ndarray::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::matrix::{Matrix, MatrixBackend, RankNDense, RankNSparse};
@@ -21,16 +23,15 @@ where
     {
         if let Some(data) = self.contiguous_data() {
             let shape = self.shape();
-            FlatPayloadRef {
-                kind: "matrix",
-                shape: &shape,
-                data,
-            }
-            .serialize(serializer)
-        } else {
-            self.to_json_payload()
+            ensure_finite(data, "matrix").map_err(serde::ser::Error::custom)?;
+            FlatPayloadRef::new("matrix", &shape, data).serialize(serializer)
+        } else if let Some(entries) = self.backend().sparse_entries() {
+            sparse_matrix_payload(self.shape(), entries)
                 .map_err(serde::ser::Error::custom)?
                 .serialize(serializer)
+        } else {
+            let payload = logical_dense_matrix_payload(self).map_err(serde::ser::Error::custom)?;
+            payload.serialize(serializer)
         }
     }
 }
@@ -56,28 +57,37 @@ where
     where
         D: Deserializer<'de>,
     {
-        let payload = FlatPayload::<T>::deserialize(deserializer)?;
+        let payload = SparsePayload::<T>::deserialize(deserializer)?;
         <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
-impl<T, B> ToJsonPayload for Matrix<T, B>
+impl<T> ToJsonPayload for Matrix<T, RankNDense<T>>
 where
     T: Scalar + Serialize + Copy,
-    B: MatrixBackend<T>,
 {
     type Payload = FlatPayload<T>;
 
     fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        let rows = self.rows();
-        let cols = self.cols();
-        let mut data = Vec::with_capacity(rows * cols);
-        for row in 0..rows {
-            for col in 0..cols {
-                data.push(self.get(row as isize, col as isize));
-            }
-        }
-        Ok(FlatPayload::new("matrix", vec![rows, cols], data))
+        logical_dense_matrix_payload(self)
+            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
+    }
+}
+
+impl<T> ToJsonPayload for Matrix<T, RankNSparse<T>>
+where
+    T: Scalar + Serialize + Copy,
+{
+    type Payload = SparsePayload<T>;
+
+    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
+        sparse_matrix_payload(
+            self.shape(),
+            self.backend()
+                .sparse_entries()
+                .expect("rank-N sparse backend exposes sparse entries"),
+        )
+        .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
     }
 }
 
@@ -97,19 +107,35 @@ impl<T> FromJsonPayload for Matrix<T, RankNSparse<T>>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = FlatPayload<T>;
+    type Payload = SparsePayload<T>;
 
     fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        let (rows, cols, data) = matrix_payload_parts(payload)?;
-        let triplets = data
+        let (shape, indices, values) = payload.into_validated_parts("matrix_sparse")?;
+        if shape.len() != 2 {
+            return Err(format!(
+                "matrix_sparse shape rank mismatch: expected 2, got {}",
+                shape.len()
+            ));
+        }
+        ensure_finite(&values, "matrix_sparse")?;
+        if let Some(position) = values.iter().position(|value| *value == T::zero()) {
+            return Err(format!(
+                "matrix_sparse contains an explicit zero at sparse position {position}"
+            ));
+        }
+        let rows = shape[0];
+        let cols = shape[1];
+        let triplets = indices
             .into_iter()
-            .enumerate()
-            .map(|(idx, value)| (idx / cols, idx % cols, value));
+            .zip(values)
+            .map(|(index, value)| (index / cols, index % cols, value));
         Ok(Self::from_triplets(rows, cols, triplets))
     }
 }
 
-fn matrix_payload_parts<T>(payload: FlatPayload<T>) -> Result<(usize, usize, Vec<T>), String> {
+fn matrix_payload_parts<T: Scalar>(
+    payload: FlatPayload<T>,
+) -> Result<(usize, usize, Vec<T>), String> {
     payload.validate_dense("matrix")?;
     if payload.shape.len() != 2 {
         return Err(format!(
@@ -117,7 +143,52 @@ fn matrix_payload_parts<T>(payload: FlatPayload<T>) -> Result<(usize, usize, Vec
             payload.shape.len()
         ));
     }
+    ensure_finite(&payload.data, "matrix")?;
     Ok((payload.shape[0], payload.shape[1], payload.data))
+}
+
+fn logical_dense_matrix_payload<T, B>(matrix: &Matrix<T, B>) -> Result<FlatPayload<T>, String>
+where
+    T: Scalar + Serialize + Copy,
+    B: MatrixBackend<T>,
+{
+    let rows = matrix.rows();
+    let cols = matrix.cols();
+    let mut data = Vec::with_capacity(matrix.size());
+    for row in 0..rows {
+        for col in 0..cols {
+            data.push(matrix.get(row as isize, col as isize));
+        }
+    }
+    ensure_finite(&data, "matrix")?;
+    Ok(FlatPayload::new("matrix", vec![rows, cols], data))
+}
+
+fn sparse_matrix_payload<T>(
+    shape: [usize; 2],
+    mut entries: Vec<(usize, T)>,
+) -> Result<SparsePayload<T>, String>
+where
+    T: Scalar + Serialize + Copy,
+{
+    entries.sort_unstable_by_key(|(index, _)| *index);
+    let mut indices = Vec::with_capacity(entries.len());
+    let mut values = Vec::with_capacity(entries.len());
+    for (index, value) in entries {
+        if !value.is_finite() {
+            return Err(format!(
+                "matrix_sparse contains a non-finite scalar at flat index {index}"
+            ));
+        }
+        indices.push(index);
+        values.push(value);
+    }
+    Ok(SparsePayload::new(
+        "matrix_sparse",
+        shape.to_vec(),
+        indices,
+        values,
+    ))
 }
 
 impl<T, B> Matrix<T, B>
@@ -127,12 +198,12 @@ where
 {
     #[inline]
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.to_json_value()
+        serde_json::to_value(self)
     }
 
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
+        serde_json::to_string_pretty(self)
     }
 }
 
