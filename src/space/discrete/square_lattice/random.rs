@@ -29,7 +29,7 @@ impl IndexedRng {
             "IndexedRng",
             RngMethod::IndexedSplitMix64,
             &[RngMethod::IndexedSplitMix64],
-            false,
+            None,
         )
         .map(Self)
     }

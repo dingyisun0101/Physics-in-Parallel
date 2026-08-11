@@ -120,19 +120,19 @@ impl RngConfig {
         component: &'static str,
         default_method: RngMethod,
         supported_methods: &[RngMethod],
-        parallel_streams_supported: bool,
+        default_parallel_streams: Option<NonZeroUsize>,
     ) -> Result<Self, RngConfigError> {
         let method = self.method.unwrap_or(default_method);
         if !supported_methods.contains(&method) {
             return Err(RngConfigError::UnsupportedMethod { component, method });
         }
-        if self.parallel_streams.is_some() && !parallel_streams_supported {
+        if self.parallel_streams.is_some() && default_parallel_streams.is_none() {
             return Err(RngConfigError::ParallelStreamsUnsupported { component });
         }
         Ok(Self {
             seed: Some(self.seed.unwrap_or_else(rand::random)),
             method: Some(method),
-            parallel_streams: self.parallel_streams,
+            parallel_streams: self.parallel_streams.or(default_parallel_streams),
         })
     }
 }
@@ -182,13 +182,24 @@ mod tests {
     #[test]
     fn resolution_fills_defaults_and_rejects_unsupported_options() {
         let resolved = RngConfig::default()
-            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng], true)
+            .resolve_for(
+                "test",
+                RngMethod::SmallRng,
+                &[RngMethod::SmallRng],
+                NonZeroUsize::new(8),
+            )
             .unwrap();
         assert!(resolved.seed().is_some());
         assert_eq!(resolved.method(), Some(RngMethod::SmallRng));
+        assert_eq!(resolved.parallel_streams(), NonZeroUsize::new(8));
 
         let error = RngConfig::new(None, Some(RngMethod::IndexedSplitMix64), None)
-            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng], true)
+            .resolve_for(
+                "test",
+                RngMethod::SmallRng,
+                &[RngMethod::SmallRng],
+                NonZeroUsize::new(8),
+            )
             .unwrap_err();
         assert!(matches!(error, RngConfigError::UnsupportedMethod { .. }));
     }

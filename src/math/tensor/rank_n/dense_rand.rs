@@ -20,6 +20,8 @@ select deterministic seeding, the RNG family, and stream count; omitted values
 use the documented defaults.
 */
 
+use std::num::NonZeroUsize;
+
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_chacha::{ChaCha8Rng, ChaCha12Rng, ChaCha20Rng};
@@ -124,7 +126,7 @@ impl TensorRandFiller {
                     RngMethod::ChaCha12,
                     RngMethod::ChaCha20,
                 ],
-                true,
+                NonZeroUsize::new(NUM_RNGS),
             )
             .map_err(TensorRandError::RngConfig)?;
         let req = rng.parallel_streams().map_or(NUM_RNGS, |count| count.get());
