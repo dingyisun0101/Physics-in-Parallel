@@ -24,14 +24,17 @@ Boundary conditions:
 */
 
 use std::path::PathBuf;
+use std::{error::Error, fmt};
 
 use rand::random_range;
 use rayon::prelude::*;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::math::prelude::{DenseBackend, Scalar, ScalarSerde, Tensor};
 use crate::space::space_trait::Space;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BoundaryCondition {
     Periodic,
     Reflective,
@@ -48,27 +51,45 @@ impl BoundaryCondition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SquareLatticeConfig {
-    pub shape: Vec<usize>,
-    pub boundary: BoundaryCondition,
+    shape: Vec<usize>,
+    boundary: BoundaryCondition,
 }
 
 impl SquareLatticeConfig {
-    #[inline]
-    pub fn new(shape: &[usize], boundary: BoundaryCondition) -> Self {
-        assert!(
-            !shape.is_empty(),
-            "SquareLatticeConfig requires at least one axis"
-        );
-        assert!(
-            shape.iter().all(|&n| n > 0),
-            "SquareLatticeConfig requires every axis length to be nonzero; got {shape:?}"
-        );
-        Self {
+    /// Creates a validated square-lattice configuration.
+    pub fn try_new(
+        shape: &[usize],
+        boundary: BoundaryCondition,
+    ) -> Result<Self, SquareLatticeConfigError> {
+        if shape.is_empty() {
+            return Err(SquareLatticeConfigError::EmptyShape);
+        }
+        let mut sites = 1usize;
+        for (axis, &length) in shape.iter().enumerate() {
+            if length == 0 {
+                return Err(SquareLatticeConfigError::ZeroAxis { axis });
+            }
+            sites = sites.checked_mul(length).ok_or_else(|| {
+                SquareLatticeConfigError::SiteCountOverflow {
+                    shape: shape.to_vec(),
+                }
+            })?;
+        }
+        Ok(Self {
             shape: shape.to_vec(),
             boundary,
-        }
+        })
+    }
+
+    /// Creates a configuration, panicking if its shape is invalid.
+    ///
+    /// New fallible boundaries should prefer [`Self::try_new`].
+    #[inline]
+    pub fn new(shape: &[usize], boundary: BoundaryCondition) -> Self {
+        Self::try_new(shape, boundary)
+            .unwrap_or_else(|error| panic!("invalid SquareLatticeConfig: {error}"))
     }
 
     #[inline]
@@ -79,6 +100,12 @@ impl SquareLatticeConfig {
     #[inline]
     pub fn reflective(shape: &[usize]) -> Self {
         Self::new(shape, BoundaryCondition::Reflective)
+    }
+
+    /// Returns the configured boundary condition.
+    #[inline]
+    pub const fn boundary(&self) -> BoundaryCondition {
+        self.boundary
     }
 
     #[inline]
@@ -108,6 +135,57 @@ impl SquareLatticeConfig {
         &self.shape
     }
 }
+
+impl<'de> Deserialize<'de> for SquareLatticeConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Document {
+            shape: Vec<usize>,
+            boundary: BoundaryCondition,
+        }
+
+        let document = Document::deserialize(deserializer)?;
+        Self::try_new(&document.shape, document.boundary).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Invalid square-lattice geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SquareLatticeConfigError {
+    /// A lattice must have at least one axis.
+    EmptyShape,
+    /// Every declared axis must contain at least one site.
+    ZeroAxis {
+        /// Zero-length axis index.
+        axis: usize,
+    },
+    /// Multiplying axis lengths overflowed the platform site count.
+    SiteCountOverflow {
+        /// Rejected shape.
+        shape: Vec<usize>,
+    },
+}
+
+impl fmt::Display for SquareLatticeConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyShape => formatter.write_str("square lattice shape must not be empty"),
+            Self::ZeroAxis { axis } => {
+                write!(formatter, "square lattice axis {axis} has zero length")
+            }
+            Self::SiteCountOverflow { shape } => {
+                write!(formatter, "square lattice shape {shape:?} overflows usize")
+            }
+        }
+    }
+}
+
+impl Error for SquareLatticeConfigError {}
 
 #[derive(Debug, Clone)]
 pub enum SquareLatticeInitMethod<T: Scalar> {
@@ -240,12 +318,12 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
         assert!(
             target_shape
                 .iter()
-                .zip(self.cfg.shape.iter())
+                .zip(self.cfg.shape().iter())
                 .all(|(&new_dim, &old_dim)| new_dim <= old_dim),
             "downsample target shape must not exceed source shape: source {:?}, target {target_shape:?}",
-            self.cfg.shape
+            self.cfg.shape()
         );
-        if target_shape == self.cfg.shape.as_slice() {
+        if target_shape == self.cfg.shape() {
             return self.clone();
         }
 
@@ -257,7 +335,7 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
             .zip(target_shape.iter())
             .map(|(&old_dim, &new_dim)| old_dim as f64 / new_dim as f64)
             .collect();
-        let new_cfg = SquareLatticeConfig::new(target_shape, self.cfg.boundary);
+        let new_cfg = SquareLatticeConfig::new(target_shape, self.cfg.boundary());
         let mut new = Self {
             cells: Tensor::<T, DenseBackend>::empty(&new_cfg.tensor_shape()),
             cfg: new_cfg,
@@ -334,8 +412,8 @@ impl<T: Scalar> SquareLattice<T> {
         );
         coord
             .iter()
-            .zip(self.cfg.shape.iter())
-            .map(|(&c, &axis_len)| self.cfg.boundary.normalize(c, axis_len) as isize)
+            .zip(self.cfg.shape().iter())
+            .map(|(&c, &axis_len)| self.cfg.boundary().normalize(c, axis_len) as isize)
             .collect()
     }
 }

@@ -46,8 +46,12 @@ where
         S: Serializer,
     {
         ensure_finite(self.data(), "square_lattice").map_err(serde::ser::Error::custom)?;
-        FlatPayloadRef::new(self.cfg.boundary.kind_tag(), self.cfg.shape(), self.data())
-            .serialize(serializer)
+        FlatPayloadRef::new(
+            self.cfg.boundary().kind_tag(),
+            self.cfg.shape(),
+            self.data(),
+        )
+        .serialize(serializer)
     }
 }
 
@@ -74,7 +78,7 @@ where
         ensure_finite(self.data(), "square_lattice")
             .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
         Ok(FlatPayload::new(
-            self.cfg.boundary.kind_tag(),
+            self.cfg.boundary().kind_tag(),
             self.tensor_shape(),
             self.data().to_vec(),
         ))
@@ -143,7 +147,7 @@ where
     let shape = lattice_to_save.tensor_shape();
     ensure_finite(lattice_to_save.data(), "square_lattice").map_err(std::io::Error::other)?;
     let json_data = FlatPayloadRef::new(
-        lattice_to_save.cfg.boundary.kind_tag(),
+        lattice_to_save.cfg.boundary().kind_tag(),
         &shape,
         lattice_to_save.data(),
     );

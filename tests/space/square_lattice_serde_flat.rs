@@ -17,6 +17,28 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 }
 
 #[test]
+fn lattice_config_is_a_complete_validated_serde_boundary() {
+    let config =
+        SquareLatticeConfig::try_new(&[3, 5], BoundaryCondition::Reflective).expect("valid config");
+    let value = serde_json::to_value(&config).expect("serialize config");
+    assert_eq!(
+        value,
+        serde_json::json!({"shape": [3, 5], "boundary": "reflective"})
+    );
+    let roundtrip: SquareLatticeConfig = serde_json::from_value(value).expect("deserialize config");
+    assert_eq!(roundtrip, config);
+
+    for invalid in [
+        serde_json::json!({"shape": [], "boundary": "periodic"}),
+        serde_json::json!({"shape": [2, 0], "boundary": "periodic"}),
+        serde_json::json!({"shape": [2], "boundary": "periodic", "extra": true}),
+    ] {
+        assert!(serde_json::from_value::<SquareLatticeConfig>(invalid).is_err());
+    }
+    assert!(SquareLatticeConfig::try_new(&[usize::MAX, 2], BoundaryCondition::Periodic).is_err());
+}
+
+#[test]
 fn lattice_periodic_roundtrip_uses_lattice_schema() {
     let lattice = SquareLattice::<usize>::new(
         SquareLatticeConfig::new(&vec![3; 2], BoundaryCondition::Periodic),
@@ -32,7 +54,7 @@ fn lattice_periodic_roundtrip_uses_lattice_schema() {
 
     let back: SquareLattice<usize> = serde_json::from_value(value).expect("deserialize lattice");
     assert_eq!(back.cfg.shape(), [3, 3]);
-    assert_eq!(back.cfg.boundary, BoundaryCondition::Periodic);
+    assert_eq!(back.cfg.boundary(), BoundaryCondition::Periodic);
     assert_eq!(back.data(), vec![7; 9].as_slice());
 }
 
@@ -51,7 +73,7 @@ fn lattice_reflective_roundtrip_uses_kind_tag() {
 
     let back: SquareLattice<usize> = serde_json::from_value(value).expect("deserialize lattice");
     assert_eq!(back.cfg.shape(), [2, 2, 2]);
-    assert_eq!(back.cfg.boundary, BoundaryCondition::Reflective);
+    assert_eq!(back.cfg.boundary(), BoundaryCondition::Reflective);
 }
 
 #[test]

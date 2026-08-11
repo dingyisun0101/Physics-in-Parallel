@@ -464,10 +464,12 @@ Purpose:
 Core API:
 
 ```rust
+SquareLatticeConfig::try_new(shape, boundary)?
 SquareLatticeConfig::new(shape, boundary)
 SquareLatticeConfig::periodic(shape)
 SquareLatticeConfig::reflective(shape)
 cfg.shape()
+cfg.boundary()
 cfg.rank()
 cfg.num_sites()
 cfg.tensor_shape()
@@ -485,9 +487,15 @@ Core types:
 
 - `SquareLattice<T>`
 - `SquareLatticeConfig`
+- `SquareLatticeConfigError`
 - `SquareLatticeInitMethod<T>`
 - `BoundaryCondition`
 - `VacancyValue`
+
+`SquareLatticeConfig` is the complete serializable spatial configuration. Its
+JSON form is `{"shape":[64,64],"boundary":"periodic"}`. Deserialization and
+`try_new` reject empty shapes, zero-length axes, unknown fields, and site-count
+overflow, so downstream crates do not need mirror shape or boundary types.
 
 ### Square-Lattice Kernels And Pair Generation
 

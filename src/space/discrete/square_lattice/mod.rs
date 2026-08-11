@@ -23,5 +23,6 @@ pub use random::{
     PAIR_RANDOM_KEY_ENCODING, PAIR_RANDOM_METHOD, PAIR_RANDOM_VERSION, PairRandomKey,
 };
 pub use representation::{
-    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, VacancyValue,
+    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
+    SquareLatticeInitMethod, VacancyValue,
 };

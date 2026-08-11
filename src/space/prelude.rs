@@ -17,7 +17,7 @@ pub use crate::space::discrete::square_lattice::{
     BoundaryCondition, Kernel, KernelError, KernelType, NearestNeighborKernel,
     PAIR_RANDOM_KEY_ENCODING, PAIR_RANDOM_METHOD, PAIR_RANDOM_VERSION, PairGenerationError,
     PairRandomKey, PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice,
-    SquareLatticeConfig, SquareLatticeInitMethod, UniformKernel, VacancyValue, create_kernel,
-    try_create_kernel,
+    SquareLatticeConfig, SquareLatticeConfigError, SquareLatticeInitMethod, UniformKernel,
+    VacancyValue, create_kernel, try_create_kernel,
 };
 pub use crate::space::io::square_lattice::save_square_lattice;
