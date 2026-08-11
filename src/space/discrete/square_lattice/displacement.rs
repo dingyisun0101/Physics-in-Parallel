@@ -1,230 +1,343 @@
 /*!
-Random source-target pair generation for square lattices.
+Reproducible source-target pair generation for square lattices.
 
-Purpose:
-    This module generates batches of lattice-coordinate pairs for Monte Carlo,
-    stochastic dynamics, graph construction, and other algorithms that repeatedly
-    choose a source site and a displacement. It is deliberately shape-aware but
-    not boundary-aware.
+One call to [`RandPairGenerator::refresh_at`] deterministically fills a complete
+pair batch from an explicit random key and sweep. The result is independent of
+Rayon worker count and scheduling because each value has its own indexed random
+coordinate.
 
-Responsibility split:
-    - This module guarantees that generated source coordinates are valid indices
-      inside the square-lattice shape.
-    - This module stores raw displacements and raw targets, where
-      `target = source + displacement`.
-    - `SquareLattice` decides how a raw coordinate is interpreted under
-      `Periodic` or `Reflective` boundary conditions when callers later read or
-      write lattice values.
-
-Storage model:
-    Sources, displacements, and targets are `VectorList<isize>` values with
-    logical shape `[num_pairs, rank]`. Each row is one coordinate or vector.
+Sources are valid lattice indices. Displacements and targets remain raw;
+`SquareLattice` applies its configured boundary condition when those targets
+are used.
 */
 
-use rand::random_range;
+use std::error::Error;
+use std::fmt;
 
-use crate::math::prelude::{HaarVectors, NNVectors, TensorRandFiller, VectorList, VectorListRand};
-use crate::space::discrete::square_lattice::kernel::{Kernel, KernelType, create_kernel};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
-enum DispCache {
-    Haar(HaarVectors),
-    NN(NNVectors),
-}
+use crate::math::prelude::VectorList;
 
-#[derive(Clone)]
+use super::kernel::{Kernel, KernelError, KernelType, try_create_kernel};
+use super::random::{
+    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, PairRandomKey, standard_normal, uniform_index,
+};
+
+/// Rule for selecting each pair's source coordinate.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SourceMode {
     Origin,
     RandomUniform,
-    CustomFiller(TensorRandFiller),
 }
 
+/// Invalid pair-generator construction.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum PairGenerationError {
+    EmptyShape,
+    ZeroAxis {
+        axis: usize,
+    },
+    ZeroPairs,
+    KernelRankMismatch {
+        kernel_dimension: usize,
+        rank: usize,
+    },
+    Kernel(KernelError),
+}
+
+impl fmt::Display for PairGenerationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::EmptyShape => write!(
+                formatter,
+                "pair-generator shape must have at least one axis"
+            ),
+            Self::ZeroAxis { axis } => {
+                write!(
+                    formatter,
+                    "pair-generator shape axis {axis} must be nonzero"
+                )
+            }
+            Self::ZeroPairs => write!(formatter, "pair-generator pair count must be positive"),
+            Self::KernelRankMismatch {
+                kernel_dimension,
+                rank,
+            } => write!(
+                formatter,
+                "nearest-neighbor kernel dimension {kernel_dimension} does not match lattice rank {rank}"
+            ),
+            Self::Kernel(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for PairGenerationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Kernel(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<KernelError> for PairGenerationError {
+    fn from(value: KernelError) -> Self {
+        Self::Kernel(value)
+    }
+}
+
+/// Reusable buffers and immutable configuration for indexed random pairs.
 #[derive(Clone)]
 pub struct RandPairGenerator {
     shape: Vec<usize>,
     kernel: Box<dyn Kernel>,
     kernel_type: KernelType,
     source_mode: SourceMode,
+    random_key: PairRandomKey,
+    generated_sweep: Option<u64>,
     source_coords_cache: VectorList<isize>,
-    displacement_cache: DispCache,
+    direction_cache: Option<VectorList<f64>>,
     displacement_coords_cache: VectorList<isize>,
     target_coords_cache: VectorList<isize>,
 }
 
+impl fmt::Debug for RandPairGenerator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RandPairGenerator")
+            .field("shape", &self.shape)
+            .field("kernel_type", &self.kernel_type)
+            .field("source_mode", &self.source_mode)
+            .field("random_key", &self.random_key)
+            .field("generated_sweep", &self.generated_sweep)
+            .field("num_pairs", &self.num_pairs())
+            .finish_non_exhaustive()
+    }
+}
+
 impl RandPairGenerator {
+    /// Constructs an allocation-stable pair generator from explicit randomness.
     pub fn new(
         shape: &[usize],
         kernel_type: KernelType,
         num_pairs: usize,
         source_mode: SourceMode,
-        num_rngs: Option<usize>,
-    ) -> Self {
-        validate_shape(shape);
-        assert!(
-            num_pairs > 0,
-            "RandPairGenerator::new: num_pairs must be > 0"
-        );
-
+        random_key: PairRandomKey,
+    ) -> Result<Self, PairGenerationError> {
+        validate_shape(shape)?;
+        if num_pairs == 0 {
+            return Err(PairGenerationError::ZeroPairs);
+        }
+        validate_kernel_rank(kernel_type, shape.len())?;
+        let kernel = try_create_kernel(kernel_type)?;
         let rank = shape.len();
-        validate_kernel_rank(kernel_type, rank);
-
-        let kernel = create_kernel(kernel_type);
-        let source_coords_cache = VectorList::empty(rank, num_pairs);
-        let displacement_coords_cache = VectorList::empty(rank, num_pairs);
-        let target_coords_cache = VectorList::empty(rank, num_pairs);
-        let displacement_cache = match kernel_type {
-            KernelType::NearestNeighbor { .. } => {
-                DispCache::NN(NNVectors::new(rank, num_pairs, num_rngs))
-            }
+        let direction_cache = match kernel_type {
+            KernelType::NearestNeighbor { .. } => None,
             KernelType::PowerLaw { .. } | KernelType::Uniform { .. } => {
-                DispCache::Haar(HaarVectors::new(rank, num_pairs, num_rngs))
+                Some(VectorList::empty(rank, num_pairs))
             }
         };
 
-        Self {
+        Ok(Self {
             shape: shape.to_vec(),
             kernel,
             kernel_type,
             source_mode,
-            source_coords_cache,
-            displacement_cache,
-            displacement_coords_cache,
-            target_coords_cache,
-        }
+            random_key,
+            generated_sweep: None,
+            source_coords_cache: VectorList::empty(rank, num_pairs),
+            direction_cache,
+            displacement_coords_cache: VectorList::empty(rank, num_pairs),
+            target_coords_cache: VectorList::empty(rank, num_pairs),
+        })
     }
 
-    #[inline]
-    pub fn refresh(&mut self) {
-        self.refresh_sources();
-        self.refresh_displacements();
+    /// Replaces every cached pair for an explicit scientific sweep.
+    ///
+    /// Repeating this call with the same sweep reproduces the same batch
+    /// exactly. No mutable RNG cursor participates in the result.
+    pub fn refresh_at(&mut self, sweep: u64) {
+        self.refresh_sources_at(sweep);
+        self.refresh_displacements_at(sweep);
         self.refresh_targets();
+        self.generated_sweep = Some(sweep);
     }
 
-    pub fn refresh_sources(&mut self) {
-        match &mut self.source_mode {
+    fn refresh_sources_at(&mut self, sweep: u64) {
+        match self.source_mode {
             SourceMode::Origin => self.source_coords_cache.fill(0),
             SourceMode::RandomUniform => {
-                let shape = self.shape.clone();
-                self.source_coords_cache.par_for_each_vec_mut(|_, row| {
-                    for (axis, coord) in row.iter_mut().enumerate() {
-                        *coord = random_range(0..shape[axis]) as isize;
+                let shape = &self.shape;
+                let key = self.random_key;
+                self.source_coords_cache
+                    .par_for_each_vec_mut(|pair_index, row| {
+                        for (axis, coordinate) in row.iter_mut().enumerate() {
+                            *coordinate = uniform_index(
+                                key,
+                                sweep,
+                                DOMAIN_SOURCE_COORDINATE,
+                                pair_index as u64,
+                                axis as u64,
+                                shape[axis],
+                            ) as isize;
+                        }
+                    });
+            }
+        }
+    }
+
+    fn refresh_displacements_at(&mut self, sweep: u64) {
+        match self.kernel_type {
+            KernelType::NearestNeighbor { .. } => {
+                let key = self.random_key;
+                let kernel = &self.kernel;
+                self.displacement_coords_cache
+                    .par_for_each_vec_mut(|pair_index, row| {
+                        let code = kernel.sample_indexed(key, sweep, pair_index as u64) as usize;
+                        decode_nearest_neighbor_code(code, row);
+                    });
+            }
+            KernelType::PowerLaw { .. } | KernelType::Uniform { .. } => {
+                let key = self.random_key;
+                let directions = self
+                    .direction_cache
+                    .as_mut()
+                    .expect("non-nearest kernel has a direction cache");
+                directions.par_for_each_vec_mut(|pair_index, row| {
+                    let mut squared_norm = 0.0;
+                    for (axis, component) in row.iter_mut().enumerate() {
+                        let value = standard_normal(
+                            key,
+                            sweep,
+                            DOMAIN_HAAR_COMPONENT,
+                            pair_index as u64,
+                            axis as u64,
+                        );
+                        *component = value;
+                        squared_norm += value * value;
+                    }
+                    if squared_norm > 0.0 && squared_norm.is_finite() {
+                        let inverse_norm = squared_norm.sqrt().recip();
+                        for component in row {
+                            *component *= inverse_norm;
+                        }
+                    } else {
+                        row.fill(0.0);
+                        row[0] = 1.0;
                     }
                 });
-            }
-            SourceMode::CustomFiller(filler) => {
-                filler.refresh(self.source_coords_cache.as_tensor_mut());
-                normalize_sources_into_shape(&self.shape, &mut self.source_coords_cache);
+
+                let directions = self
+                    .direction_cache
+                    .as_ref()
+                    .expect("non-nearest kernel has a direction cache");
+                let kernel = &self.kernel;
+                self.displacement_coords_cache
+                    .par_for_each_vec_mut(|pair_index, row| {
+                        let length = kernel.sample_indexed(key, sweep, pair_index as u64);
+                        for (axis, component) in row.iter_mut().enumerate() {
+                            *component = (directions.get(pair_index as isize, axis as isize)
+                                * length) as isize;
+                        }
+                    });
             }
         }
     }
 
-    pub fn refresh_displacements(&mut self) {
-        let num_pairs = self.num_pairs();
-        match (&self.kernel_type, &mut self.displacement_cache) {
-            (KernelType::NearestNeighbor { .. }, DispCache::NN(nn)) => {
-                nn.refresh();
-                self.displacement_coords_cache = nn.vl.clone();
-            }
-            (KernelType::PowerLaw { .. } | KernelType::Uniform { .. }, DispCache::Haar(haar)) => {
-                haar.refresh();
-                let norms = self.kernel.sample(num_pairs);
-                haar.vl.scale_vectors_by_list(&norms);
-                self.displacement_coords_cache = haar.vl.cast_to::<isize>();
-            }
-            (kind, _) => panic!("kernel/cache mismatch in square-lattice pair generator: {kind:?}"),
-        }
+    fn refresh_targets(&mut self) {
+        let sources = &self.source_coords_cache;
+        let displacements = &self.displacement_coords_cache;
+        self.target_coords_cache
+            .par_for_each_vec_mut(|pair_index, row| {
+                for (axis, target) in row.iter_mut().enumerate() {
+                    *target = sources.get(pair_index as isize, axis as isize)
+                        + displacements.get(pair_index as isize, axis as isize);
+                }
+            });
     }
 
-    #[inline]
-    pub fn refresh_targets(&mut self) {
-        self.target_coords_cache = &self.source_coords_cache + &self.displacement_coords_cache;
-    }
-
-    #[inline]
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
 
-    #[inline]
     pub fn rank(&self) -> usize {
         self.shape.len()
     }
 
-    #[inline]
     pub fn num_pairs(&self) -> usize {
         self.source_coords_cache.num_vectors()
     }
 
-    #[inline]
     pub fn kernel_type(&self) -> KernelType {
         self.kernel_type
     }
 
-    #[inline]
+    pub fn source_mode(&self) -> SourceMode {
+        self.source_mode
+    }
+
+    pub fn random_key(&self) -> PairRandomKey {
+        self.random_key
+    }
+
+    /// Returns the sweep represented by the current buffers, if generated.
+    pub fn generated_sweep(&self) -> Option<u64> {
+        self.generated_sweep
+    }
+
     pub fn sources(&self) -> &VectorList<isize> {
         &self.source_coords_cache
     }
 
-    #[inline]
     pub fn displacements(&self) -> &VectorList<isize> {
         &self.displacement_coords_cache
     }
 
-    #[inline]
     pub fn targets(&self) -> &VectorList<isize> {
         &self.target_coords_cache
     }
 
-    #[inline]
-    pub fn source(&self, i: isize) -> &[isize] {
-        self.source_coords_cache.get_vec(i)
+    pub fn source(&self, index: isize) -> &[isize] {
+        self.source_coords_cache.get_vec(index)
     }
 
-    #[inline]
-    pub fn displacement(&self, i: isize) -> &[isize] {
-        self.displacement_coords_cache.get_vec(i)
+    pub fn displacement(&self, index: isize) -> &[isize] {
+        self.displacement_coords_cache.get_vec(index)
     }
 
-    #[inline]
-    pub fn target(&self, i: isize) -> &[isize] {
-        self.target_coords_cache.get_vec(i)
+    pub fn target(&self, index: isize) -> &[isize] {
+        self.target_coords_cache.get_vec(index)
     }
 }
 
-fn validate_shape(shape: &[usize]) {
-    assert!(
-        !shape.is_empty(),
-        "RandPairGenerator::new: shape must have at least one axis"
-    );
-    assert!(
-        shape.iter().all(|&axis_len| axis_len > 0),
-        "RandPairGenerator::new: shape must contain only nonzero axis lengths; got {shape:?}"
-    );
-}
-
-fn validate_kernel_rank(kernel_type: KernelType, rank: usize) {
-    if let KernelType::NearestNeighbor { d } = kernel_type {
-        assert_eq!(
-            d, rank,
-            "NearestNeighbor kernel rank mismatch: kernel has d={d}, lattice shape has rank={rank}"
-        );
+fn validate_shape(shape: &[usize]) -> Result<(), PairGenerationError> {
+    if shape.is_empty() {
+        return Err(PairGenerationError::EmptyShape);
     }
-}
-
-fn normalize_sources_into_shape(shape: &[usize], sources: &mut VectorList<isize>) {
-    sources.par_for_each_vec_mut(|_, row| {
-        for (axis, coord) in row.iter_mut().enumerate() {
-            *coord = wrap_into_axis(*coord, shape[axis]);
-        }
-    });
-}
-
-#[inline]
-fn wrap_into_axis(coord: isize, axis_len: usize) -> isize {
-    let axis_len = axis_len as isize;
-    let mut wrapped = coord % axis_len;
-    if wrapped < 0 {
-        wrapped += axis_len;
+    if let Some(axis) = shape.iter().position(|length| *length == 0) {
+        return Err(PairGenerationError::ZeroAxis { axis });
     }
-    wrapped
+    Ok(())
+}
+
+fn validate_kernel_rank(kernel_type: KernelType, rank: usize) -> Result<(), PairGenerationError> {
+    if let KernelType::NearestNeighbor { d } = kernel_type
+        && d != rank
+    {
+        return Err(PairGenerationError::KernelRankMismatch {
+            kernel_dimension: d,
+            rank,
+        });
+    }
+    Ok(())
+}
+
+fn decode_nearest_neighbor_code(code: usize, row: &mut [isize]) {
+    let axis = code / 2;
+    let sign = if code.is_multiple_of(2) { 1 } else { -1 };
+    for (index, component) in row.iter_mut().enumerate() {
+        *component = if index == axis { sign } else { 0 };
+    }
 }

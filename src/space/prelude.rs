@@ -14,8 +14,10 @@ pub use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
 pub use crate::space::discrete::square_lattice::{
-    BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PowerLawKernel,
-    RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod,
-    UniformKernel, VacancyValue, create_kernel,
+    BoundaryCondition, Kernel, KernelError, KernelType, NearestNeighborKernel,
+    PAIR_RANDOM_KEY_ENCODING, PAIR_RANDOM_METHOD, PAIR_RANDOM_VERSION, PairGenerationError,
+    PairRandomKey, PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice,
+    SquareLatticeConfig, SquareLatticeInitMethod, UniformKernel, VacancyValue, create_kernel,
+    try_create_kernel,
 };
 pub use crate::space::io::square_lattice::save_square_lattice;

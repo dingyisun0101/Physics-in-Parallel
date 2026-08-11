@@ -12,8 +12,9 @@ fn space_prelude_compiles_for_common_types() {
         KernelType::NearestNeighbor { d: 1 },
         8,
         SourceMode::Origin,
-        Some(1),
-    );
-    rpg.refresh();
+        PairRandomKey::new(7),
+    )
+    .expect("valid pair generator");
+    rpg.refresh_at(0);
     assert_eq!(rpg.sources().shape(), [8, 1]);
 }

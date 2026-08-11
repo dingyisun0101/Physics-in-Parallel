@@ -493,19 +493,22 @@ Core types:
 
 Purpose:
 
-Kernels define random displacement rules for square-lattice workflows. `RandPairGenerator` creates source coordinates, raw displacements, and raw targets. Boundary interpretation is intentionally left to `SquareLattice` access methods.
+Kernels define reproducible displacement rules for square-lattice workflows.
+`RandPairGenerator` creates source coordinates, raw displacements, and raw
+targets from an explicit `PairRandomKey` and scientific sweep. Every value is
+indexed by key, sweep, domain, pair, and component, so generated batches are
+identical across Rayon worker counts. Boundary interpretation is intentionally
+left to `SquareLattice` access methods.
 
 Core API:
 
 ```rust
-create_kernel(kernel_type)
-kernel.sample(n)
+try_create_kernel(kernel_type)
+kernel.sample_indexed(key, sweep, sample_index)
+kernel.sample_batch_indexed(key, sweep, n)
 kernel.kind()
-RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, num_rngs)
-gen.refresh()
-gen.refresh_sources()
-gen.refresh_displacements()
-gen.refresh_targets()
+RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, PairRandomKey::new(key))?
+gen.refresh_at(sweep)
 gen.sources()
 gen.displacements()
 gen.targets()
@@ -522,7 +525,14 @@ Core types:
 - `UniformKernel`
 - `PowerLawKernel`
 - `RandPairGenerator`
+- `PairRandomKey`
+- `PairGenerationError`
 - `SourceMode`
+
+For provenance, record `PAIR_RANDOM_METHOD`, `PAIR_RANDOM_VERSION`,
+`PAIR_RANDOM_KEY_ENCODING`, and `PairRandomKey::encode()`. PiP owns the random
+mapping; a workflow or application remains responsible for persisting these
+facts with the simulation record.
 
 ### Space IO
 

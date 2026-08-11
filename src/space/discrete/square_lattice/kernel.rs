@@ -1,68 +1,101 @@
 /*!
-Random displacement kernels for square lattices.
+Deterministic displacement kernels for square-lattice pair generation.
 
-Purpose:
-    A kernel describes the statistical rule used to choose a displacement for a
-    square-lattice source site. `RandPairGenerator` uses these kernels to create
-    nearest-neighbor steps or long-range moves. The kernel only samples the
-    move length or nearest-neighbor direction code; the displacement module turns
-    that sample into a vector, and the lattice representation later interprets
-    raw target coordinates through its boundary condition.
-
-Kernel families:
-    - `NearestNeighbor`:
-        Choose one of the `2 * rank` axis-aligned nearest-neighbor directions.
-    - `Uniform`:
-        Choose a continuous move length uniformly from `[c, l)`.
-    - `PowerLaw`:
-        Choose a continuous move length from a power-law distribution on
-        `(c, l]` with exponent `mu`.
-
-Parallelism:
-    `sample(n)` uses Rayon to fill the output vector in parallel. Each output
-    slot creates its own local random-number generator, so there is no shared
-    mutable random state between worker threads.
+A kernel maps indexed random values to a move length or nearest-neighbor
+direction code. Sampling is a pure function of an explicit key, sweep, and
+sample index, so output does not depend on Rayon worker scheduling.
 */
 
-use rand::{RngExt, rng};
-use rayon::prelude::*;
-use serde::Serialize;
+use std::error::Error;
+use std::fmt;
 
-#[derive(Debug, Clone, Copy, Serialize)]
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use super::random::{DOMAIN_KERNEL_SAMPLE, PairRandomKey, uniform_index, unit_f64};
+
+/// Serializable description of one square-lattice displacement distribution.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
 pub enum KernelType {
     PowerLaw { l: f64, c: f64, mu: f64 },
     Uniform { l: f64, c: f64 },
     NearestNeighbor { d: usize },
 }
 
-pub trait Kernel: Send + Sync {
-    /// Sample `n` scalar values from this kernel's distribution.
-    ///
-    /// For `NearestNeighbor`, values are real direction codes in `[0, 2d)`.
-    /// For `Uniform` and `PowerLaw`, values are move lengths.
-    fn sample(&self, n: usize) -> Vec<f64>;
+/// Invalid displacement-kernel configuration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum KernelError {
+    InvalidPowerLaw { l: f64, c: f64, mu: f64 },
+    InvalidUniform { l: f64, c: f64 },
+    InvalidNearestNeighborDimension { dimension: usize },
+}
 
-    /// Return the compact enum description of this kernel.
+impl fmt::Display for KernelError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::InvalidPowerLaw { l, c, mu } => write!(
+                formatter,
+                "power-law kernel requires finite l > c > 0 and finite mu > 0; got l={l}, c={c}, mu={mu}"
+            ),
+            Self::InvalidUniform { l, c } => write!(
+                formatter,
+                "uniform kernel requires finite l > c; got l={l}, c={c}"
+            ),
+            Self::InvalidNearestNeighborDimension { dimension } => write!(
+                formatter,
+                "nearest-neighbor kernel dimension must be positive; got {dimension}"
+            ),
+        }
+    }
+}
+
+impl Error for KernelError {}
+
+/// Indexed displacement distribution used by [`RandPairGenerator`](super::RandPairGenerator).
+pub trait Kernel: Send + Sync {
+    /// Samples one value from the coordinate `(key, sweep, sample_index)`.
+    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64;
+
+    /// Samples a stable batch whose result does not depend on worker count.
+    fn sample_batch_indexed(&self, key: PairRandomKey, sweep: u64, n: usize) -> Vec<f64> {
+        let mut output = vec![0.0; n];
+        output
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, value)| {
+                *value = self.sample_indexed(key, sweep, index as u64);
+            });
+        output
+    }
+
+    /// Returns the compact configuration for this distribution.
     fn kind(&self) -> KernelType;
 
-    /// Clone this kernel behind a trait object.
+    /// Clones this kernel behind a trait object.
     fn boxed_clone(&self) -> Box<dyn Kernel>;
 }
 
 impl Clone for Box<dyn Kernel> {
-    #[inline]
     fn clone(&self) -> Self {
         self.boxed_clone()
     }
 }
 
-#[inline]
-pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
+/// Creates a validated kernel without panicking on user configuration.
+pub fn try_create_kernel(kernel_type: KernelType) -> Result<Box<dyn Kernel>, KernelError> {
     match kernel_type {
-        KernelType::PowerLaw { l, c, mu } => Box::new(PowerLawKernel::new(l, c, mu)),
-        KernelType::Uniform { l, c } => Box::new(UniformKernel::new(l, c)),
-        KernelType::NearestNeighbor { d } => Box::new(NearestNeighborKernel::new(d)),
+        KernelType::PowerLaw { l, c, mu } => Ok(Box::new(PowerLawKernel::try_new(l, c, mu)?)),
+        KernelType::Uniform { l, c } => Ok(Box::new(UniformKernel::try_new(l, c)?)),
+        KernelType::NearestNeighbor { d } => Ok(Box::new(NearestNeighborKernel::try_new(d)?)),
     }
+}
+
+/// Creates a kernel, panicking only as a compatibility convenience.
+///
+/// New callers should prefer [`try_create_kernel`].
+pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
+    try_create_kernel(kernel_type).expect("invalid square-lattice kernel configuration")
 }
 
 #[derive(Debug, Clone)]
@@ -73,45 +106,38 @@ pub struct PowerLawKernel {
 }
 
 impl PowerLawKernel {
-    #[inline]
+    pub fn try_new(l: f64, c: f64, mu: f64) -> Result<Self, KernelError> {
+        if !l.is_finite() || !c.is_finite() || !mu.is_finite() || l <= c || c <= 0.0 || mu <= 0.0 {
+            return Err(KernelError::InvalidPowerLaw { l, c, mu });
+        }
+        Ok(Self {
+            kind: KernelType::PowerLaw { l, c, mu },
+            l_pow: l.powf(-mu),
+            c_pow: c.powf(-mu),
+        })
+    }
+
     pub fn new(l: f64, c: f64, mu: f64) -> Self {
-        assert!(l > c && c > 0.0, "PowerLawKernel: require l > c > 0");
-        assert!(mu > 0.0, "PowerLawKernel: require mu > 0");
-        let kind = KernelType::PowerLaw { l, c, mu };
-        let l_pow = l.powf(-mu);
-        let c_pow = c.powf(-mu);
-        Self { kind, l_pow, c_pow }
+        Self::try_new(l, c, mu).expect("invalid power-law kernel configuration")
     }
 }
 
 impl Kernel for PowerLawKernel {
-    #[inline]
-    fn sample(&self, n: usize) -> Vec<f64> {
-        let (mu, l_pow, c_pow, c) = match self.kind {
-            KernelType::PowerLaw { c, mu, .. } => (mu, self.l_pow, self.c_pow, c),
-            _ => unreachable!("PowerLawKernel.kind must be PowerLaw"),
+    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
+        let (mu, c) = match self.kind {
+            KernelType::PowerLaw { c, mu, .. } => (mu, c),
+            _ => unreachable!("PowerLawKernel kind is fixed at construction"),
         };
-
-        let mut out = vec![0.0_f64; n];
-        out.par_iter_mut().for_each(|x| {
-            let mut rng_local = rng();
-            let mut u = rng_local.random::<f64>();
-            if u >= 1.0 {
-                u = f64::from_bits(1.0f64.to_bits() - 1);
-            } else if u < 0.0 {
-                u = 0.0;
-            }
-            *x = (u * (l_pow - c_pow) + c_pow).powf(-1.0 / mu).max(c);
-        });
-        out
+        let u = unit_f64(key, sweep, DOMAIN_KERNEL_SAMPLE, sample_index, 0, 0);
+        (u * (self.l_pow - self.c_pow) + self.c_pow)
+            .powf(-1.0 / mu)
+            .max(c)
     }
 
-    #[inline]
     fn kind(&self) -> KernelType {
         self.kind
     }
 
-    #[inline]
     fn boxed_clone(&self) -> Box<dyn Kernel> {
         Box::new(self.clone())
     }
@@ -123,38 +149,34 @@ pub struct UniformKernel {
 }
 
 impl UniformKernel {
-    #[inline]
-    pub fn new(l: f64, c: f64) -> Self {
-        assert!(l > c, "UniformKernel: require l > c");
-        Self {
-            kind: KernelType::Uniform { l, c },
+    pub fn try_new(l: f64, c: f64) -> Result<Self, KernelError> {
+        if !l.is_finite() || !c.is_finite() || l <= c {
+            return Err(KernelError::InvalidUniform { l, c });
         }
+        Ok(Self {
+            kind: KernelType::Uniform { l, c },
+        })
+    }
+
+    pub fn new(l: f64, c: f64) -> Self {
+        Self::try_new(l, c).expect("invalid uniform kernel configuration")
     }
 }
 
 impl Kernel for UniformKernel {
-    #[inline]
-    fn sample(&self, n: usize) -> Vec<f64> {
+    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
         let (low, high) = match self.kind {
             KernelType::Uniform { l, c } => (c, l),
-            _ => unreachable!("UniformKernel.kind must be Uniform"),
+            _ => unreachable!("UniformKernel kind is fixed at construction"),
         };
-        let scale = high - low;
-
-        let mut out = vec![0.0_f64; n];
-        out.par_iter_mut().for_each(|x| {
-            let mut rng_local = rng();
-            *x = low + scale * rng_local.random::<f64>();
-        });
-        out
+        let u = unit_f64(key, sweep, DOMAIN_KERNEL_SAMPLE, sample_index, 0, 0);
+        low + (high - low) * u
     }
 
-    #[inline]
     fn kind(&self) -> KernelType {
         self.kind
     }
 
-    #[inline]
     fn boxed_clone(&self) -> Box<dyn Kernel> {
         Box::new(self.clone())
     }
@@ -163,45 +185,42 @@ impl Kernel for UniformKernel {
 #[derive(Debug, Clone)]
 pub struct NearestNeighborKernel {
     kind: KernelType,
-    num_neighbors: f64,
+    num_neighbors: usize,
 }
 
 impl NearestNeighborKernel {
-    #[inline]
-    pub fn new(d: usize) -> Self {
-        assert!(d > 0, "NearestNeighborKernel: require d >= 1");
-        let kind = KernelType::NearestNeighbor { d };
-        let num_neighbors = (2 * d) as f64;
-        Self {
-            kind,
+    pub fn try_new(d: usize) -> Result<Self, KernelError> {
+        let num_neighbors = d
+            .checked_mul(2)
+            .filter(|count| *count > 0)
+            .ok_or(KernelError::InvalidNearestNeighborDimension { dimension: d })?;
+        Ok(Self {
+            kind: KernelType::NearestNeighbor { d },
             num_neighbors,
-        }
+        })
+    }
+
+    pub fn new(d: usize) -> Self {
+        Self::try_new(d).expect("invalid nearest-neighbor kernel configuration")
     }
 }
 
 impl Kernel for NearestNeighborKernel {
-    #[inline]
-    fn sample(&self, n: usize) -> Vec<f64> {
-        match self.kind {
-            KernelType::NearestNeighbor { .. } => {}
-            _ => unreachable!("NearestNeighborKernel.kind must be NearestNeighbor"),
-        }
-
-        let high = self.num_neighbors;
-        let mut out = vec![0.0_f64; n];
-        out.par_iter_mut().for_each(|x| {
-            let mut rng_local = rng();
-            *x = high * rng_local.random::<f64>();
-        });
-        out
+    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
+        uniform_index(
+            key,
+            sweep,
+            DOMAIN_KERNEL_SAMPLE,
+            sample_index,
+            0,
+            self.num_neighbors,
+        ) as f64
     }
 
-    #[inline]
     fn kind(&self) -> KernelType {
         self.kind
     }
 
-    #[inline]
     fn boxed_clone(&self) -> Box<dyn Kernel> {
         Box::new(self.clone())
     }

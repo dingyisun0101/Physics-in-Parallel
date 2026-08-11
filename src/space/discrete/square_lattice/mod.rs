@@ -11,11 +11,16 @@ Purpose:
 
 pub mod displacement;
 pub mod kernel;
+pub mod random;
 pub mod representation;
 
-pub use displacement::{RandPairGenerator, SourceMode};
+pub use displacement::{PairGenerationError, RandPairGenerator, SourceMode};
 pub use kernel::{
-    Kernel, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel, create_kernel,
+    Kernel, KernelError, KernelType, NearestNeighborKernel, PowerLawKernel, UniformKernel,
+    create_kernel, try_create_kernel,
+};
+pub use random::{
+    PAIR_RANDOM_KEY_ENCODING, PAIR_RANDOM_METHOD, PAIR_RANDOM_VERSION, PairRandomKey,
 };
 pub use representation::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, VacancyValue,

@@ -1,6 +1,6 @@
 [package]
 name = "physics_in_parallel"
-version = "3.0.4"
+version = "3.1.0"
 edition = "2024"
 description = "High-performance infrastructure for numerical simulations in physics"
 license = "MIT"
@@ -10,7 +10,7 @@ homepage = "https://github.com/dingyisun0101/Physics-in-Parallel"
 documentation = "https://docs.rs/physics_in_parallel"
 keywords = ["physics", "simulation", "math", "tensor", "scientific"]
 categories = ["science"]
-rust-version = "1.85"
+rust-version = "1.97"
 exclude = ["target/", ".git/", ".idea/", ".vscode/"]
 
 [dependencies]
