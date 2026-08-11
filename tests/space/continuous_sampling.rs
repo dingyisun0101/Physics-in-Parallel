@@ -1,4 +1,5 @@
 use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
+use physics_in_parallel::rng::RngConfig;
 use physics_in_parallel::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
@@ -12,6 +13,7 @@ fn uniform_centered_sampling_fills_vector_list_inside_box() {
         VectorSamplingMethod::UniformCentered {
             box_size: &[2.0, 4.0],
         },
+        RngConfig::default(),
     )
     .unwrap();
 
@@ -32,6 +34,7 @@ fn jittered_lattice_without_noise_places_regular_points() {
             spacings: &[10.0, 100.0],
             sigmas: &[0.0, 0.0],
         },
+        RngConfig::default(),
     )
     .unwrap();
 
@@ -49,6 +52,7 @@ fn vector_sampling_rejects_bad_parameters() {
         sample_vectors(
             &mut positions,
             VectorSamplingMethod::UniformCentered { box_size: &[1.0] },
+            RngConfig::default(),
         )
         .unwrap_err(),
         VectorSamplingError::InvalidParameterLength {
@@ -64,6 +68,7 @@ fn vector_sampling_rejects_bad_parameters() {
             spacings: &[1.0, f64::NAN],
             sigmas: &[0.0, 0.0],
         },
+        RngConfig::default(),
     )
     .unwrap_err()
     {
@@ -92,6 +97,7 @@ fn uniform_and_gaussian_per_axis_sampling_cover_generic_vectors() {
             low: -2.0,
             high: 3.0,
         },
+        RngConfig::default(),
     )
     .unwrap();
 
@@ -107,6 +113,7 @@ fn uniform_and_gaussian_per_axis_sampling_cover_generic_vectors() {
             mean: &[5.0, -5.0],
             std: &[0.0, 0.0],
         },
+        RngConfig::default(),
     )
     .unwrap();
 
@@ -121,6 +128,7 @@ fn uniform_and_gaussian_per_axis_sampling_cover_generic_vectors() {
                 low: 1.0,
                 high: 1.0,
             },
+            RngConfig::default(),
         )
         .unwrap_err(),
         VectorSamplingError::InvalidUniformBounds {

@@ -84,12 +84,40 @@ Core consistency rules used across the crate:
 - Add a public type or trait only when no existing abstraction can express the
   behavior. Extend the closest existing concept before creating a parallel API.
 - Optional behavior belongs in one configurable interface with documented
-  defaults. In particular, random construction accepts an optional seed and
-  optional algorithm parameters instead of adding one constructor per combination.
+  defaults. Every end-user-facing stochastic API accepts only `RngConfig`;
+  components reject unsupported methods instead of introducing parallel RNG APIs.
 - Public APIs should expose physical or mathematical concepts, not backend layout. Internal storage helpers are kept behind `pub(crate)` where possible.
 - Type-preserving math operations keep the same scalar type and backend when the operation is mathematically backend-preserving.
 - Explicit conversion APIs have explicit names such as `try_cast_to`, `cast_to`, `to_dense`, `to_sparse`, and `to_ndarray`.
 - Boolean particle masks use compact numeric storage internally, while users normally call bool-facing helpers such as `set_alive`, `is_alive`, `set_rigid`, and `is_rigid`.
+
+## Unified RNG Configuration
+
+`RngConfig` is the only randomness input used by PiP's public stochastic APIs.
+Its seed, method, and parallel stream count are independently optional. Missing
+values select the receiving component's documented defaults; a missing seed is
+resolved from host entropy.
+
+```rust
+use std::num::NonZeroUsize;
+use physics_in_parallel::prelude::*;
+
+let rng = RngConfig::new(
+    Some(42),
+    Some(RngMethod::SmallRng),
+    NonZeroUsize::new(8),
+);
+```
+
+Stateful tensor sampling supports `SmallRng`, PCG, and ChaCha methods plus an
+optional parallel stream count. Indexed lattice algorithms use
+`IndexedSplitMix64`, are independent of worker scheduling, and do not accept a
+stream count. `RngConfig::default()` lets each component select all defaults.
+
+Construction resolves all missing values. Long-lived stochastic objects expose
+the resulting `rng_config()`; one-shot sampling functions return it. Use
+`RngMethod::name()`, `version()`, and `seed_encoding()` together with
+`RngConfig::encode_seed()` when writing workflow provenance.
 
 ## Math
 
@@ -210,22 +238,22 @@ Purpose:
 Core API:
 
 ```rust
-TensorRandFiller::new(rand_type, seed, rng_kind, num_rngs)
-TensorRandFiller::try_new(rand_type, seed, rng_kind, num_rngs)?
+TensorRandFiller::new(rand_type, rng_config)
+TensorRandFiller::try_new(rand_type, rng_config)?
 filler.refresh(tensor)
 filler.try_refresh(tensor)
-filler.seed()
-filler.rng_kind()
+filler.rng_config()
 ```
 
-Every optional argument may be `None`. A missing seed uses host entropy but the
-resolved value remains available through `seed()` for provenance records.
+Use `RngConfig::default()` for component defaults. The resolved seed, method,
+and stream count remain available through `rng_config()` for provenance.
 
 Core types:
 
 - `TensorRandFiller`
 - `RandType`
-- `RngKind`
+- `RngConfig`
+- `RngMethod`
 - `TensorRandError`
 
 ### Matrix
@@ -326,10 +354,12 @@ vectors.cast_to::<U>()
 Random vector batches:
 
 ```rust
-HaarVectors::new(dim, num_vectors, num_rngs)
+HaarVectors::new(dim, num_vectors, rng_config)?
 haar.refresh()
-NNVectors::new(dim, num_vectors, num_rngs)
+haar.rng_config()
+NNVectors::new(dim, num_vectors, rng_config)?
 nn.refresh()
+nn.rng_config()
 ```
 
 Core types:
@@ -434,10 +464,7 @@ Continuous sampling fills `VectorList<f64>` values with common coordinate or vel
 Core API:
 
 ```rust
-sample_vectors(vectors, VectorSamplingMethod::Uniform { low, high })
-sample_vectors(vectors, VectorSamplingMethod::UniformCentered { box_size })
-sample_vectors(vectors, VectorSamplingMethod::GaussianPerAxis { mean, std })
-sample_vectors(vectors, VectorSamplingMethod::JitteredLattice { spacings, sigmas })
+let resolved_rng = sample_vectors(vectors, method, rng_config)?;
 ```
 
 Core types:
@@ -489,6 +516,7 @@ cfg.neighbor(flat, axis, offset)
 cfg.laplacian(input, components, output)?
 SquareLattice::<T>::new(cfg, init_method)?
 lattice.config()
+lattice.initialization_rng_config()
 lattice.data()
 lattice.downsample(target_shape)
 lattice.rescale(target_shape)
@@ -517,8 +545,8 @@ Purpose:
 
 Kernels define reproducible displacement rules for square-lattice workflows.
 `RandPairGenerator` creates source coordinates, raw displacements, and raw
-targets from one resolved `RandomKey` and scientific sweep. Every value is
-indexed by key, sweep, domain, pair, and component, so generated batches are
+targets from one resolved `RngConfig` and scientific sweep. Every value is
+indexed by seed, sweep, domain, pair, and component, so generated batches are
 identical across Rayon worker counts. Boundary interpretation is intentionally
 left to `SquareLattice` access methods.
 
@@ -526,12 +554,12 @@ Core API:
 
 ```rust
 try_create_kernel(kernel_type)
-kernel.sample_indexed(key, sweep, sample_index)
-kernel.sample_batch_indexed(key, sweep, n)
+kernel.sample_indexed(rng_config, sweep, sample_index)?
+kernel.sample_batch_indexed(rng_config, sweep, n)?
 kernel.kind()
-let key = RandomKey::new(optional_seed);
-RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, key)?
+RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, rng_config)?
 gen.refresh_at(sweep)
+gen.rng_config()
 gen.sources()
 gen.displacements()
 gen.targets()
@@ -548,14 +576,15 @@ Core types:
 - `UniformKernel`
 - `PowerLawKernel`
 - `RandPairGenerator`
-- `RandomKey`
+- `RngConfig`
+- `RngMethod`
 - `PairGenerationError`
 - `SourceMode`
 
-For provenance, record `INDEXED_RANDOM_METHOD`, `INDEXED_RANDOM_VERSION`,
-`INDEXED_RANDOM_KEY_ENCODING`, and `RandomKey::encode()`. PiP owns the random
-mapping; a workflow or application remains responsible for persisting these
-facts with the simulation record.
+Indexed algorithms resolve to `RngMethod::IndexedSplitMix64`. Record the
+resolved configuration plus the method's name, version, and seed encoding. PiP
+owns the random mapping; a workflow or application remains responsible for
+persisting these facts with the simulation record.
 
 ### Space IO
 
@@ -768,10 +797,8 @@ Core construction/randomization API:
 
 ```rust
 create_template(dim, num_particles)
-randomize_r(objects, method)
-randomize_v(objects, VelocitySamplingMethod::Uniform { low, high })
-randomize_v(objects, VelocitySamplingMethod::GaussianPerAxis { mean, std })
-randomize_v(objects, VelocitySamplingMethod::MaxwellBoltzmann { tau })
+let resolved_rng = randomize_r(objects, method, rng_config)?;
+let resolved_rng = randomize_v(objects, velocity_method, rng_config)?;
 ```
 
 Core types:
@@ -828,11 +855,11 @@ Purpose:
 Core API:
 
 ```rust
-LangevinThermostat::new(tau_target, gamma, seed, selection)
+LangevinThermostat::new(tau_target, gamma, rng_config, selection)?
 thermostat.apply(objects, dt)
 thermostat.tau_target()
 thermostat.gamma()
-thermostat.seed()
+thermostat.rng_config()
 thermostat.step_counter()
 thermostat.selection()
 ```

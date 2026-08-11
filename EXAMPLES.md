@@ -136,7 +136,7 @@ What it does:
 How to run:
 
 ```bash
-cargo run --release --example tensor_rand_large_benchmark -- <len> <repeats> <rngs> <rng_kinds>
+cargo run --release --example tensor_rand_large_benchmark -- <len> <repeats> <streams> <rng_methods>
 ```
 
 Defaults:
@@ -144,8 +144,8 @@ Defaults:
 ```text
 len       = 120000000
 repeats   = 3
-rngs      = rayon current thread count
-rng_kinds = pcg64,pcg64mcg,smallrng
+streams     = rayon current thread count
+rng_methods = pcg64,pcg64mcg,smallrng
 ```
 
 Examples:
@@ -179,7 +179,7 @@ What it does:
 How to run:
 
 ```bash
-cargo run --release --example vector_list_haar_benchmark -- <dim> <num_vecs> <repeats> <rngs>
+cargo run --release --example vector_list_haar_benchmark -- <dim> <num_vecs> <repeats> <streams>
 ```
 
 Defaults:
@@ -188,7 +188,7 @@ Defaults:
 dim      = 3
 num_vecs = 5000000
 repeats  = 3
-rngs     = rayon current thread count
+streams  = rayon current thread count
 ```
 
 Example:

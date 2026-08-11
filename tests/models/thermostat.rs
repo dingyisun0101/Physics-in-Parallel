@@ -6,6 +6,11 @@ use physics_in_parallel::models::particles::create_state::create_template;
 use physics_in_parallel::models::particles::thermostat::{
     LangevinThermostat, Thermostat, ThermostatError,
 };
+use physics_in_parallel::rng::RngConfig;
+
+fn rng(seed: u64) -> RngConfig {
+    RngConfig::new(Some(seed), None, None)
+}
 
 #[test]
 fn langevin_deterministic_for_same_seed_and_state() {
@@ -21,8 +26,8 @@ fn langevin_deterministic_for_same_seed_and_state() {
         .unwrap();
     b.core.set_vector_of::<f64>(ATTR_V, 1, &[0.5, 2.0]).unwrap();
 
-    let mut ta = LangevinThermostat::new(1.0, 0.7, 42, ParticleSelection::AliveOnly).unwrap();
-    let mut tb = LangevinThermostat::new(1.0, 0.7, 42, ParticleSelection::AliveOnly).unwrap();
+    let mut ta = LangevinThermostat::new(1.0, 0.7, rng(42), ParticleSelection::AliveOnly).unwrap();
+    let mut tb = LangevinThermostat::new(1.0, 0.7, rng(42), ParticleSelection::AliveOnly).unwrap();
 
     ta.apply(&mut a, 0.05).unwrap();
     tb.apply(&mut b, 0.05).unwrap();
@@ -42,7 +47,7 @@ fn langevin_zero_gamma_keeps_velocity_unchanged() {
     let mut obj = create_template(1, 1).unwrap();
     obj.core.set_vector_of::<f64>(ATTR_V, 0, &[3.5]).unwrap();
 
-    let mut t = LangevinThermostat::new(2.0, 0.0, 9, ParticleSelection::AliveOnly).unwrap();
+    let mut t = LangevinThermostat::new(2.0, 0.0, rng(9), ParticleSelection::AliveOnly).unwrap();
     t.apply(&mut obj, 0.1).unwrap();
 
     assert!((obj.core.vector_of::<f64>(ATTR_V, 0).unwrap()[0] - 3.5).abs() < 1e-12);
@@ -51,7 +56,7 @@ fn langevin_zero_gamma_keeps_velocity_unchanged() {
 #[test]
 fn langevin_rejects_invalid_dt() {
     let mut obj = create_template(1, 1).unwrap();
-    let mut t = LangevinThermostat::new(1.0, 0.5, 1, ParticleSelection::AliveOnly).unwrap();
+    let mut t = LangevinThermostat::new(1.0, 0.5, rng(1), ParticleSelection::AliveOnly).unwrap();
 
     assert_eq!(
         t.apply(&mut obj, 0.0),
@@ -61,7 +66,8 @@ fn langevin_rejects_invalid_dt() {
 
 #[test]
 fn langevin_rejects_invalid_constructor_parameters() {
-    match LangevinThermostat::new(f64::NAN, 0.1, 1, ParticleSelection::AliveOnly).unwrap_err() {
+    match LangevinThermostat::new(f64::NAN, 0.1, rng(1), ParticleSelection::AliveOnly).unwrap_err()
+    {
         ThermostatError::InvalidParam { field, value } => {
             assert_eq!(field, "tau_target");
             assert!(value.is_nan());
@@ -69,7 +75,7 @@ fn langevin_rejects_invalid_constructor_parameters() {
         other => panic!("unexpected error: {other:?}"),
     }
     assert_eq!(
-        LangevinThermostat::new(1.0, -0.1, 1, ParticleSelection::AliveOnly).unwrap_err(),
+        LangevinThermostat::new(1.0, -0.1, rng(1), ParticleSelection::AliveOnly).unwrap_err(),
         ThermostatError::InvalidParam {
             field: "gamma",
             value: -0.1,
@@ -89,10 +95,11 @@ fn langevin_respects_alive_selection_and_rigid_mask() {
         set_rigid(obj, 2, true).unwrap();
     }
 
-    let mut t_alive = LangevinThermostat::new(1.0, 0.5, 7, ParticleSelection::AliveOnly).unwrap();
+    let mut t_alive =
+        LangevinThermostat::new(1.0, 0.5, rng(7), ParticleSelection::AliveOnly).unwrap();
     t_alive.apply(&mut alive_only, 0.2).unwrap();
 
-    let mut t_all = LangevinThermostat::new(1.0, 0.5, 7, ParticleSelection::All).unwrap();
+    let mut t_all = LangevinThermostat::new(1.0, 0.5, rng(7), ParticleSelection::All).unwrap();
     t_all.apply(&mut all, 0.2).unwrap();
 
     assert_ne!(alive_only.core.vector_of::<f64>(ATTR_V, 0).unwrap()[0], 1.0);
@@ -110,7 +117,7 @@ fn langevin_reports_invalid_inverse_mass_only_for_included_particles() {
         .set_vector_of::<f64>(ATTR_M_INV, 0, &[0.0])
         .unwrap();
 
-    let mut t = LangevinThermostat::new(1.0, 0.5, 1, ParticleSelection::AliveOnly).unwrap();
+    let mut t = LangevinThermostat::new(1.0, 0.5, rng(1), ParticleSelection::AliveOnly).unwrap();
     assert_eq!(
         t.apply(&mut obj, 0.1).unwrap_err(),
         ThermostatError::InvalidParam {
@@ -131,7 +138,7 @@ fn langevin_reports_shape_errors() {
         .core
         .insert(ATTR_M_INV, VectorList::<f64>::empty(2, 2))
         .unwrap();
-    let mut t = LangevinThermostat::new(1.0, 0.5, 1, ParticleSelection::AliveOnly).unwrap();
+    let mut t = LangevinThermostat::new(1.0, 0.5, rng(1), ParticleSelection::AliveOnly).unwrap();
     assert_eq!(
         t.apply(&mut bad_m_inv, 0.1).unwrap_err(),
         ThermostatError::InvalidAttrShape {

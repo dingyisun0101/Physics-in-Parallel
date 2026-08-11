@@ -1,9 +1,11 @@
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use physics_in_parallel::math::tensor::rank_2::vector_list::{
     HaarVectors, VectorList, VectorListRand,
 };
+use physics_in_parallel::rng::RngConfig;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_distr::{Distribution, Normal};
@@ -72,7 +74,12 @@ struct Timing {
 }
 
 fn benchmark_vector_list_haar(dim: usize, num_vecs: usize, repeats: usize, rngs: usize) -> Timing {
-    let mut generator = HaarVectors::new(dim, num_vecs, Some(rngs));
+    let mut generator = HaarVectors::new(
+        dim,
+        num_vecs,
+        RngConfig::new(None, None, NonZeroUsize::new(rngs)),
+    )
+    .expect("valid RNG configuration");
     generator.refresh();
 
     let timings = (0..repeats)

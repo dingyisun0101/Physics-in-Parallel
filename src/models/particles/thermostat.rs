@@ -17,22 +17,28 @@ particle and velocity component. The random stream is deterministic for a fixed
 `seed`, `step_counter`, particle index, and component traversal order.
 */
 
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
-use rand_distr::{Distribution, StandardNormal};
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
 use crate::models::particles::state::{ParticleStateError, gather_inverse_mass, gather_masks};
+use crate::rng::{RngConfig, RngConfigError};
+use crate::space::discrete::square_lattice::random::IndexedRng;
+
+const DOMAIN_LANGEVIN_NORMAL: u64 = 0xc7c7_d252_9b53_6071;
 
 /// Errors returned by thermostat modules.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ThermostatError {
     /// Parameter must be finite and within expected range.
-    InvalidParam { field: &'static str, value: f64 },
+    InvalidParam {
+        field: &'static str,
+        value: f64,
+    },
     /// Time-step must be finite and strictly positive.
-    InvalidDt { dt: f64 },
+    InvalidDt {
+        dt: f64,
+    },
     /// Lifted error from `AttrsCore` accessors.
     Attrs(AttrsError),
     /// Invalid per-attribute vector dimension.
@@ -47,6 +53,7 @@ pub enum ThermostatError {
         expected: usize,
         got: usize,
     },
+    RngConfig(RngConfigError),
 }
 
 impl From<AttrsError> for ThermostatError {
@@ -88,20 +95,11 @@ pub trait Thermostat {
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), ThermostatError>;
 }
 
-#[inline]
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = x;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
 #[derive(Debug, Clone)]
 pub struct LangevinThermostat {
     tau_target: f64,
     gamma: f64,
-    seed: u64,
+    rng: IndexedRng,
     step_counter: u64,
     selection: ParticleSelection,
 }
@@ -116,16 +114,17 @@ impl LangevinThermostat {
     pub fn new(
         tau_target: f64,
         gamma: f64,
-        seed: u64,
+        rng: RngConfig,
         selection: ParticleSelection,
     ) -> Result<Self, ThermostatError> {
         validate_nonnegative("tau_target", tau_target)?;
         validate_nonnegative("gamma", gamma)?;
+        let rng = IndexedRng::new(rng).map_err(ThermostatError::RngConfig)?;
 
         Ok(Self {
             tau_target,
             gamma,
-            seed,
+            rng,
             step_counter: 0,
             selection,
         })
@@ -142,8 +141,8 @@ impl LangevinThermostat {
     }
 
     #[inline]
-    pub fn seed(&self) -> u64 {
-        self.seed
+    pub fn rng_config(&self) -> RngConfig {
+        self.rng.rng_config()
     }
 
     #[inline]
@@ -172,7 +171,7 @@ impl Thermostat for LangevinThermostat {
         let c = (-self.gamma * dt).exp();
         let one_minus_c2 = (1.0 - c * c).max(0.0);
         let step = self.step_counter;
-        let seed = self.seed;
+        let rng = self.rng;
         let tau_target = self.tau_target;
 
         let v = objects.core.get_mut::<f64>(ATTR_V)?;
@@ -201,10 +200,13 @@ impl Thermostat for LangevinThermostat {
                     });
                 }
 
-                let row_seed = splitmix64(seed ^ step ^ ((i as u64) << 1));
-                let mut rng = SmallRng::seed_from_u64(row_seed);
-                for vd in row.iter_mut() {
-                    let z: f64 = StandardNormal.sample(&mut rng);
+                for (component, vd) in row.iter_mut().enumerate() {
+                    let z = rng.standard_normal(
+                        step,
+                        DOMAIN_LANGEVIN_NORMAL,
+                        i as u64,
+                        component as u64,
+                    );
                     *vd = c * *vd + sigma * z;
                 }
 

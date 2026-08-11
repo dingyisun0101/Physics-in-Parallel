@@ -1,7 +1,9 @@
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
-use physics_in_parallel::math::tensor::{RandType, RngKind, TensorRandFiller, TensorTrait, dense};
+use physics_in_parallel::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense};
+use physics_in_parallel::rng::{RngConfig, RngMethod};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_chacha::{ChaCha8Rng, ChaCha12Rng, ChaCha20Rng};
@@ -11,7 +13,8 @@ use rand_pcg::{Pcg64, Pcg64Mcg};
 const DEFAULT_LEN: usize = 120_000_000;
 const DEFAULT_REPEATS: usize = 3;
 const SEED: u64 = 0x5EED_1234;
-const DEFAULT_RNG_KINDS: &[RngKind] = &[RngKind::Pcg64, RngKind::Pcg64Mcg, RngKind::SmallRng];
+const DEFAULT_RNG_KINDS: &[RngMethod] =
+    &[RngMethod::Pcg64, RngMethod::Pcg64Mcg, RngMethod::SmallRng];
 
 fn main() {
     let len = parse_arg(1).unwrap_or(DEFAULT_LEN);
@@ -64,10 +67,13 @@ fn benchmark_tensor_fill(
     repeats: usize,
     kind: RandType,
     rngs: usize,
-    rng_kind: RngKind,
+    rng_kind: RngMethod,
 ) -> Timing {
     let mut tensor = dense::Tensor::<f64>::empty(&[len]);
-    let mut filler = TensorRandFiller::new(kind, Some(SEED), Some(rng_kind), Some(rngs));
+    let mut filler = TensorRandFiller::new(
+        kind,
+        RngConfig::new(Some(SEED), Some(rng_kind), NonZeroUsize::new(rngs)),
+    );
 
     filler.refresh(&mut tensor);
 
@@ -86,26 +92,27 @@ fn benchmark_tensor_fill(
     }
 }
 
-fn benchmark_sequential_vec_fill(len: usize, repeats: usize, rng_kind: RngKind) -> Timing {
+fn benchmark_sequential_vec_fill(len: usize, repeats: usize, rng_kind: RngMethod) -> Timing {
     match rng_kind {
-        RngKind::SmallRng => {
+        RngMethod::SmallRng => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, SmallRng::seed_from_u64(SEED))
         }
-        RngKind::Pcg64Mcg => {
+        RngMethod::Pcg64Mcg => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, Pcg64Mcg::seed_from_u64(SEED))
         }
-        RngKind::Pcg64 => {
+        RngMethod::Pcg64 => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, Pcg64::seed_from_u64(SEED))
         }
-        RngKind::ChaCha8 => {
+        RngMethod::ChaCha8 => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, ChaCha8Rng::seed_from_u64(SEED))
         }
-        RngKind::ChaCha12 => {
+        RngMethod::ChaCha12 => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, ChaCha12Rng::seed_from_u64(SEED))
         }
-        RngKind::ChaCha20 => {
+        RngMethod::ChaCha20 => {
             benchmark_sequential_vec_fill_with_rng(len, repeats, ChaCha20Rng::seed_from_u64(SEED))
         }
+        RngMethod::IndexedSplitMix64 => panic!("indexed randomness is not a tensor stream"),
     }
 }
 
@@ -151,7 +158,7 @@ fn average(times: &[Duration]) -> Duration {
     Duration::from_secs_f64(total / times.len() as f64)
 }
 
-fn report(rng_kind: RngKind, tensor: &Timing, sequential: &Timing) {
+fn report(rng_kind: RngMethod, tensor: &Timing, sequential: &Timing) {
     println!(
         "{:<12} {:>14} {:>14} {:>14} {:>14} {:>12.3} {:>12.3}",
         rng_kind.name(),
@@ -176,22 +183,22 @@ fn parse_arg(position: usize) -> Option<usize> {
     std::env::args().nth(position)?.parse().ok()
 }
 
-fn parse_rng_kinds(position: usize) -> Option<Vec<RngKind>> {
+fn parse_rng_kinds(position: usize) -> Option<Vec<RngMethod>> {
     let arg = std::env::args().nth(position)?;
     if arg.eq_ignore_ascii_case("all") {
         return Some(vec![
-            RngKind::Pcg64,
-            RngKind::Pcg64Mcg,
-            RngKind::SmallRng,
-            RngKind::ChaCha8,
-            RngKind::ChaCha12,
-            RngKind::ChaCha20,
+            RngMethod::Pcg64,
+            RngMethod::Pcg64Mcg,
+            RngMethod::SmallRng,
+            RngMethod::ChaCha8,
+            RngMethod::ChaCha12,
+            RngMethod::ChaCha20,
         ]);
     }
 
     let kinds = arg
         .split(',')
-        .filter_map(|name| RngKind::from_name(name.trim()))
+        .filter_map(|name| RngMethod::from_name(name.trim()))
         .collect::<Vec<_>>();
 
     if kinds.is_empty() { None } else { Some(kinds) }

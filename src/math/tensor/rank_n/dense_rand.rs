@@ -6,8 +6,8 @@ Random filling for dense rank-N tensors.
 contiguous chunks during refresh. Seeded fillers are deterministic across
 identical construction, RNG kind, and refresh sequences.
 
-`RngKind` controls the concrete RNG family. When the creation API receives
-`None`, it defaults to `SmallRng`.
+[`RngConfig`] controls the seed, method, and parallel stream count through the
+same interface used by every other PiP stochastic component.
 
 Supported element/distribution pairs:
     - `f64`: `Uniform`, `Normal`, `Bernoulli`;
@@ -29,6 +29,7 @@ use rayon::prelude::*;
 
 use crate::math::scalar::Scalar;
 use crate::math::tensor::dense::Tensor;
+use crate::rng::{RngConfig, RngConfigError, RngMethod};
 
 //===================================================================
 // ---------------------------- Config ------------------------------
@@ -60,63 +61,10 @@ impl RandType {
     }
 }
 
-/// RNG families available to `TensorRandFiller`.
-///
-/// Ordering:
-///	- fastest to slowest by measured tensor-fill speed;
-///	- benchmark basis: `f64` `Uniform(-1, 1)`, 120,000,000 elements,
-///	  80 RNG chunks, release build, on the local Xeon Gold 6148 machine.
-///
-/// Default behavior:
-///	- constructor `rng_kind == None` maps to `SmallRng`, which is the concise
-///	  general-purpose default chosen for predictable user-facing behavior even
-///	  though the enum itself is ordered by measured fill speed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RngKind {
-    Pcg64,
-    Pcg64Mcg,
-    SmallRng,
-    ChaCha8,
-    ChaCha12,
-    ChaCha20,
-}
-
-impl Default for RngKind {
-    #[inline]
-    fn default() -> Self {
-        Self::SmallRng
-    }
-}
-
-impl RngKind {
-    #[inline]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Pcg64 => "Pcg64",
-            Self::Pcg64Mcg => "Pcg64Mcg",
-            Self::SmallRng => "SmallRng",
-            Self::ChaCha8 => "ChaCha8",
-            Self::ChaCha12 => "ChaCha12",
-            Self::ChaCha20 => "ChaCha20",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "pcg64" => Some(Self::Pcg64),
-            "pcg64mcg" | "pcg64_mcg" | "pcg64-fast" | "pcg64fast" => Some(Self::Pcg64Mcg),
-            "small" | "smallrng" => Some(Self::SmallRng),
-            "chacha8" | "chacha8rng" => Some(Self::ChaCha8),
-            "chacha12" | "chacha12rng" => Some(Self::ChaCha12),
-            "chacha20" | "chacha20rng" | "chacha" => Some(Self::ChaCha20),
-            _ => None,
-        }
-    }
-}
-
+/// Invalid tensor random-filler configuration or distribution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TensorRandError {
-    ZeroRngCount,
+    RngConfig(RngConfigError),
     UnsupportedDistribution {
         scalar: &'static str,
         distribution: &'static str,
@@ -145,8 +93,7 @@ pub enum TensorRandError {
 #[derive(Debug, Clone)]
 pub struct TensorRandFiller {
     kind: RandType,
-    seed: u64,
-    rng_kind: RngKind,
+    rng: RngConfig,
     num_rngs: usize,
     rngs: Vec<TensorRng>,
 }
@@ -154,37 +101,40 @@ pub struct TensorRandFiller {
 impl TensorRandFiller {
     /// Constructs a filler from one unified random configuration.
     ///
-    /// `seed == None` obtains entropy from the host, `rng_kind == None` uses
-    /// [`RngKind::default`], and `num_rngs == None` uses [`NUM_RNGS`].
-    /// Panics when the supplied stream count is zero.
+    /// Missing values use host entropy, [`RngMethod::SmallRng`], and
+    /// [`NUM_RNGS`]. Indexed methods are rejected.
     #[inline]
-    pub fn new(
-        kind: RandType,
-        seed: Option<u64>,
-        rng_kind: Option<RngKind>,
-        num_rngs: Option<usize>,
-    ) -> Self {
-        Self::try_new(kind, seed, rng_kind, num_rngs)
-            .expect("invalid tensor random filler configuration")
+    pub fn new(kind: RandType, rng: RngConfig) -> Self {
+        Self::try_new(kind, rng).expect("invalid tensor random filler configuration")
     }
 
     /// Fallibly constructs a filler from the same unified configuration as
     /// [`Self::new`].
     #[inline]
-    pub fn try_new(
-        kind: RandType,
-        seed: Option<u64>,
-        rng_kind: Option<RngKind>,
-        num_rngs: Option<usize>,
-    ) -> Result<Self, TensorRandError> {
-        let req = rng_count(num_rngs)?;
-        let rng_kind = rng_kind.unwrap_or_default();
-        let seed = seed.unwrap_or_else(rand::random);
+    pub fn try_new(kind: RandType, rng: RngConfig) -> Result<Self, TensorRandError> {
+        let rng = rng
+            .resolve_for(
+                "TensorRandFiller",
+                RngMethod::SmallRng,
+                &[
+                    RngMethod::Pcg64,
+                    RngMethod::Pcg64Mcg,
+                    RngMethod::SmallRng,
+                    RngMethod::ChaCha8,
+                    RngMethod::ChaCha12,
+                    RngMethod::ChaCha20,
+                ],
+                true,
+            )
+            .map_err(TensorRandError::RngConfig)?;
+        let req = rng.parallel_streams().map_or(NUM_RNGS, |count| count.get());
+        let rng_method = rng.method().expect("resolved RNG method");
+        let seed = rng.seed().expect("resolved RNG seed");
         let mut master = SmallRng::seed_from_u64(seed);
         Ok(Self::from_master_rng(
             kind,
-            seed,
-            rng_kind,
+            rng,
+            rng_method,
             req,
             &mut master,
         ))
@@ -192,19 +142,18 @@ impl TensorRandFiller {
 
     fn from_master_rng(
         kind: RandType,
-        seed: u64,
-        rng_kind: RngKind,
+        rng: RngConfig,
+        rng_method: RngMethod,
         num_rngs: usize,
         master: &mut SmallRng,
     ) -> Self {
         let mut rngs: Vec<TensorRng> = (0..num_rngs)
-            .map(|_| TensorRng::from_master(rng_kind, master))
+            .map(|_| TensorRng::from_master(rng_method, master))
             .collect();
         rngs.shrink_to_fit();
         Self {
             kind,
-            seed,
-            rng_kind,
+            rng,
             num_rngs,
             rngs,
         }
@@ -265,23 +214,8 @@ impl TensorRandFiller {
     }
 
     #[inline]
-    pub fn rng_kind(&self) -> RngKind {
-        self.rng_kind
-    }
-
-    /// Returns the resolved root seed, including a host-generated seed when
-    /// construction received `None`.
-    #[inline]
-    pub fn seed(&self) -> u64 {
-        self.seed
-    }
-}
-
-fn rng_count(num_rngs: Option<usize>) -> Result<usize, TensorRandError> {
-    match num_rngs {
-        Some(0) => Err(TensorRandError::ZeroRngCount),
-        Some(n) => Ok(n),
-        None => Ok(NUM_RNGS),
+    pub fn rng_config(&self) -> RngConfig {
+        self.rng
     }
 }
 
@@ -303,14 +237,15 @@ enum TensorRng {
 }
 
 impl TensorRng {
-    fn from_master(kind: RngKind, master: &mut SmallRng) -> Self {
+    fn from_master(kind: RngMethod, master: &mut SmallRng) -> Self {
         match kind {
-            RngKind::SmallRng => Self::SmallRng(SmallRng::from_rng(master)),
-            RngKind::Pcg64Mcg => Self::Pcg64Mcg(Pcg64Mcg::from_rng(master)),
-            RngKind::Pcg64 => Self::Pcg64(Pcg64::from_rng(master)),
-            RngKind::ChaCha8 => Self::ChaCha8(ChaCha8Rng::from_rng(master)),
-            RngKind::ChaCha12 => Self::ChaCha12(ChaCha12Rng::from_rng(master)),
-            RngKind::ChaCha20 => Self::ChaCha20(ChaCha20Rng::from_rng(master)),
+            RngMethod::SmallRng => Self::SmallRng(SmallRng::from_rng(master)),
+            RngMethod::Pcg64Mcg => Self::Pcg64Mcg(Pcg64Mcg::from_rng(master)),
+            RngMethod::Pcg64 => Self::Pcg64(Pcg64::from_rng(master)),
+            RngMethod::ChaCha8 => Self::ChaCha8(ChaCha8Rng::from_rng(master)),
+            RngMethod::ChaCha12 => Self::ChaCha12(ChaCha12Rng::from_rng(master)),
+            RngMethod::ChaCha20 => Self::ChaCha20(ChaCha20Rng::from_rng(master)),
+            RngMethod::IndexedSplitMix64 => unreachable!("indexed RNG rejected during resolve"),
         }
     }
 

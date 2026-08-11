@@ -13,10 +13,11 @@ pub use crate::math::NdarrayConvert;
 
 // Generic tensor front API
 pub use crate::math::tensor::{
-    Backend, Dense as DenseBackend, RandType, RngKind, Sparse as SparseBackend, Tensor,
-    TensorError, TensorRandError, TensorRandFiller, TensorResult, TensorTrait, dense, dense_rand,
-    sparse, tensor_trait,
+    Backend, Dense as DenseBackend, RandType, Sparse as SparseBackend, Tensor, TensorError,
+    TensorRandError, TensorRandFiller, TensorResult, TensorTrait, dense, dense_rand, sparse,
+    tensor_trait,
 };
+pub use crate::rng::{RngConfig, RngConfigError, RngMethod};
 
 // Rank-2 tensor and matrix/vector abstractions
 pub use crate::math::tensor::rank_2::{

@@ -11,6 +11,6 @@ pub mod tensor;
 pub use io::ndarray::NdarrayConvert;
 pub use scalar::{Complex, Scalar, ScalarCastError, ScalarSerde};
 pub use tensor::{
-    Backend, Dense, RandType, RngKind, Sparse, Tensor, TensorError, TensorRandError,
-    TensorRandFiller, TensorResult, TensorTrait,
+    Backend, Dense, RandType, Sparse, Tensor, TensorError, TensorRandError, TensorRandFiller,
+    TensorResult, TensorTrait,
 };

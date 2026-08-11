@@ -18,7 +18,8 @@ Canonical template attributes:
 */
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
-use crate::math::tensor::{RandType, TensorRandFiller};
+use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
+use crate::rng::RngConfig;
 use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
@@ -76,6 +77,7 @@ pub enum MassiveParticlesError {
         /// Human-readable validation message.
         msg: String,
     },
+    Rng(TensorRandError),
 }
 
 impl From<AttrsError> for MassiveParticlesError {
@@ -155,10 +157,10 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Mass
 pub fn randomize_r(
     phys_obj: &mut PhysObj,
     method: VectorSamplingMethod<'_>,
-) -> Result<(), MassiveParticlesError> {
+    rng: RngConfig,
+) -> Result<RngConfig, MassiveParticlesError> {
     let r = phys_obj.core.get_mut::<f64>(ATTR_R)?;
-    sample_vectors(r, method)?;
-    Ok(())
+    sample_vectors(r, method, rng).map_err(Into::into)
 }
 
 /// Velocity sampling strategy for canonical particle velocities.
@@ -181,17 +183,17 @@ pub enum VelocitySamplingMethod<'a> {
 pub fn randomize_v(
     phys_obj: &mut PhysObj,
     method: VelocitySamplingMethod<'_>,
-) -> Result<(), MassiveParticlesError> {
+    rng: RngConfig,
+) -> Result<RngConfig, MassiveParticlesError> {
     match method {
         VelocitySamplingMethod::Uniform { low, high } => {
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
-            sample_vectors(v, VectorSamplingMethod::Uniform { low, high })?;
-            Ok(())
+            sample_vectors(v, VectorSamplingMethod::Uniform { low, high }, rng).map_err(Into::into)
         }
         VelocitySamplingMethod::GaussianPerAxis { mean, std } => {
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
-            sample_vectors(v, VectorSamplingMethod::GaussianPerAxis { mean, std })?;
-            Ok(())
+            sample_vectors(v, VectorSamplingMethod::GaussianPerAxis { mean, std }, rng)
+                .map_err(Into::into)
         }
         VelocitySamplingMethod::MaxwellBoltzmann { tau } => {
             if !tau.is_finite() || tau < 0.0 {
@@ -214,21 +216,22 @@ pub fn randomize_v(
             }
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
-            if tau == 0.0 {
-                v.as_tensor_mut().data.par_iter_mut().for_each(|x| *x = 0.0);
-                return Ok(());
-            }
-
-            let mut filler = TensorRandFiller::new(
+            let mut filler = TensorRandFiller::try_new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
                 },
-                None,
-                None,
-                None,
-            );
-            filler.refresh(v.as_tensor_mut());
+                rng,
+            )
+            .map_err(MassiveParticlesError::Rng)?;
+            if tau == 0.0 {
+                v.as_tensor_mut().data.par_iter_mut().for_each(|x| *x = 0.0);
+                return Ok(filler.rng_config());
+            }
+
+            filler
+                .try_refresh(v.as_tensor_mut())
+                .map_err(MassiveParticlesError::Rng)?;
 
             v.as_tensor_mut()
                 .data
@@ -248,7 +251,7 @@ pub fn randomize_v(
                     }
                 });
 
-            Ok(())
+            Ok(filler.rng_config())
         }
     }
 }

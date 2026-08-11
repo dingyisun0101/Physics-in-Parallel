@@ -18,10 +18,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::math::prelude::VectorList;
 
-use super::kernel::{Kernel, KernelError, KernelType, try_create_kernel};
+use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
 use super::random::{
-    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, RandomKey, standard_normal, uniform_index,
+    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, IndexedRng, standard_normal, uniform_index,
 };
+use crate::rng::{RngConfig, RngConfigError};
 
 /// Rule for selecting each pair's source coordinate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -45,11 +46,12 @@ pub enum PairGenerationError {
         rank: usize,
     },
     Kernel(KernelError),
+    RngConfig(RngConfigError),
 }
 
 impl fmt::Display for PairGenerationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
+        match self {
             Self::EmptyShape => write!(
                 formatter,
                 "pair-generator shape must have at least one axis"
@@ -69,6 +71,7 @@ impl fmt::Display for PairGenerationError {
                 "nearest-neighbor kernel dimension {kernel_dimension} does not match lattice rank {rank}"
             ),
             Self::Kernel(error) => error.fmt(formatter),
+            Self::RngConfig(error) => error.fmt(formatter),
         }
     }
 }
@@ -77,6 +80,7 @@ impl Error for PairGenerationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Kernel(error) => Some(error),
+            Self::RngConfig(error) => Some(error),
             _ => None,
         }
     }
@@ -88,14 +92,20 @@ impl From<KernelError> for PairGenerationError {
     }
 }
 
+impl From<RngConfigError> for PairGenerationError {
+    fn from(value: RngConfigError) -> Self {
+        Self::RngConfig(value)
+    }
+}
+
 /// Reusable buffers and immutable configuration for indexed random pairs.
 #[derive(Clone)]
 pub struct RandPairGenerator {
     shape: Vec<usize>,
-    kernel: Box<dyn Kernel>,
+    kernel: BuiltinKernel,
     kernel_type: KernelType,
     source_mode: SourceMode,
-    random_key: RandomKey,
+    rng: IndexedRng,
     generated_sweep: Option<u64>,
     source_coords_cache: VectorList<isize>,
     direction_cache: Option<VectorList<f64>>,
@@ -110,7 +120,7 @@ impl fmt::Debug for RandPairGenerator {
             .field("shape", &self.shape)
             .field("kernel_type", &self.kernel_type)
             .field("source_mode", &self.source_mode)
-            .field("random_key", &self.random_key)
+            .field("rng", &self.rng.rng_config())
             .field("generated_sweep", &self.generated_sweep)
             .field("num_pairs", &self.num_pairs())
             .finish_non_exhaustive()
@@ -124,14 +134,15 @@ impl RandPairGenerator {
         kernel_type: KernelType,
         num_pairs: usize,
         source_mode: SourceMode,
-        random_key: RandomKey,
+        rng: RngConfig,
     ) -> Result<Self, PairGenerationError> {
         validate_shape(shape)?;
         if num_pairs == 0 {
             return Err(PairGenerationError::ZeroPairs);
         }
         validate_kernel_rank(kernel_type, shape.len())?;
-        let kernel = try_create_kernel(kernel_type)?;
+        let kernel = try_create_builtin_kernel(kernel_type)?;
+        let rng = IndexedRng::new(rng)?;
         let rank = shape.len();
         let direction_cache = match kernel_type {
             KernelType::NearestNeighbor { .. } => None,
@@ -145,7 +156,7 @@ impl RandPairGenerator {
             kernel,
             kernel_type,
             source_mode,
-            random_key,
+            rng,
             generated_sweep: None,
             source_coords_cache: VectorList::empty(rank, num_pairs),
             direction_cache,
@@ -170,7 +181,7 @@ impl RandPairGenerator {
             SourceMode::Origin => self.source_coords_cache.fill(0),
             SourceMode::RandomUniform => {
                 let shape = &self.shape;
-                let key = self.random_key;
+                let key = self.rng;
                 self.source_coords_cache
                     .par_for_each_vec_mut(|pair_index, row| {
                         for (axis, coordinate) in row.iter_mut().enumerate() {
@@ -191,16 +202,16 @@ impl RandPairGenerator {
     fn refresh_displacements_at(&mut self, sweep: u64) {
         match self.kernel_type {
             KernelType::NearestNeighbor { .. } => {
-                let key = self.random_key;
+                let key = self.rng;
                 let kernel = &self.kernel;
                 self.displacement_coords_cache
                     .par_for_each_vec_mut(|pair_index, row| {
-                        let code = kernel.sample_indexed(key, sweep, pair_index as u64) as usize;
+                        let code = kernel.sample_resolved(key, sweep, pair_index as u64) as usize;
                         decode_nearest_neighbor_code(code, row);
                     });
             }
             KernelType::PowerLaw { .. } | KernelType::Uniform { .. } => {
-                let key = self.random_key;
+                let key = self.rng;
                 let directions = self
                     .direction_cache
                     .as_mut()
@@ -236,7 +247,7 @@ impl RandPairGenerator {
                 let kernel = &self.kernel;
                 self.displacement_coords_cache
                     .par_for_each_vec_mut(|pair_index, row| {
-                        let length = kernel.sample_indexed(key, sweep, pair_index as u64);
+                        let length = kernel.sample_resolved(key, sweep, pair_index as u64);
                         for (axis, component) in row.iter_mut().enumerate() {
                             *component = (directions.get(pair_index as isize, axis as isize)
                                 * length) as isize;
@@ -278,8 +289,8 @@ impl RandPairGenerator {
         self.source_mode
     }
 
-    pub fn random_key(&self) -> RandomKey {
-        self.random_key
+    pub fn rng_config(&self) -> RngConfig {
+        self.rng.rng_config()
     }
 
     /// Returns the sweep represented by the current buffers, if generated.

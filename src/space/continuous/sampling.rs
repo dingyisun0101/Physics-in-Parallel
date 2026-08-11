@@ -16,7 +16,8 @@ row is one sampled continuous vector.
 use rayon::prelude::*;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
-use crate::math::tensor::{RandType, TensorRandFiller};
+use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
+use crate::rng::RngConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VectorSamplingMethod<'a> {
@@ -62,54 +63,63 @@ pub enum VectorSamplingError {
         value: f64,
         rule: &'static str,
     },
+    Rng(TensorRandError),
 }
 
 pub fn sample_vectors(
     vectors: &mut VectorList<f64>,
     method: VectorSamplingMethod<'_>,
-) -> Result<(), VectorSamplingError> {
+    rng: RngConfig,
+) -> Result<RngConfig, VectorSamplingError> {
     let dim = vectors.dim();
     let n = vectors.num_vectors();
 
-    if dim == 0 || n == 0 {
-        return Ok(());
-    }
-
-    match method {
+    let resolved = match method {
         VectorSamplingMethod::Uniform { low, high } => {
             if !low.is_finite() || !high.is_finite() || low >= high {
                 return Err(VectorSamplingError::InvalidUniformBounds { low, high });
             }
 
-            let mut filler =
-                TensorRandFiller::new(RandType::Uniform { low, high }, None, None, None);
-            filler.refresh(vectors.as_tensor_mut());
+            let mut filler = TensorRandFiller::try_new(RandType::Uniform { low, high }, rng)
+                .map_err(VectorSamplingError::Rng)?;
+            if dim > 0 && n > 0 {
+                filler
+                    .try_refresh(vectors.as_tensor_mut())
+                    .map_err(VectorSamplingError::Rng)?;
+            }
+            filler.rng_config()
         }
         VectorSamplingMethod::UniformCentered { box_size } => {
             validate_len("box_size", box_size.len(), dim)?;
             validate_finite_nonnegative("box_size", box_size)?;
 
-            let mut filler = TensorRandFiller::new(
+            let mut filler = TensorRandFiller::try_new(
                 RandType::Uniform {
                     low: 0.0,
                     high: 1.0,
                 },
-                None,
-                None,
-                None,
-            );
-            filler.refresh(vectors.as_tensor_mut());
+                rng,
+            )
+            .map_err(VectorSamplingError::Rng)?;
+            if dim > 0 && n > 0 {
+                filler
+                    .try_refresh(vectors.as_tensor_mut())
+                    .map_err(VectorSamplingError::Rng)?;
+            }
 
-            vectors
-                .as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .for_each(|row| {
-                    for k in 0..dim {
-                        let half_span = 0.5 * box_size[k];
-                        row[k] = (2.0 * row[k] - 1.0) * half_span;
-                    }
-                });
+            if dim > 0 && n > 0 {
+                vectors
+                    .as_tensor_mut()
+                    .data
+                    .par_chunks_mut(dim)
+                    .for_each(|row| {
+                        for k in 0..dim {
+                            let half_span = 0.5 * box_size[k];
+                            row[k] = (2.0 * row[k] - 1.0) * half_span;
+                        }
+                    });
+            }
+            filler.rng_config()
         }
         VectorSamplingMethod::GaussianPerAxis { mean, std } => {
             validate_len("mean", mean.len(), dim)?;
@@ -117,26 +127,32 @@ pub fn sample_vectors(
             validate_finite("mean", mean)?;
             validate_finite_nonnegative("std", std)?;
 
-            let mut filler = TensorRandFiller::new(
+            let mut filler = TensorRandFiller::try_new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
                 },
-                None,
-                None,
-                None,
-            );
-            filler.refresh(vectors.as_tensor_mut());
+                rng,
+            )
+            .map_err(VectorSamplingError::Rng)?;
+            if dim > 0 && n > 0 {
+                filler
+                    .try_refresh(vectors.as_tensor_mut())
+                    .map_err(VectorSamplingError::Rng)?;
+            }
 
-            vectors
-                .as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .for_each(|row| {
-                    for k in 0..dim {
-                        row[k] = mean[k] + row[k] * std[k];
-                    }
-                });
+            if dim > 0 && n > 0 {
+                vectors
+                    .as_tensor_mut()
+                    .data
+                    .par_chunks_mut(dim)
+                    .for_each(|row| {
+                        for k in 0..dim {
+                            row[k] = mean[k] + row[k] * std[k];
+                        }
+                    });
+            }
+            filler.rng_config()
         }
         VectorSamplingMethod::JitteredLattice { spacings, sigmas } => {
             validate_len("spacings", spacings.len(), dim)?;
@@ -144,36 +160,42 @@ pub fn sample_vectors(
             validate_finite_nonnegative("spacings", spacings)?;
             validate_finite_nonnegative("sigmas", sigmas)?;
 
-            let mut filler = TensorRandFiller::new(
+            let mut filler = TensorRandFiller::try_new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
                 },
-                None,
-                None,
-                None,
-            );
-            filler.refresh(vectors.as_tensor_mut());
+                rng,
+            )
+            .map_err(VectorSamplingError::Rng)?;
+            if dim > 0 && n > 0 {
+                filler
+                    .try_refresh(vectors.as_tensor_mut())
+                    .map_err(VectorSamplingError::Rng)?;
+            }
 
-            let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
-            vectors
-                .as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .enumerate()
-                .for_each(|(vector_idx, row)| {
-                    let mut lattice_idx = vector_idx;
-                    for k in 0..dim {
-                        let grid_coord = lattice_idx % side;
-                        lattice_idx /= side;
-                        let base = grid_coord as f64 * spacings[k];
-                        row[k] = base + row[k] * sigmas[k];
-                    }
-                });
+            if dim > 0 && n > 0 {
+                let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
+                vectors
+                    .as_tensor_mut()
+                    .data
+                    .par_chunks_mut(dim)
+                    .enumerate()
+                    .for_each(|(vector_idx, row)| {
+                        let mut lattice_idx = vector_idx;
+                        for k in 0..dim {
+                            let grid_coord = lattice_idx % side;
+                            lattice_idx /= side;
+                            let base = grid_coord as f64 * spacings[k];
+                            row[k] = base + row[k] * sigmas[k];
+                        }
+                    });
+            }
+            filler.rng_config()
         }
-    }
+    };
 
-    Ok(())
+    Ok(resolved)
 }
 
 fn validate_len(

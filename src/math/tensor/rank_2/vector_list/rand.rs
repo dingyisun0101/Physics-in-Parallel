@@ -21,10 +21,12 @@ Design:
 use ndarray::Array2;
 use serde_json::Value;
 
-use crate::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense::Tensor};
+use crate::math::tensor::{
+    RandType, TensorRandError, TensorRandFiller, TensorTrait, dense::Tensor,
+};
+use crate::rng::RngConfig;
 
 use super::VectorList;
-use crate::math::io::ndarray::NdarrayConvert;
 
 // ============================================================================
 // ------------------------------- Common Trait -------------------------------
@@ -35,7 +37,7 @@ pub trait VectorListRand {
     type Elem;
 
     /// Allocate output storage and rank-N random-fill buffers.
-    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self
+    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError>
     where
         Self: Sized;
 
@@ -58,21 +60,19 @@ impl VectorListRand for HaarVectors {
     type Elem = f64;
 
     /// Allocate a vector list and a rank-N normal random filler.
-    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
+    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
 
         let vl = VectorList::<f64>::empty(dim, n);
-        let filler = TensorRandFiller::new(
+        let filler = TensorRandFiller::try_new(
             RandType::Normal {
                 mean: 0.0,
                 std: 1.0,
             },
-            None,
-            None,
-            num_rngs,
-        );
-        Self { vl, dim, n, filler }
+            rng,
+        )?;
+        Ok(Self { vl, dim, n, filler })
     }
 
     #[inline]
@@ -84,26 +84,29 @@ impl VectorListRand for HaarVectors {
 }
 
 impl HaarVectors {
+    /// Returns the fully resolved random configuration used by this generator.
+    pub fn rng_config(&self) -> RngConfig {
+        self.filler.rng_config()
+    }
+
     /// Build a Haar generator around existing `[n, dim]` vector-list data.
     ///
     /// The random filler is initialized with the standard-normal distribution
     /// used by `refresh`, so callers can import data and later resume random
     /// Haar generation with the same object.
     #[inline]
-    pub fn from_ndarray(array: &Array2<f64>) -> Self {
+    pub fn from_ndarray(array: &Array2<f64>, rng: RngConfig) -> Result<Self, TensorRandError> {
         let vl = VectorList::<f64>::from_ndarray(array);
         let dim = vl.dim();
         let n = vl.num_vectors();
-        let filler = TensorRandFiller::new(
+        let filler = TensorRandFiller::try_new(
             RandType::Normal {
                 mean: 0.0,
                 std: 1.0,
             },
-            None,
-            None,
-            None,
-        );
-        Self { vl, dim, n, filler }
+            rng,
+        )?;
+        Ok(Self { vl, dim, n, filler })
     }
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
@@ -125,20 +128,6 @@ impl HaarVectors {
     }
 }
 
-impl NdarrayConvert for HaarVectors {
-    type NdArray = Array2<f64>;
-
-    #[inline]
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        HaarVectors::from_ndarray(array)
-    }
-
-    #[inline]
-    fn to_ndarray(&self) -> Self::NdArray {
-        HaarVectors::to_ndarray(self)
-    }
-}
-
 // ============================================================================
 // -------------------- Nearest-Neighbor one-hot ±1 vectors -------------------
 // ============================================================================
@@ -156,30 +145,28 @@ impl VectorListRand for NNVectors {
     type Elem = isize;
 
     /// Allocate output rows and a rank-N integer-code random filler.
-    fn new(dim: usize, n: usize, num_rngs: Option<usize>) -> Self {
+    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "NNVectors::new: dim must be > 0");
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
         let vl = VectorList::<isize>::empty(dim, n);
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
 
-        let code_filler = TensorRandFiller::new(
+        let code_filler = TensorRandFiller::try_new(
             RandType::UniformInt {
                 low: 0,
                 high: (2 * dim) as i64 - 1,
             },
-            None,
-            None,
-            num_rngs,
-        );
+            rng,
+        )?;
 
-        Self {
+        Ok(Self {
             vl,
             dim,
             n,
             code_buf,
             code_filler,
-        }
+        })
     }
 
     #[inline]
@@ -203,33 +190,36 @@ fn decode_nearest_neighbor_code(code: usize, row: &mut [isize]) {
 }
 
 impl NNVectors {
+    /// Returns the fully resolved random configuration used by this generator.
+    pub fn rng_config(&self) -> RngConfig {
+        self.code_filler.rng_config()
+    }
+
     /// Build a nearest-neighbor generator around existing `[n, dim]` rows.
     ///
     /// The integer-code filler is initialized with the same direction-code
     /// range used by `refresh`, so imported data can later be replaced by new
     /// random nearest-neighbor directions.
     #[inline]
-    pub fn from_ndarray(array: &Array2<isize>) -> Self {
+    pub fn from_ndarray(array: &Array2<isize>, rng: RngConfig) -> Result<Self, TensorRandError> {
         let vl = VectorList::<isize>::from_ndarray(array);
         let dim = vl.dim();
         let n = vl.num_vectors();
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
-        let code_filler = TensorRandFiller::new(
+        let code_filler = TensorRandFiller::try_new(
             RandType::UniformInt {
                 low: 0,
                 high: (2 * dim) as i64 - 1,
             },
-            None,
-            None,
-            None,
-        );
-        Self {
+            rng,
+        )?;
+        Ok(Self {
             vl,
             dim,
             n,
             code_buf,
             code_filler,
-        }
+        })
     }
 
     /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
@@ -248,19 +238,5 @@ impl NNVectors {
     /// Convert this nearest-neighbor vector batch into pretty JSON text.
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.vl.serialize()
-    }
-}
-
-impl NdarrayConvert for NNVectors {
-    type NdArray = Array2<isize>;
-
-    #[inline]
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        NNVectors::from_ndarray(array)
-    }
-
-    #[inline]
-    fn to_ndarray(&self) -> Self::NdArray {
-        NNVectors::to_ndarray(self)
     }
 }

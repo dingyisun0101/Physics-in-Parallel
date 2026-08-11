@@ -3,6 +3,7 @@ use physics_in_parallel::models::particles::create_state::{
     ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V, MassiveParticlesError, VelocitySamplingMethod,
     create_template, randomize_r, randomize_v,
 };
+use physics_in_parallel::rng::RngConfig;
 use physics_in_parallel::space::continuous::sampling::VectorSamplingMethod;
 
 #[test]
@@ -59,6 +60,7 @@ fn randomize_r_uniform_stays_inside_box() {
         VectorSamplingMethod::UniformCentered {
             box_size: &[2.0, 4.0],
         },
+        RngConfig::default(),
     )
     .unwrap();
 
@@ -77,6 +79,7 @@ fn randomize_r_rejects_invalid_position_parameters() {
     let err = randomize_r(
         &mut obj,
         VectorSamplingMethod::UniformCentered { box_size: &[1.0] },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
@@ -87,6 +90,7 @@ fn randomize_r_rejects_invalid_position_parameters() {
             spacings: &[1.0, f64::NAN],
             sigmas: &[0.0, 0.0],
         },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
@@ -102,6 +106,7 @@ fn randomize_v_invalid_and_mass_inv_validation() {
             low: 1.0,
             high: 1.0,
         },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
@@ -113,6 +118,7 @@ fn randomize_v_invalid_and_mass_inv_validation() {
     let err = randomize_v(
         &mut obj,
         VelocitySamplingMethod::MaxwellBoltzmann { tau: 1.0 },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(
@@ -134,6 +140,7 @@ fn randomize_v_gaussian_per_axis_validates_parameters() {
             mean: &[0.0],
             std: &[1.0, 1.0],
         },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
@@ -144,6 +151,7 @@ fn randomize_v_gaussian_per_axis_validates_parameters() {
             mean: &[0.0, 0.0],
             std: &[1.0, -1.0],
         },
+        RngConfig::default(),
     )
     .unwrap_err();
     assert!(matches!(err, MassiveParticlesError::Distribution { .. }));

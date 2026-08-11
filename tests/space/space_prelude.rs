@@ -13,7 +13,7 @@ fn space_prelude_compiles_for_common_types() {
         KernelType::NearestNeighbor { d: 1 },
         8,
         SourceMode::Origin,
-        RandomKey::new(Some(7)),
+        RngConfig::new(Some(7), None, None),
     )
     .expect("valid pair generator");
     rpg.refresh_at(0);

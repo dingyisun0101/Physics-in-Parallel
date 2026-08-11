@@ -6,15 +6,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ndarray::{ArrayD, IxDyn};
 
 use physics_in_parallel::math::prelude::VectorList;
+use physics_in_parallel::rng::RngConfig;
 use physics_in_parallel::space::{
     discrete::square_lattice::{
         BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PairGenerationError,
-        PowerLawKernel, RandPairGenerator, RandomKey, SourceMode, SquareLattice,
-        SquareLatticeConfig, SquareLatticeInitMethod, UniformKernel, create_kernel,
+        PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig,
+        SquareLatticeInitMethod, UniformKernel, create_kernel,
     },
     io::square_lattice::save_square_lattice,
     space_trait::Space,
 };
+
+fn rng(seed: u64) -> RngConfig {
+    RngConfig::new(Some(seed), None, None)
+}
 
 fn unique_tmp_json(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -44,7 +49,7 @@ fn lattice_config_and_init_public_surface() {
         SquareLatticeInitMethod::RandomChoices {
             choices: vec![11, 22, 33],
             weights: None,
-            key: RandomKey::new(Some(5)),
+            rng: rng(5),
         },
     )
     .unwrap();
@@ -65,7 +70,7 @@ fn lattice_weighted_initialization_and_explicit_values_are_reproducible() {
     let init = || SquareLatticeInitMethod::RandomChoices {
         choices: vec![3usize, 7],
         weights: Some(vec![1.0, 3.0]),
-        key: RandomKey::new(Some(77)),
+        rng: rng(77),
     };
     let first = SquareLattice::new(cfg.clone(), init()).unwrap();
     let second = SquareLattice::new(cfg.clone(), init()).unwrap();
@@ -167,32 +172,31 @@ fn lattice_ndarray_and_save_surface() {
 
 #[test]
 fn kernel_public_surface() {
-    let key = RandomKey::new(Some(91));
     let p = PowerLawKernel::new(10.0, 1.0, 2.0);
     assert!(matches!(p.kind(), KernelType::PowerLaw { .. }));
-    let ps = p.sample_batch_indexed(key, 7, 64);
+    let ps = p.sample_batch_indexed(rng(91), 7, 64).unwrap();
     assert_eq!(ps.len(), 64);
     assert!(ps.iter().all(|x| x.is_finite()));
 
     let u = UniformKernel::new(5.0, 2.0);
     assert!(matches!(u.kind(), KernelType::Uniform { .. }));
-    let us = u.sample_batch_indexed(key, 7, 64);
+    let us = u.sample_batch_indexed(rng(91), 7, 64).unwrap();
     assert_eq!(us.len(), 64);
     assert!(us.iter().all(|x| *x >= 2.0 && *x < 5.0));
 
     let n = NearestNeighborKernel::new(3);
     assert!(matches!(n.kind(), KernelType::NearestNeighbor { .. }));
-    let ns = n.sample_batch_indexed(key, 7, 64);
+    let ns = n.sample_batch_indexed(rng(91), 7, 64).unwrap();
     assert_eq!(ns.len(), 64);
     assert!(ns.iter().all(|x| *x >= 0.0 && *x < 6.0));
 
     let k: Box<dyn Kernel> = create_kernel(KernelType::Uniform { l: 9.0, c: 1.5 });
     assert!(matches!(k.kind(), KernelType::Uniform { .. }));
     let k_clone = k.clone();
-    assert_eq!(k.sample_batch_indexed(key, 7, 16).len(), 16);
+    assert_eq!(k.sample_batch_indexed(rng(91), 7, 16).unwrap().len(), 16);
     assert_eq!(
-        k.sample_batch_indexed(key, 7, 16),
-        k_clone.sample_batch_indexed(key, 7, 16)
+        k.sample_batch_indexed(rng(91), 7, 16).unwrap(),
+        k_clone.sample_batch_indexed(rng(91), 7, 16).unwrap()
     );
 }
 
@@ -203,7 +207,7 @@ fn rand_pair_generator_public_surface() {
         KernelType::NearestNeighbor { d: 2 },
         32,
         SourceMode::RandomUniform,
-        RandomKey::new(Some(123)),
+        rng(123),
     )
     .expect("valid nearest-neighbor pair generator");
 
@@ -240,7 +244,7 @@ fn rand_pair_generator_public_surface() {
         },
         16,
         SourceMode::Origin,
-        RandomKey::new(Some(456)),
+        rng(456),
     )
     .expect("valid power-law pair generator");
 
@@ -286,7 +290,7 @@ fn pair_generation_is_independent_of_rayon_worker_count() {
                     },
                     1_024,
                     SourceMode::RandomUniform,
-                    RandomKey::new(Some(0x5eed)),
+                    rng(0x5eed),
                 )
                 .expect("valid indexed pair generator");
                 generator.refresh_at(37);
@@ -318,7 +322,7 @@ fn pair_generation_replays_an_explicit_sweep_exactly() {
         KernelType::NearestNeighbor { d: 2 },
         256,
         SourceMode::RandomUniform,
-        RandomKey::new(Some(44)),
+        rng(44),
     )
     .expect("valid indexed pair generator");
 
@@ -345,7 +349,7 @@ fn pair_generator_rejects_invalid_configuration_without_panicking() {
         KernelType::NearestNeighbor { d: 2 },
         8,
         SourceMode::Origin,
-        RandomKey::new(Some(1)),
+        rng(1),
     )
     .unwrap_err();
     assert_eq!(error, PairGenerationError::ZeroAxis { axis: 1 });
@@ -355,7 +359,7 @@ fn pair_generator_rejects_invalid_configuration_without_panicking() {
         KernelType::NearestNeighbor { d: 1 },
         8,
         SourceMode::Origin,
-        RandomKey::new(Some(1)),
+        rng(1),
     )
     .unwrap_err();
     assert_eq!(
