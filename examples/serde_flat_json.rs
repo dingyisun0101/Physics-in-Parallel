@@ -18,9 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vectors.set_vec(1, &[4.0, 5.0, 6.0]);
 
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic),
+        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 1 },
-    );
+    )?;
 
     println!(
         "dense tensor JSON:\n{}\n",

@@ -9,7 +9,7 @@ use physics_in_parallel::math::prelude::VectorList;
 use physics_in_parallel::space::{
     discrete::square_lattice::{
         BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PairGenerationError,
-        PairRandomKey, PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice,
+        PowerLawKernel, RandPairGenerator, RandomKey, SourceMode, SquareLattice,
         SquareLatticeConfig, SquareLatticeInitMethod, UniformKernel, create_kernel,
     },
     io::square_lattice::save_square_lattice,
@@ -26,38 +26,84 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 
 #[test]
 fn lattice_config_and_init_public_surface() {
-    let cfg = SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic);
+    let cfg = SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None);
     assert_eq!(cfg.shape(), [4, 4]);
     assert_eq!(cfg.tensor_shape(), vec![4, 4]);
     assert_eq!(cfg.num_sites(), 16);
 
-    let empty = SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Empty);
+    let empty = SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Empty).unwrap();
     assert!(empty.data().iter().all(|&x| x == 0));
 
     let uniform =
-        SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Uniform { val: 3 });
+        SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Uniform { val: 3 })
+            .unwrap();
     assert!(uniform.data().iter().all(|&x| x == 3));
 
     let random = SquareLattice::<usize>::new(
         cfg.clone(),
-        SquareLatticeInitMethod::RandomUniformChoices {
+        SquareLatticeInitMethod::RandomChoices {
             choices: vec![11, 22, 33],
+            weights: None,
+            key: RandomKey::new(Some(5)),
         },
-    );
+    )
+    .unwrap();
     assert!(random.data().iter().all(|x| [11, 22, 33].contains(x)));
 
-    let cfg_1d = SquareLatticeConfig::new(&vec![7; 1], BoundaryCondition::Reflective);
+    let cfg_1d = SquareLatticeConfig::new(&vec![7; 1], BoundaryCondition::Reflective, None);
     let seeded = SquareLattice::<usize>::new(
         cfg_1d.clone(),
         SquareLatticeInitMethod::SeededCenter { val: 9 },
-    );
+    )
+    .unwrap();
     assert_eq!(seeded.data()[cfg_1d.shape()[0] / 2], 9);
 }
 
 #[test]
-fn lattice_space_trait_vacancy_boundary_and_rescale_surface() {
-    let cfg = SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Periodic);
-    let mut lattice = SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 });
+fn lattice_weighted_initialization_and_explicit_values_are_reproducible() {
+    let cfg = SquareLatticeConfig::new(&[64], BoundaryCondition::Periodic, None);
+    let init = || SquareLatticeInitMethod::RandomChoices {
+        choices: vec![3usize, 7],
+        weights: Some(vec![1.0, 3.0]),
+        key: RandomKey::new(Some(77)),
+    };
+    let first = SquareLattice::new(cfg.clone(), init()).unwrap();
+    let second = SquareLattice::new(cfg.clone(), init()).unwrap();
+    assert_eq!(first.data(), second.data());
+    assert!(first.data().iter().all(|value| [3, 7].contains(value)));
+
+    let values: Vec<usize> = (0..64).collect();
+    let explicit = SquareLattice::new(
+        cfg,
+        SquareLatticeInitMethod::Values {
+            values: values.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(explicit.data(), values);
+}
+
+#[test]
+fn lattice_config_owns_neighbor_geometry_and_laplacian() {
+    let periodic = SquareLatticeConfig::new(&[3], BoundaryCondition::Periodic, Some(&[2.0]));
+    assert_eq!(periodic.coordinate(2).as_deref(), Some([2].as_slice()));
+    assert_eq!(periodic.neighbor(0, 0, -1), Some(2));
+    let mut output = vec![0.0; 3];
+    periodic
+        .laplacian(&[1.0, 2.0, 4.0], 1, &mut output)
+        .unwrap();
+    assert_eq!(output, vec![1.0, 0.25, -1.25]);
+
+    let neumann = SquareLatticeConfig::new(&[3], BoundaryCondition::Neumann, None);
+    assert_eq!(neumann.neighbor(0, 0, -1), Some(0));
+    assert_eq!(neumann.neighbor(2, 0, 1), Some(2));
+}
+
+#[test]
+fn lattice_space_trait_boundary_and_rescale_surface() {
+    let cfg = SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Periodic, None);
+    let mut lattice =
+        SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 }).unwrap();
 
     assert_eq!(Space::dims(&lattice), vec![5]);
     assert_eq!(Space::linear_size(&lattice), 5);
@@ -71,31 +117,27 @@ fn lattice_space_trait_vacancy_boundary_and_rescale_surface() {
     Space::set_all(&mut lattice, 2);
     assert!(lattice.data().iter().all(|&x| x == 2));
 
-    assert_eq!(SquareLattice::<usize>::vacancy(), 0);
-    lattice.set_vacant(&[2]);
-    assert!(lattice.is_vacant(&[2]));
-    lattice.fill_vacancy();
-    assert!(lattice.data().iter().all(|&x| x == 0));
-
     let mut reflective = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Reflective),
+        SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Reflective, None),
         SquareLatticeInitMethod::Uniform { val: 1 },
-    );
+    )
+    .unwrap();
     Space::set(&mut reflective, &[-1], 77);
     assert_eq!(*Space::get(&reflective, &[1]), 77);
     Space::set(&mut reflective, &[5], 88);
     assert_eq!(*Space::get(&reflective, &[3]), 88);
 
     let lattice_2d = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic),
+        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 5 },
-    );
-    let small = lattice_2d.rescale(&vec![2; lattice_2d.cfg.rank()]);
-    assert_eq!(small.cfg.shape(), [2, 2]);
+    )
+    .unwrap();
+    let small = lattice_2d.rescale(&vec![2; lattice_2d.config().rank()]);
+    assert_eq!(small.config().shape(), [2, 2]);
     assert_eq!(small.data().len(), 4);
 
-    let clone = lattice_2d.rescale(&vec![4; lattice_2d.cfg.rank()]);
-    assert_eq!(clone.cfg.shape(), [4, 4]);
+    let clone = lattice_2d.rescale(&vec![4; lattice_2d.config().rank()]);
+    assert_eq!(clone.config().shape(), [4, 4]);
     assert_eq!(clone.data(), lattice_2d.data());
 }
 
@@ -105,11 +147,11 @@ fn lattice_ndarray_and_save_surface() {
         .expect("ndarray shape should match data length");
 
     let lattice = SquareLattice::<usize>::from_ndarray(&arr, BoundaryCondition::Periodic);
-    assert_eq!(lattice.cfg.shape(), [2, 2]);
+    assert_eq!(lattice.config().shape(), [2, 2]);
     assert_eq!(lattice.to_ndarray(), arr);
 
     let out_1 = unique_tmp_json("save_square_lattice_fn");
-    save_square_lattice(&lattice, &vec![2; lattice.cfg.rank()], &out_1)
+    save_square_lattice(&lattice, &vec![2; lattice.config().rank()], &out_1)
         .expect("save_square_lattice should write json");
     let raw_1 = fs::read_to_string(&out_1).expect("saved json should be readable");
     assert!(raw_1.contains("\"shape\""));
@@ -125,7 +167,7 @@ fn lattice_ndarray_and_save_surface() {
 
 #[test]
 fn kernel_public_surface() {
-    let key = PairRandomKey::new(91);
+    let key = RandomKey::new(Some(91));
     let p = PowerLawKernel::new(10.0, 1.0, 2.0);
     assert!(matches!(p.kind(), KernelType::PowerLaw { .. }));
     let ps = p.sample_batch_indexed(key, 7, 64);
@@ -161,7 +203,7 @@ fn rand_pair_generator_public_surface() {
         KernelType::NearestNeighbor { d: 2 },
         32,
         SourceMode::RandomUniform,
-        PairRandomKey::new(123),
+        RandomKey::new(Some(123)),
     )
     .expect("valid nearest-neighbor pair generator");
 
@@ -198,7 +240,7 @@ fn rand_pair_generator_public_surface() {
         },
         16,
         SourceMode::Origin,
-        PairRandomKey::new(456),
+        RandomKey::new(Some(456)),
     )
     .expect("valid power-law pair generator");
 
@@ -244,7 +286,7 @@ fn pair_generation_is_independent_of_rayon_worker_count() {
                     },
                     1_024,
                     SourceMode::RandomUniform,
-                    PairRandomKey::new(0x5eed),
+                    RandomKey::new(Some(0x5eed)),
                 )
                 .expect("valid indexed pair generator");
                 generator.refresh_at(37);
@@ -276,7 +318,7 @@ fn pair_generation_replays_an_explicit_sweep_exactly() {
         KernelType::NearestNeighbor { d: 2 },
         256,
         SourceMode::RandomUniform,
-        PairRandomKey::new(44),
+        RandomKey::new(Some(44)),
     )
     .expect("valid indexed pair generator");
 
@@ -303,7 +345,7 @@ fn pair_generator_rejects_invalid_configuration_without_panicking() {
         KernelType::NearestNeighbor { d: 2 },
         8,
         SourceMode::Origin,
-        PairRandomKey::new(1),
+        RandomKey::new(Some(1)),
     )
     .unwrap_err();
     assert_eq!(error, PairGenerationError::ZeroAxis { axis: 1 });
@@ -313,7 +355,7 @@ fn pair_generator_rejects_invalid_configuration_without_panicking() {
         KernelType::NearestNeighbor { d: 1 },
         8,
         SourceMode::Origin,
-        PairRandomKey::new(1),
+        RandomKey::new(Some(1)),
     )
     .unwrap_err();
     assert_eq!(

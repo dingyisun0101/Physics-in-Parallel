@@ -20,7 +20,7 @@ use crate::math::prelude::VectorList;
 
 use super::kernel::{Kernel, KernelError, KernelType, try_create_kernel};
 use super::random::{
-    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, PairRandomKey, standard_normal, uniform_index,
+    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, RandomKey, standard_normal, uniform_index,
 };
 
 /// Rule for selecting each pair's source coordinate.
@@ -95,7 +95,7 @@ pub struct RandPairGenerator {
     kernel: Box<dyn Kernel>,
     kernel_type: KernelType,
     source_mode: SourceMode,
-    random_key: PairRandomKey,
+    random_key: RandomKey,
     generated_sweep: Option<u64>,
     source_coords_cache: VectorList<isize>,
     direction_cache: Option<VectorList<f64>>,
@@ -124,7 +124,7 @@ impl RandPairGenerator {
         kernel_type: KernelType,
         num_pairs: usize,
         source_mode: SourceMode,
-        random_key: PairRandomKey,
+        random_key: RandomKey,
     ) -> Result<Self, PairGenerationError> {
         validate_shape(shape)?;
         if num_pairs == 0 {
@@ -278,7 +278,7 @@ impl RandPairGenerator {
         self.source_mode
     }
 
-    pub fn random_key(&self) -> PairRandomKey {
+    pub fn random_key(&self) -> RandomKey {
         self.random_key
     }
 

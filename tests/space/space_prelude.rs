@@ -2,17 +2,18 @@ use physics_in_parallel::space::prelude::*;
 
 #[test]
 fn space_prelude_compiles_for_common_types() {
-    let cfg = SquareLatticeConfig::new(&vec![4; 1], BoundaryCondition::Periodic);
-    let mut g = SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 });
-    g.set_vacant(&[1]);
-    assert!(g.is_vacant(&[1]));
+    let cfg = SquareLatticeConfig::new(&vec![4; 1], BoundaryCondition::Periodic, None);
+    let mut g =
+        SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 }).unwrap();
+    g.set(&[1], 0);
+    assert_eq!(*g.get(&[1]), 0);
 
     let mut rpg = RandPairGenerator::new(
         &[4],
         KernelType::NearestNeighbor { d: 1 },
         8,
         SourceMode::Origin,
-        PairRandomKey::new(7),
+        RandomKey::new(Some(7)),
     )
     .expect("valid pair generator");
     rpg.refresh_at(0);

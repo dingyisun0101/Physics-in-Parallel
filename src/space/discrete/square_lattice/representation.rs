@@ -26,18 +26,23 @@ Boundary conditions:
 use std::path::PathBuf;
 use std::{error::Error, fmt};
 
-use rand::random_range;
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::math::prelude::{DenseBackend, Scalar, ScalarSerde, Tensor};
 use crate::space::space_trait::Space;
 
+use super::random::RandomKey;
+
+const DOMAIN_LATTICE_INITIALIZATION: u64 = 0xc762_ba71_b5a7_8f31;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoundaryCondition {
     Periodic,
     Reflective,
+    /// Zero-normal-gradient boundary used by finite-difference operators.
+    Neumann,
 }
 
 impl BoundaryCondition {
@@ -47,14 +52,20 @@ impl BoundaryCondition {
         match self {
             Self::Periodic => wrap_periodic(coord, side_len),
             Self::Reflective => reflect_coordinate(coord, side_len),
+            Self::Neumann => coord.clamp(0, side_len as isize - 1) as usize,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SquareLatticeConfig {
     shape: Vec<usize>,
     boundary: BoundaryCondition,
+    spacing: Vec<f64>,
+    #[serde(skip)]
+    strides: Vec<usize>,
+    #[serde(skip)]
+    num_sites: usize,
 }
 
 impl SquareLatticeConfig {
@@ -62,6 +73,7 @@ impl SquareLatticeConfig {
     pub fn try_new(
         shape: &[usize],
         boundary: BoundaryCondition,
+        spacing: Option<&[f64]>,
     ) -> Result<Self, SquareLatticeConfigError> {
         if shape.is_empty() {
             return Err(SquareLatticeConfigError::EmptyShape);
@@ -77,9 +89,31 @@ impl SquareLatticeConfig {
                 }
             })?;
         }
+        let spacing = match spacing {
+            Some(spacing) if spacing.len() != shape.len() => {
+                return Err(SquareLatticeConfigError::SpacingRank {
+                    expected: shape.len(),
+                    actual: spacing.len(),
+                });
+            }
+            Some(spacing) => spacing.to_vec(),
+            None => vec![1.0; shape.len()],
+        };
+        for (axis, value) in spacing.iter().copied().enumerate() {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(SquareLatticeConfigError::InvalidSpacing { axis });
+            }
+        }
+        let mut strides = vec![1; shape.len()];
+        for axis in (0..shape.len().saturating_sub(1)).rev() {
+            strides[axis] = strides[axis + 1] * shape[axis + 1];
+        }
         Ok(Self {
             shape: shape.to_vec(),
             boundary,
+            spacing,
+            strides,
+            num_sites: sites,
         })
     }
 
@@ -87,19 +121,19 @@ impl SquareLatticeConfig {
     ///
     /// New fallible boundaries should prefer [`Self::try_new`].
     #[inline]
-    pub fn new(shape: &[usize], boundary: BoundaryCondition) -> Self {
-        Self::try_new(shape, boundary)
+    pub fn new(shape: &[usize], boundary: BoundaryCondition, spacing: Option<&[f64]>) -> Self {
+        Self::try_new(shape, boundary, spacing)
             .unwrap_or_else(|error| panic!("invalid SquareLatticeConfig: {error}"))
     }
 
     #[inline]
     pub fn periodic(shape: &[usize]) -> Self {
-        Self::new(shape, BoundaryCondition::Periodic)
+        Self::new(shape, BoundaryCondition::Periodic, None)
     }
 
     #[inline]
     pub fn reflective(shape: &[usize]) -> Self {
-        Self::new(shape, BoundaryCondition::Reflective)
+        Self::new(shape, BoundaryCondition::Reflective, None)
     }
 
     /// Returns the configured boundary condition.
@@ -115,14 +149,7 @@ impl SquareLatticeConfig {
 
     #[inline]
     pub fn num_sites(&self) -> usize {
-        self.shape
-            .iter()
-            .copied()
-            .try_fold(1usize, |acc, dim| {
-                acc.checked_mul(dim)
-                    .ok_or("square lattice site count overflow")
-            })
-            .expect("square lattice site count overflow")
+        self.num_sites
     }
 
     #[inline]
@@ -133,6 +160,82 @@ impl SquareLatticeConfig {
     #[inline]
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    /// Returns one physical spacing per lattice axis.
+    #[inline]
+    pub fn spacing(&self) -> &[f64] {
+        &self.spacing
+    }
+
+    /// Returns cached row-major strides.
+    #[inline]
+    pub fn strides(&self) -> &[usize] {
+        &self.strides
+    }
+
+    /// Converts a valid flat row-major site into its coordinate.
+    pub fn coordinate(&self, flat: usize) -> Option<Vec<usize>> {
+        (flat < self.num_sites).then(|| {
+            self.strides
+                .iter()
+                .zip(&self.shape)
+                .map(|(&stride, &length)| (flat / stride) % length)
+                .collect()
+        })
+    }
+
+    /// Resolves one axis neighbor under the configured boundary.
+    pub fn neighbor(&self, flat: usize, axis: usize, offset: isize) -> Option<usize> {
+        if flat >= self.num_sites || axis >= self.rank() {
+            return None;
+        }
+        let coordinate = (flat / self.strides[axis]) % self.shape[axis];
+        let normalized = self
+            .boundary
+            .normalize(coordinate as isize + offset, self.shape[axis]);
+        Some(flat - coordinate * self.strides[axis] + normalized * self.strides[axis])
+    }
+
+    /// Applies the scalar-grid Laplacian independently to interleaved components.
+    pub fn laplacian(
+        &self,
+        input: &[f64],
+        components: usize,
+        output: &mut [f64],
+    ) -> Result<(), SquareLatticeConfigError> {
+        let expected = self
+            .num_sites
+            .checked_mul(components)
+            .ok_or(SquareLatticeConfigError::ValueCountOverflow)?;
+        if components == 0 || input.len() != expected || output.len() != expected {
+            return Err(SquareLatticeConfigError::ValueLayout {
+                expected,
+                input: input.len(),
+                output: output.len(),
+            });
+        }
+        for flat in 0..self.num_sites {
+            for component in 0..components {
+                let center_index = flat * components + component;
+                let center = input[center_index];
+                let mut value = 0.0;
+                for axis in 0..self.rank() {
+                    let plus = self
+                        .neighbor(flat, axis, 1)
+                        .expect("validated site and axis");
+                    let minus = self
+                        .neighbor(flat, axis, -1)
+                        .expect("validated site and axis");
+                    value += (input[plus * components + component]
+                        + input[minus * components + component]
+                        - 2.0 * center)
+                        / self.spacing[axis].powi(2);
+                }
+                output[center_index] = value;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -146,10 +249,17 @@ impl<'de> Deserialize<'de> for SquareLatticeConfig {
         struct Document {
             shape: Vec<usize>,
             boundary: BoundaryCondition,
+            #[serde(default)]
+            spacing: Option<Vec<f64>>,
         }
 
         let document = Document::deserialize(deserializer)?;
-        Self::try_new(&document.shape, document.boundary).map_err(serde::de::Error::custom)
+        Self::try_new(
+            &document.shape,
+            document.boundary,
+            document.spacing.as_deref(),
+        )
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -169,6 +279,28 @@ pub enum SquareLatticeConfigError {
         /// Rejected shape.
         shape: Vec<usize>,
     },
+    /// Physical spacing count did not match the lattice rank.
+    SpacingRank { expected: usize, actual: usize },
+    /// One physical spacing was non-finite or not positive.
+    InvalidSpacing { axis: usize },
+    /// Interleaved component value count overflowed `usize`.
+    ValueCountOverflow,
+    /// Input or output did not match `num_sites * components`.
+    ValueLayout {
+        expected: usize,
+        input: usize,
+        output: usize,
+    },
+    /// Random choice initialization had no candidate values.
+    EmptyChoices,
+    /// Random weights did not match the number of choices.
+    WeightCount { choices: usize, weights: usize },
+    /// One random weight was negative or non-finite.
+    InvalidWeight { index: usize },
+    /// Every random weight was zero.
+    ZeroWeight,
+    /// Explicit lattice values did not match the site count.
+    ValueCount { expected: usize, actual: usize },
 }
 
 impl fmt::Display for SquareLatticeConfigError {
@@ -181,6 +313,42 @@ impl fmt::Display for SquareLatticeConfigError {
             Self::SiteCountOverflow { shape } => {
                 write!(formatter, "square lattice shape {shape:?} overflows usize")
             }
+            Self::SpacingRank { expected, actual } => write!(
+                formatter,
+                "square lattice spacing rank mismatch: expected {expected}, got {actual}"
+            ),
+            Self::InvalidSpacing { axis } => write!(
+                formatter,
+                "square lattice spacing at axis {axis} must be finite and positive"
+            ),
+            Self::ValueCountOverflow => {
+                formatter.write_str("square lattice component value count overflows usize")
+            }
+            Self::ValueLayout {
+                expected,
+                input,
+                output,
+            } => write!(
+                formatter,
+                "square lattice component layout requires {expected} values, got input {input} and output {output}"
+            ),
+            Self::EmptyChoices => {
+                formatter.write_str("random lattice initialization requires at least one choice")
+            }
+            Self::WeightCount { choices, weights } => write!(
+                formatter,
+                "random lattice initialization has {choices} choices but {weights} weights"
+            ),
+            Self::InvalidWeight { index } => write!(
+                formatter,
+                "random lattice initialization weight {index} must be finite and nonnegative"
+            ),
+            Self::ZeroWeight => formatter
+                .write_str("random lattice initialization requires at least one positive weight"),
+            Self::ValueCount { expected, actual } => write!(
+                formatter,
+                "lattice initialization requires {expected} values, got {actual}"
+            ),
         }
     }
 }
@@ -189,66 +357,37 @@ impl Error for SquareLatticeConfigError {}
 
 #[derive(Debug, Clone)]
 pub enum SquareLatticeInitMethod<T: Scalar> {
+    /// Fill every site with `T::default()`.
     Empty,
-    Uniform { val: T },
-    RandomUniformChoices { choices: Vec<T> },
-    SeededCenter { val: T },
+    Uniform {
+        val: T,
+    },
+    /// Independently sample choices using optional relative weights.
+    RandomChoices {
+        choices: Vec<T>,
+        weights: Option<Vec<f64>>,
+        key: RandomKey,
+    },
+    /// Use explicit row-major values.
+    Values {
+        values: Vec<T>,
+    },
+    SeededCenter {
+        val: T,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct SquareLattice<T: Scalar> {
-    pub cfg: SquareLatticeConfig,
+    cfg: SquareLatticeConfig,
     cells: Tensor<T, DenseBackend>,
 }
 
-pub trait VacancyValue: Sized + Clone {
-    const VACANCY: Self;
-
-    #[inline]
-    fn vacancy() -> Self {
-        Self::VACANCY
-    }
-}
-
-impl VacancyValue for usize {
-    const VACANCY: usize = 0;
-}
-impl VacancyValue for u64 {
-    const VACANCY: u64 = 0;
-}
-impl VacancyValue for u32 {
-    const VACANCY: u32 = 0;
-}
-impl VacancyValue for u16 {
-    const VACANCY: u16 = 0;
-}
-impl VacancyValue for u8 {
-    const VACANCY: u8 = 0;
-}
-impl VacancyValue for isize {
-    const VACANCY: isize = 0;
-}
-impl VacancyValue for i64 {
-    const VACANCY: i64 = 0;
-}
-impl VacancyValue for i32 {
-    const VACANCY: i32 = 0;
-}
-impl VacancyValue for i16 {
-    const VACANCY: i16 = 0;
-}
-impl VacancyValue for i8 {
-    const VACANCY: i8 = 0;
-}
-impl VacancyValue for f64 {
-    const VACANCY: f64 = 0.0;
-}
-impl VacancyValue for f32 {
-    const VACANCY: f32 = 0.0;
-}
-
-impl<T: Scalar + VacancyValue> SquareLattice<T> {
-    pub fn new(cfg: SquareLatticeConfig, init_method: SquareLatticeInitMethod<T>) -> Self {
+impl<T: Scalar> SquareLattice<T> {
+    pub fn new(
+        cfg: SquareLatticeConfig,
+        init_method: SquareLatticeInitMethod<T>,
+    ) -> Result<Self, SquareLatticeConfigError> {
         let mut lattice = Self {
             cells: Tensor::<T, DenseBackend>::empty(&cfg.tensor_shape()),
             cfg,
@@ -257,15 +396,54 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
         match init_method {
             SquareLatticeInitMethod::Empty => {}
             SquareLatticeInitMethod::Uniform { val } => lattice.cells.fill(val),
-            SquareLatticeInitMethod::RandomUniformChoices { choices } => {
-                assert!(
-                    !choices.is_empty(),
-                    "RandomUniformChoices requires at least one choice"
-                );
+            SquareLatticeInitMethod::RandomChoices {
+                choices,
+                weights,
+                key,
+            } => {
+                if choices.is_empty() {
+                    return Err(SquareLatticeConfigError::EmptyChoices);
+                }
+                let cumulative = cumulative_weights(&choices, weights.as_deref())?;
                 lattice
                     .cells_mut()
                     .par_iter_mut()
-                    .for_each(|slot| *slot = choices[random_range(0..choices.len())]);
+                    .enumerate()
+                    .for_each(|(index, slot)| {
+                        let selected = match &cumulative {
+                            Some(cumulative) => {
+                                let sample =
+                                    key.unit_f64(
+                                        0,
+                                        DOMAIN_LATTICE_INITIALIZATION,
+                                        index as u64,
+                                        0,
+                                        0,
+                                    ) * cumulative.last().copied().expect("nonempty weights");
+                                cumulative.partition_point(|weight| *weight <= sample)
+                            }
+                            None => key
+                                .uniform_index(
+                                    0,
+                                    DOMAIN_LATTICE_INITIALIZATION,
+                                    index as u64,
+                                    0,
+                                    choices.len(),
+                                )
+                                .expect("nonempty choices"),
+                        };
+                        *slot = choices[selected.min(choices.len() - 1)];
+                    });
+            }
+            SquareLatticeInitMethod::Values { values } => {
+                if values.len() != lattice.cfg.num_sites() {
+                    return Err(SquareLatticeConfigError::ValueCount {
+                        expected: lattice.cfg.num_sites(),
+                        actual: values.len(),
+                    });
+                }
+                lattice.cells =
+                    Tensor::<T, DenseBackend>::from_vec(&lattice.cfg.tensor_shape(), values);
             }
             SquareLatticeInitMethod::SeededCenter { val } => {
                 let center: Vec<isize> = lattice
@@ -278,29 +456,7 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
             }
         }
 
-        lattice
-    }
-
-    #[inline]
-    pub fn vacancy() -> T {
-        T::vacancy()
-    }
-
-    #[inline]
-    pub fn set_vacant(&mut self, coord: &[isize]) {
-        let coord = self.boundary_index(coord);
-        self.cells.set(&coord, Self::vacancy());
-    }
-
-    #[inline]
-    pub fn is_vacant(&self, coord: &[isize]) -> bool {
-        let coord = self.boundary_index(coord);
-        self.cells.get(&coord) == Self::vacancy()
-    }
-
-    #[inline]
-    pub fn fill_vacancy(&mut self) {
-        self.cells.fill(Self::vacancy());
+        Ok(lattice)
     }
 
     pub fn downsample(&self, target_shape: &[usize]) -> Self {
@@ -335,7 +491,7 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
             .zip(target_shape.iter())
             .map(|(&old_dim, &new_dim)| old_dim as f64 / new_dim as f64)
             .collect();
-        let new_cfg = SquareLatticeConfig::new(target_shape, self.cfg.boundary());
+        let new_cfg = SquareLatticeConfig::new(target_shape, self.cfg.boundary(), None);
         let mut new = Self {
             cells: Tensor::<T, DenseBackend>::empty(&new_cfg.tensor_shape()),
             cfg: new_cfg,
@@ -371,6 +527,12 @@ impl<T: Scalar + VacancyValue> SquareLattice<T> {
 }
 
 impl<T: Scalar> SquareLattice<T> {
+    /// Returns the authoritative geometry configuration.
+    #[inline]
+    pub fn config(&self) -> &SquareLatticeConfig {
+        &self.cfg
+    }
+
     #[inline]
     pub fn data(&self) -> &[T] {
         self.cells.storage().data()
@@ -418,7 +580,7 @@ impl<T: Scalar> SquareLattice<T> {
     }
 }
 
-impl<T: ScalarSerde + VacancyValue> Space<T> for SquareLattice<T> {
+impl<T: ScalarSerde> Space<T> for SquareLattice<T> {
     #[inline]
     fn data(&self) -> &[T] {
         self.data()
@@ -462,6 +624,34 @@ impl<T: ScalarSerde + VacancyValue> Space<T> for SquareLattice<T> {
     fn set_all(&mut self, val: T) {
         self.cells.fill(val);
     }
+}
+
+fn cumulative_weights<T>(
+    choices: &[T],
+    weights: Option<&[f64]>,
+) -> Result<Option<Vec<f64>>, SquareLatticeConfigError> {
+    let Some(weights) = weights else {
+        return Ok(None);
+    };
+    if weights.len() != choices.len() {
+        return Err(SquareLatticeConfigError::WeightCount {
+            choices: choices.len(),
+            weights: weights.len(),
+        });
+    }
+    let mut total = 0.0;
+    let mut cumulative = Vec::with_capacity(weights.len());
+    for (index, weight) in weights.iter().copied().enumerate() {
+        if !weight.is_finite() || weight < 0.0 {
+            return Err(SquareLatticeConfigError::InvalidWeight { index });
+        }
+        total += weight;
+        cumulative.push(total);
+    }
+    if total == 0.0 {
+        return Err(SquareLatticeConfigError::ZeroWeight);
+    }
+    Ok(Some(cumulative))
 }
 
 #[inline]

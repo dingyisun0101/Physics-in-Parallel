@@ -68,6 +68,8 @@ impl VectorListRand for HaarVectors {
                 mean: 0.0,
                 std: 1.0,
             },
+            None,
+            None,
             num_rngs,
         );
         Self { vl, dim, n, filler }
@@ -97,6 +99,8 @@ impl HaarVectors {
                 mean: 0.0,
                 std: 1.0,
             },
+            None,
+            None,
             None,
         );
         Self { vl, dim, n, filler }
@@ -164,6 +168,8 @@ impl VectorListRand for NNVectors {
                 low: 0,
                 high: (2 * dim) as i64 - 1,
             },
+            None,
+            None,
             num_rngs,
         );
 
@@ -213,6 +219,8 @@ impl NNVectors {
                 low: 0,
                 high: (2 * dim) as i64 - 1,
             },
+            None,
+            None,
             None,
         );
         Self {

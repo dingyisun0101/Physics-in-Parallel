@@ -12,6 +12,6 @@ pub mod space_trait;
 pub use continuous::boundary::{ClampBox, ContinuousBoundary, PeriodicBox, ReflectBox};
 pub use continuous::sampling::{VectorSamplingMethod, sample_vectors};
 pub use discrete::square_lattice::{
-    Kernel, KernelError, KernelType, PairGenerationError, PairRandomKey,
+    Kernel, KernelError, KernelType, PairGenerationError, RandomKey,
 };
 pub use space_trait::Space;

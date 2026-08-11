@@ -18,12 +18,12 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 
 #[test]
 fn lattice_config_is_a_complete_validated_serde_boundary() {
-    let config =
-        SquareLatticeConfig::try_new(&[3, 5], BoundaryCondition::Reflective).expect("valid config");
+    let config = SquareLatticeConfig::try_new(&[3, 5], BoundaryCondition::Reflective, None)
+        .expect("valid config");
     let value = serde_json::to_value(&config).expect("serialize config");
     assert_eq!(
         value,
-        serde_json::json!({"shape": [3, 5], "boundary": "reflective"})
+        serde_json::json!({"shape": [3, 5], "boundary": "reflective", "spacing": [1.0, 1.0]})
     );
     let roundtrip: SquareLatticeConfig = serde_json::from_value(value).expect("deserialize config");
     assert_eq!(roundtrip, config);
@@ -35,15 +35,18 @@ fn lattice_config_is_a_complete_validated_serde_boundary() {
     ] {
         assert!(serde_json::from_value::<SquareLatticeConfig>(invalid).is_err());
     }
-    assert!(SquareLatticeConfig::try_new(&[usize::MAX, 2], BoundaryCondition::Periodic).is_err());
+    assert!(
+        SquareLatticeConfig::try_new(&[usize::MAX, 2], BoundaryCondition::Periodic, None).is_err()
+    );
 }
 
 #[test]
 fn lattice_periodic_roundtrip_uses_lattice_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![3; 2], BoundaryCondition::Periodic),
+        SquareLatticeConfig::new(&vec![3; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 7 },
-    );
+    )
+    .unwrap();
 
     let value = serde_json::to_value(&lattice).expect("serialize lattice");
     assert_eq!(value["kind"], "square_lattice_periodic");
@@ -53,17 +56,18 @@ fn lattice_periodic_roundtrip_uses_lattice_schema() {
     assert_eq!(value["data"].as_array().expect("data array").len(), 9);
 
     let back: SquareLattice<usize> = serde_json::from_value(value).expect("deserialize lattice");
-    assert_eq!(back.cfg.shape(), [3, 3]);
-    assert_eq!(back.cfg.boundary(), BoundaryCondition::Periodic);
+    assert_eq!(back.config().shape(), [3, 3]);
+    assert_eq!(back.config().boundary(), BoundaryCondition::Periodic);
     assert_eq!(back.data(), vec![7; 9].as_slice());
 }
 
 #[test]
 fn lattice_reflective_roundtrip_uses_kind_tag() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![2; 3], BoundaryCondition::Reflective),
+        SquareLatticeConfig::new(&vec![2; 3], BoundaryCondition::Reflective, None),
         SquareLatticeInitMethod::Uniform { val: 1 },
-    );
+    )
+    .unwrap();
 
     let value = serde_json::to_value(&lattice).expect("serialize lattice");
     assert_eq!(value["kind"], "square_lattice_reflective");
@@ -72,8 +76,8 @@ fn lattice_reflective_roundtrip_uses_kind_tag() {
     assert_eq!(value["shape"], serde_json::json!([2, 2, 2]));
 
     let back: SquareLattice<usize> = serde_json::from_value(value).expect("deserialize lattice");
-    assert_eq!(back.cfg.shape(), [2, 2, 2]);
-    assert_eq!(back.cfg.boundary(), BoundaryCondition::Reflective);
+    assert_eq!(back.config().shape(), [2, 2, 2]);
+    assert_eq!(back.config().boundary(), BoundaryCondition::Reflective);
 }
 
 #[test]
@@ -88,7 +92,7 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
     let err = serde_json::from_value::<SquareLattice<usize>>(bad_kind)
         .expect_err("invalid kind must fail")
         .to_string();
-    assert!(err.contains("square lattice kind"));
+    assert!(err.contains("unsupported square lattice kind"));
 
     let bad_shape = serde_json::json!({
         "kind": "square_lattice_periodic",
@@ -130,12 +134,14 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
 #[test]
 fn save_square_lattice_writes_flat_payload_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic),
+        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 9 },
-    );
+    )
+    .unwrap();
 
     let out = unique_tmp_json("save_square_lattice_flat_schema");
-    save_square_lattice(&lattice, &vec![2; lattice.cfg.rank()], &out).expect("save lattice json");
+    save_square_lattice(&lattice, &vec![2; lattice.config().rank()], &out)
+        .expect("save lattice json");
 
     let raw = fs::read_to_string(&out).expect("read saved json");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parse saved json");

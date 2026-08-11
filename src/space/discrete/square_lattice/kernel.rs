@@ -12,7 +12,7 @@ use std::fmt;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::random::{DOMAIN_KERNEL_SAMPLE, PairRandomKey, uniform_index, unit_f64};
+use super::random::{DOMAIN_KERNEL_SAMPLE, RandomKey, uniform_index, unit_f64};
 
 /// Serializable description of one square-lattice displacement distribution.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
@@ -55,10 +55,10 @@ impl Error for KernelError {}
 /// Indexed displacement distribution used by [`RandPairGenerator`](super::RandPairGenerator).
 pub trait Kernel: Send + Sync {
     /// Samples one value from the coordinate `(key, sweep, sample_index)`.
-    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64;
+    fn sample_indexed(&self, key: RandomKey, sweep: u64, sample_index: u64) -> f64;
 
     /// Samples a stable batch whose result does not depend on worker count.
-    fn sample_batch_indexed(&self, key: PairRandomKey, sweep: u64, n: usize) -> Vec<f64> {
+    fn sample_batch_indexed(&self, key: RandomKey, sweep: u64, n: usize) -> Vec<f64> {
         let mut output = vec![0.0; n];
         output
             .par_iter_mut()
@@ -123,7 +123,7 @@ impl PowerLawKernel {
 }
 
 impl Kernel for PowerLawKernel {
-    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
+    fn sample_indexed(&self, key: RandomKey, sweep: u64, sample_index: u64) -> f64 {
         let (mu, c) = match self.kind {
             KernelType::PowerLaw { c, mu, .. } => (mu, c),
             _ => unreachable!("PowerLawKernel kind is fixed at construction"),
@@ -164,7 +164,7 @@ impl UniformKernel {
 }
 
 impl Kernel for UniformKernel {
-    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
+    fn sample_indexed(&self, key: RandomKey, sweep: u64, sample_index: u64) -> f64 {
         let (low, high) = match self.kind {
             KernelType::Uniform { l, c } => (c, l),
             _ => unreachable!("UniformKernel kind is fixed at construction"),
@@ -206,7 +206,7 @@ impl NearestNeighborKernel {
 }
 
 impl Kernel for NearestNeighborKernel {
-    fn sample_indexed(&self, key: PairRandomKey, sweep: u64, sample_index: u64) -> f64 {
+    fn sample_indexed(&self, key: RandomKey, sweep: u64, sample_index: u64) -> f64 {
         uniform_index(
             key,
             sweep,

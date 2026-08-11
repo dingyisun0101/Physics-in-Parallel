@@ -15,10 +15,9 @@ Supported element/distribution pairs:
     - `usize`: `UniformInt`;
     - `isize`: `UniformInt`.
 
-The `try_*` APIs report configuration errors. The shorter `new`,
-`new_with_seed`, and `refresh` APIs intentionally keep panic-on-invalid
-behavior for workflows where invalid random-fill configuration is a programmer
-error.
+`new` and `try_new` are the only construction interfaces. Optional arguments
+select deterministic seeding, the RNG family, and stream count; omitted values
+use the documented defaults.
 */
 
 use rand::SeedableRng;
@@ -146,109 +145,54 @@ pub enum TensorRandError {
 #[derive(Debug, Clone)]
 pub struct TensorRandFiller {
     kind: RandType,
+    seed: u64,
     rng_kind: RngKind,
     num_rngs: usize,
     rngs: Vec<TensorRng>,
 }
 
 impl TensorRandFiller {
-    /// Construct a filler with a nondeterministic seed.
+    /// Constructs a filler from one unified random configuration.
     ///
-    /// Panics:
-    ///	- when `num_rngs == Some(0)`.
+    /// `seed == None` obtains entropy from the host, `rng_kind == None` uses
+    /// [`RngKind::default`], and `num_rngs == None` uses [`NUM_RNGS`].
+    /// Panics when the supplied stream count is zero.
     #[inline]
-    pub fn new(kind: RandType, num_rngs: Option<usize>) -> Self {
-        Self::try_new(kind, num_rngs).expect("invalid tensor random filler configuration")
-    }
-
-    /// Fallibly construct a filler with a nondeterministic seed.
-    #[inline]
-    pub fn try_new(kind: RandType, num_rngs: Option<usize>) -> Result<Self, TensorRandError> {
-        Self::try_new_with_rng_kind(kind, num_rngs, None)
-    }
-
-    /// Construct a filler with a selected RNG family and nondeterministic seed.
-    ///
-    /// `rng_kind == None` defaults to `RngKind::SmallRng`.
-    ///
-    /// Panics:
-    ///	- when `num_rngs == Some(0)`.
-    #[inline]
-    pub fn new_with_rng_kind(
+    pub fn new(
         kind: RandType,
-        num_rngs: Option<usize>,
+        seed: Option<u64>,
         rng_kind: Option<RngKind>,
+        num_rngs: Option<usize>,
     ) -> Self {
-        Self::try_new_with_rng_kind(kind, num_rngs, rng_kind)
+        Self::try_new(kind, seed, rng_kind, num_rngs)
             .expect("invalid tensor random filler configuration")
     }
 
-    /// Fallibly construct a filler with a selected RNG family and nondeterministic seed.
+    /// Fallibly constructs a filler from the same unified configuration as
+    /// [`Self::new`].
     #[inline]
-    pub fn try_new_with_rng_kind(
+    pub fn try_new(
         kind: RandType,
-        num_rngs: Option<usize>,
+        seed: Option<u64>,
         rng_kind: Option<RngKind>,
+        num_rngs: Option<usize>,
     ) -> Result<Self, TensorRandError> {
         let req = rng_count(num_rngs)?;
         let rng_kind = rng_kind.unwrap_or_default();
-        let mut master = rand::make_rng::<SmallRng>();
-        Ok(Self::from_master_rng(kind, rng_kind, req, &mut master))
-    }
-
-    /// Construct a filler from a deterministic seed.
-    ///
-    /// Panics:
-    ///	- when `num_rngs == Some(0)`.
-    #[inline]
-    pub fn new_with_seed(kind: RandType, num_rngs: Option<usize>, seed: u64) -> Self {
-        Self::try_new_with_seed(kind, num_rngs, seed)
-            .expect("invalid tensor random filler configuration")
-    }
-
-    /// Fallibly construct a filler from a deterministic seed.
-    #[inline]
-    pub fn try_new_with_seed(
-        kind: RandType,
-        num_rngs: Option<usize>,
-        seed: u64,
-    ) -> Result<Self, TensorRandError> {
-        Self::try_new_with_seed_and_rng_kind(kind, num_rngs, seed, None)
-    }
-
-    /// Construct a filler from a deterministic seed and selected RNG family.
-    ///
-    /// `rng_kind == None` defaults to `RngKind::SmallRng`.
-    ///
-    /// Panics:
-    ///	- when `num_rngs == Some(0)`.
-    #[inline]
-    pub fn new_with_seed_and_rng_kind(
-        kind: RandType,
-        num_rngs: Option<usize>,
-        seed: u64,
-        rng_kind: Option<RngKind>,
-    ) -> Self {
-        Self::try_new_with_seed_and_rng_kind(kind, num_rngs, seed, rng_kind)
-            .expect("invalid tensor random filler configuration")
-    }
-
-    /// Fallibly construct a filler from a deterministic seed and selected RNG family.
-    #[inline]
-    pub fn try_new_with_seed_and_rng_kind(
-        kind: RandType,
-        num_rngs: Option<usize>,
-        seed: u64,
-        rng_kind: Option<RngKind>,
-    ) -> Result<Self, TensorRandError> {
-        let req = rng_count(num_rngs)?;
-        let rng_kind = rng_kind.unwrap_or_default();
+        let seed = seed.unwrap_or_else(rand::random);
         let mut master = SmallRng::seed_from_u64(seed);
-        Ok(Self::from_master_rng(kind, rng_kind, req, &mut master))
+        Ok(Self::from_master_rng(
+            kind,
+            seed,
+            rng_kind,
+            req,
+            &mut master,
+        ))
     }
 
     fn from_master_rng(
         kind: RandType,
+        seed: u64,
         rng_kind: RngKind,
         num_rngs: usize,
         master: &mut SmallRng,
@@ -259,6 +203,7 @@ impl TensorRandFiller {
         rngs.shrink_to_fit();
         Self {
             kind,
+            seed,
             rng_kind,
             num_rngs,
             rngs,
@@ -322,6 +267,13 @@ impl TensorRandFiller {
     #[inline]
     pub fn rng_kind(&self) -> RngKind {
         self.rng_kind
+    }
+
+    /// Returns the resolved root seed, including a host-generated seed when
+    /// construction received `None`.
+    #[inline]
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 }
 

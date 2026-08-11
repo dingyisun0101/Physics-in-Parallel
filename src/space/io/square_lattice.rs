@@ -13,7 +13,7 @@ use crate::math::io::json::{
 };
 use crate::math::prelude::{Scalar, ScalarSerde};
 use crate::space::discrete::square_lattice::{
-    BoundaryCondition, SquareLattice, SquareLatticeConfig, VacancyValue,
+    BoundaryCondition, SquareLattice, SquareLatticeConfig,
 };
 
 impl BoundaryCondition {
@@ -22,6 +22,7 @@ impl BoundaryCondition {
         match self {
             Self::Periodic => "square_lattice_periodic",
             Self::Reflective => "square_lattice_reflective",
+            Self::Neumann => "square_lattice_neumann",
         }
     }
 
@@ -30,9 +31,8 @@ impl BoundaryCondition {
         match kind {
             "square_lattice_periodic" => Ok(Self::Periodic),
             "square_lattice_reflective" => Ok(Self::Reflective),
-            _ => Err(format!(
-                "square lattice kind must be 'square_lattice_periodic' or 'square_lattice_reflective'; got '{kind}'"
-            )),
+            "square_lattice_neumann" => Ok(Self::Neumann),
+            _ => Err(format!("unsupported square lattice kind '{kind}'")),
         }
     }
 }
@@ -47,8 +47,8 @@ where
     {
         ensure_finite(self.data(), "square_lattice").map_err(serde::ser::Error::custom)?;
         FlatPayloadRef::new(
-            self.cfg.boundary().kind_tag(),
-            self.cfg.shape(),
+            self.config().boundary().kind_tag(),
+            self.config().shape(),
             self.data(),
         )
         .serialize(serializer)
@@ -78,7 +78,7 @@ where
         ensure_finite(self.data(), "square_lattice")
             .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
         Ok(FlatPayload::new(
-            self.cfg.boundary().kind_tag(),
+            self.config().boundary().kind_tag(),
             self.tensor_shape(),
             self.data().to_vec(),
         ))
@@ -104,7 +104,7 @@ where
         }
         ensure_finite(&payload.data, "square_lattice")?;
 
-        let cfg = SquareLatticeConfig::new(&payload.shape, boundary);
+        let cfg = SquareLatticeConfig::new(&payload.shape, boundary, None);
         Ok(SquareLattice::from_parts(cfg, payload.data))
     }
 }
@@ -118,7 +118,7 @@ impl<T: Scalar + Clone> SquareLattice<T> {
             "SquareLattice::from_ndarray: shape must be non-empty"
         );
         let (data, _) = owned.into_raw_vec_and_offset();
-        SquareLattice::from_parts(SquareLatticeConfig::new(&shape, boundary), data)
+        SquareLattice::from_parts(SquareLatticeConfig::new(&shape, boundary, None), data)
     }
 
     pub fn to_ndarray(&self) -> ArrayD<T> {
@@ -127,7 +127,7 @@ impl<T: Scalar + Clone> SquareLattice<T> {
     }
 }
 
-impl<T: ScalarSerde + VacancyValue> SquareLattice<T> {
+impl<T: ScalarSerde> SquareLattice<T> {
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.to_json_string()
@@ -140,14 +140,14 @@ pub fn save_square_lattice<T, P>(
     output_file: P,
 ) -> std::io::Result<()>
 where
-    T: ScalarSerde + VacancyValue,
+    T: ScalarSerde,
     P: AsRef<Path>,
 {
     let lattice_to_save = lattice.downsample(target_shape);
     let shape = lattice_to_save.tensor_shape();
     ensure_finite(lattice_to_save.data(), "square_lattice").map_err(std::io::Error::other)?;
     let json_data = FlatPayloadRef::new(
-        lattice_to_save.cfg.boundary().kind_tag(),
+        lattice_to_save.config().boundary().kind_tag(),
         &shape,
         lattice_to_save.data(),
     );

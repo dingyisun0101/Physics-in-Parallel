@@ -1,5 +1,5 @@
 /*!
-Indexed randomness for square-lattice pair generation.
+Indexed randomness for scientific algorithms.
 
 Every generated value is a pure function of an explicit key, sweep, random
 domain, pair index, component, and draw index. Work can therefore be divided
@@ -7,29 +7,35 @@ across Rayon workers in any way without changing the generated pair batch.
 
 The generator is intended for reproducible simulation, not cryptography.
 Changing its mapping is a scientific format change and requires incrementing
-[`PAIR_RANDOM_VERSION`].
+[`INDEXED_RANDOM_VERSION`].
 */
 
 use serde::{Deserialize, Serialize};
 
 /// Stable method identifier suitable for scientific provenance records.
-pub const PAIR_RANDOM_METHOD: &str = "splitmix64_indexed";
+pub const INDEXED_RANDOM_METHOD: &str = "splitmix64_indexed";
 
 /// Version of the indexed tuple-to-random-word mapping.
-pub const PAIR_RANDOM_VERSION: &str = "1";
+pub const INDEXED_RANDOM_VERSION: &str = "1";
 
-/// Stable encoding used when persisting [`PairRandomKey`].
-pub const PAIR_RANDOM_KEY_ENCODING: &str = "u64_decimal";
+/// Stable encoding used when persisting [`RandomKey`].
+pub const INDEXED_RANDOM_KEY_ENCODING: &str = "u64_decimal";
 
-/// Explicit root key for one pair-generation random domain.
+/// Root key for indexed scientific randomness.
+///
+/// One interface covers deterministic and entropy-backed construction. The
+/// resolved key is always retained and can be persisted for reproducibility.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct PairRandomKey(u64);
+pub struct RandomKey(u64);
 
-impl PairRandomKey {
-    /// Creates an explicit pair-generation key.
-    pub const fn new(value: u64) -> Self {
-        Self(value)
+impl RandomKey {
+    /// Creates a key from an optional seed.
+    ///
+    /// `Some(seed)` is exactly reproducible. `None` draws one seed from host
+    /// entropy; callers can recover and record it through [`Self::value`].
+    pub fn new(seed: Option<u64>) -> Self {
+        Self(seed.unwrap_or_else(rand::random))
     }
 
     /// Returns the numeric key without changing its stable interpretation.
@@ -37,9 +43,38 @@ impl PairRandomKey {
         self.0
     }
 
-    /// Encodes the key using [`PAIR_RANDOM_KEY_ENCODING`].
+    /// Encodes the key using [`INDEXED_RANDOM_KEY_ENCODING`].
     pub fn encode(self) -> String {
         self.0.to_string()
+    }
+
+    /// Produces one stable word from the complete random coordinate.
+    pub fn word(self, step: u64, domain: u64, item: u64, component: u64, draw: u64) -> u64 {
+        indexed_word(self, step, domain, item, component, draw)
+    }
+
+    /// Maps one random coordinate to a uniform floating-point value in `[0, 1)`.
+    pub fn unit_f64(self, step: u64, domain: u64, item: u64, component: u64, draw: u64) -> f64 {
+        unit_f64(self, step, domain, item, component, draw)
+    }
+
+    /// Maps one random coordinate uniformly into `0..upper`.
+    ///
+    /// Returns `None` when `upper` is zero.
+    pub fn uniform_index(
+        self,
+        step: u64,
+        domain: u64,
+        item: u64,
+        component: u64,
+        upper: usize,
+    ) -> Option<usize> {
+        (upper > 0).then(|| uniform_index(self, step, domain, item, component, upper))
+    }
+
+    /// Returns one deterministic standard-normal sample via Box-Muller.
+    pub fn standard_normal(self, step: u64, domain: u64, item: u64, component: u64) -> f64 {
+        standard_normal(self, step, domain, item, component)
     }
 }
 
@@ -49,7 +84,7 @@ pub(crate) const DOMAIN_KERNEL_SAMPLE: u64 = 0xbeb3_9487_4b9c_a7f5;
 
 /// Produces one stable word from the complete random coordinate.
 pub(crate) fn indexed_word(
-    key: PairRandomKey,
+    key: RandomKey,
     sweep: u64,
     domain: u64,
     item: u64,
@@ -65,7 +100,7 @@ pub(crate) fn indexed_word(
 
 /// Maps one indexed word to a uniform floating-point value in `[0, 1)`.
 pub(crate) fn unit_f64(
-    key: PairRandomKey,
+    key: RandomKey,
     sweep: u64,
     domain: u64,
     item: u64,
@@ -78,7 +113,7 @@ pub(crate) fn unit_f64(
 
 /// Maps indexed words uniformly into `0..upper` using Lemire rejection.
 pub(crate) fn uniform_index(
-    key: PairRandomKey,
+    key: RandomKey,
     sweep: u64,
     domain: u64,
     item: u64,
@@ -101,7 +136,7 @@ pub(crate) fn uniform_index(
 
 /// Returns one deterministic standard-normal sample via Box-Muller.
 pub(crate) fn standard_normal(
-    key: PairRandomKey,
+    key: RandomKey,
     sweep: u64,
     domain: u64,
     item: u64,
@@ -128,10 +163,10 @@ mod tests {
 
     #[test]
     fn complete_random_coordinate_changes_the_word() {
-        let key = PairRandomKey::new(17);
+        let key = RandomKey::new(Some(17));
         let base = indexed_word(key, 2, 3, 4, 5, 6);
         assert_eq!(base, 0x995b_eef1_54ed_1885);
-        assert_ne!(base, indexed_word(PairRandomKey::new(18), 2, 3, 4, 5, 6));
+        assert_ne!(base, indexed_word(RandomKey::new(Some(18)), 2, 3, 4, 5, 6));
         assert_ne!(base, indexed_word(key, 3, 3, 4, 5, 6));
         assert_ne!(base, indexed_word(key, 2, 4, 4, 5, 6));
         assert_ne!(base, indexed_word(key, 2, 3, 5, 5, 6));
@@ -141,10 +176,10 @@ mod tests {
 
     #[test]
     fn public_identity_is_stable() {
-        let key = PairRandomKey::new(12_345);
+        let key = RandomKey::new(Some(12_345));
         assert_eq!(key.encode(), "12345");
-        assert_eq!(PAIR_RANDOM_METHOD, "splitmix64_indexed");
-        assert_eq!(PAIR_RANDOM_VERSION, "1");
-        assert_eq!(PAIR_RANDOM_KEY_ENCODING, "u64_decimal");
+        assert_eq!(INDEXED_RANDOM_METHOD, "splitmix64_indexed");
+        assert_eq!(INDEXED_RANDOM_VERSION, "1");
+        assert_eq!(INDEXED_RANDOM_KEY_ENCODING, "u64_decimal");
     }
 }

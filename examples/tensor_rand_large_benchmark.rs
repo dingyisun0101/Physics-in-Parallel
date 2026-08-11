@@ -67,8 +67,7 @@ fn benchmark_tensor_fill(
     rng_kind: RngKind,
 ) -> Timing {
     let mut tensor = dense::Tensor::<f64>::empty(&[len]);
-    let mut filler =
-        TensorRandFiller::new_with_seed_and_rng_kind(kind, Some(rngs), SEED, Some(rng_kind));
+    let mut filler = TensorRandFiller::new(kind, Some(SEED), Some(rng_kind), Some(rngs));
 
     filler.refresh(&mut tensor);
 

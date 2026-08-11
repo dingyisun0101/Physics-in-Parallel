@@ -81,6 +81,11 @@ depend on PiP's Serde types, while PiP has no dependency on
 Core consistency rules used across the crate:
 
 - Lower modules should be reused by higher modules. For example, particle boundaries call `space::continuous` boundary logic, particle randomization calls `space::continuous::sampling`, and particle interactions use `engines::soa::Interaction`.
+- Add a public type or trait only when no existing abstraction can express the
+  behavior. Extend the closest existing concept before creating a parallel API.
+- Optional behavior belongs in one configurable interface with documented
+  defaults. In particular, random construction accepts an optional seed and
+  optional algorithm parameters instead of adding one constructor per combination.
 - Public APIs should expose physical or mathematical concepts, not backend layout. Internal storage helpers are kept behind `pub(crate)` where possible.
 - Type-preserving math operations keep the same scalar type and backend when the operation is mathematically backend-preserving.
 - Explicit conversion APIs have explicit names such as `try_cast_to`, `cast_to`, `to_dense`, `to_sparse`, and `to_ndarray`.
@@ -205,12 +210,16 @@ Purpose:
 Core API:
 
 ```rust
-TensorRandFiller::new(rand_type, num_rngs)
-TensorRandFiller::new_with_rng_kind(rand_type, num_rngs, rng_kind)
+TensorRandFiller::new(rand_type, seed, rng_kind, num_rngs)
+TensorRandFiller::try_new(rand_type, seed, rng_kind, num_rngs)?
 filler.refresh(tensor)
 filler.try_refresh(tensor)
+filler.seed()
 filler.rng_kind()
 ```
+
+Every optional argument may be `None`. A missing seed uses host entropy but the
+resolved value remains available through `seed()` for provenance records.
 
 Core types:
 
@@ -464,8 +473,8 @@ Purpose:
 Core API:
 
 ```rust
-SquareLatticeConfig::try_new(shape, boundary)?
-SquareLatticeConfig::new(shape, boundary)
+SquareLatticeConfig::try_new(shape, boundary, spacing)?
+SquareLatticeConfig::new(shape, boundary, spacing)
 SquareLatticeConfig::periodic(shape)
 SquareLatticeConfig::reflective(shape)
 cfg.shape()
@@ -473,12 +482,14 @@ cfg.boundary()
 cfg.rank()
 cfg.num_sites()
 cfg.tensor_shape()
-SquareLattice::<T>::new(cfg, init_method)
-SquareLattice::<T>::vacancy()
+cfg.spacing()
+cfg.strides()
+cfg.coordinate(flat)
+cfg.neighbor(flat, axis, offset)
+cfg.laplacian(input, components, output)?
+SquareLattice::<T>::new(cfg, init_method)?
+lattice.config()
 lattice.data()
-lattice.set_vacant(coord)
-lattice.is_vacant(coord)
-lattice.fill_vacancy()
 lattice.downsample(target_shape)
 lattice.rescale(target_shape)
 ```
@@ -490,12 +501,15 @@ Core types:
 - `SquareLatticeConfigError`
 - `SquareLatticeInitMethod<T>`
 - `BoundaryCondition`
-- `VacancyValue`
 
 `SquareLatticeConfig` is the complete serializable spatial configuration. Its
-JSON form is `{"shape":[64,64],"boundary":"periodic"}`. Deserialization and
+JSON form is `{"shape":[64,64],"boundary":"periodic","spacing":[1.0,1.0]}`.
+Deserialization and
 `try_new` reject empty shapes, zero-length axes, unknown fields, and site-count
-overflow, so downstream crates do not need mirror shape or boundary types.
+overflow, so downstream crates do not need mirror shape, boundary, spacing,
+stride, coordinate, neighbor, or finite-difference layout types. `Neumann`
+provides zero-normal-gradient edge handling. PiP does not assign a universal
+vacancy sentinel: zero remains a valid scientific value unless a model says otherwise.
 
 ### Square-Lattice Kernels And Pair Generation
 
@@ -503,7 +517,7 @@ Purpose:
 
 Kernels define reproducible displacement rules for square-lattice workflows.
 `RandPairGenerator` creates source coordinates, raw displacements, and raw
-targets from an explicit `PairRandomKey` and scientific sweep. Every value is
+targets from one resolved `RandomKey` and scientific sweep. Every value is
 indexed by key, sweep, domain, pair, and component, so generated batches are
 identical across Rayon worker counts. Boundary interpretation is intentionally
 left to `SquareLattice` access methods.
@@ -515,7 +529,8 @@ try_create_kernel(kernel_type)
 kernel.sample_indexed(key, sweep, sample_index)
 kernel.sample_batch_indexed(key, sweep, n)
 kernel.kind()
-RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, PairRandomKey::new(key))?
+let key = RandomKey::new(optional_seed);
+RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, key)?
 gen.refresh_at(sweep)
 gen.sources()
 gen.displacements()
@@ -533,12 +548,12 @@ Core types:
 - `UniformKernel`
 - `PowerLawKernel`
 - `RandPairGenerator`
-- `PairRandomKey`
+- `RandomKey`
 - `PairGenerationError`
 - `SourceMode`
 
-For provenance, record `PAIR_RANDOM_METHOD`, `PAIR_RANDOM_VERSION`,
-`PAIR_RANDOM_KEY_ENCODING`, and `PairRandomKey::encode()`. PiP owns the random
+For provenance, record `INDEXED_RANDOM_METHOD`, `INDEXED_RANDOM_VERSION`,
+`INDEXED_RANDOM_KEY_ENCODING`, and `RandomKey::encode()`. PiP owns the random
 mapping; a workflow or application remains responsible for persisting these
 facts with the simulation record.
 

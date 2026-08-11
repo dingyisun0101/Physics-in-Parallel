@@ -81,7 +81,8 @@ pub fn sample_vectors(
                 return Err(VectorSamplingError::InvalidUniformBounds { low, high });
             }
 
-            let mut filler = TensorRandFiller::new(RandType::Uniform { low, high }, None);
+            let mut filler =
+                TensorRandFiller::new(RandType::Uniform { low, high }, None, None, None);
             filler.refresh(vectors.as_tensor_mut());
         }
         VectorSamplingMethod::UniformCentered { box_size } => {
@@ -93,6 +94,8 @@ pub fn sample_vectors(
                     low: 0.0,
                     high: 1.0,
                 },
+                None,
+                None,
                 None,
             );
             filler.refresh(vectors.as_tensor_mut());
@@ -120,6 +123,8 @@ pub fn sample_vectors(
                     std: 1.0,
                 },
                 None,
+                None,
+                None,
             );
             filler.refresh(vectors.as_tensor_mut());
 
@@ -144,6 +149,8 @@ pub fn sample_vectors(
                     mean: 0.0,
                     std: 1.0,
                 },
+                None,
+                None,
                 None,
             );
             filler.refresh(vectors.as_tensor_mut());

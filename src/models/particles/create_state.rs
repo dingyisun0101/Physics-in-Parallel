@@ -225,6 +225,8 @@ pub fn randomize_v(
                     std: 1.0,
                 },
                 None,
+                None,
+                None,
             );
             filler.refresh(v.as_tensor_mut());
 

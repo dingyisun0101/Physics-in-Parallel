@@ -20,9 +20,9 @@ pub use kernel::{
     create_kernel, try_create_kernel,
 };
 pub use random::{
-    PAIR_RANDOM_KEY_ENCODING, PAIR_RANDOM_METHOD, PAIR_RANDOM_VERSION, PairRandomKey,
+    INDEXED_RANDOM_KEY_ENCODING, INDEXED_RANDOM_METHOD, INDEXED_RANDOM_VERSION, RandomKey,
 };
 pub use representation::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
-    SquareLatticeInitMethod, VacancyValue,
+    SquareLatticeInitMethod,
 };
