@@ -39,6 +39,23 @@ fn seeded_filler_is_deterministic_across_refresh_sequences() {
 }
 
 #[test]
+fn contiguous_slice_fill_matches_tensor_refresh() {
+    let kind = RandType::Normal {
+        mean: 0.0,
+        std: 1.0,
+    };
+    let mut tensor = dense::Tensor::<f64>::empty(&[32]);
+    let mut slice = vec![0.0; 32];
+    let mut tensor_filler = TensorRandFiller::new(kind, rng(91, None, 4));
+    let mut slice_filler = TensorRandFiller::new(kind, rng(91, None, 4));
+
+    tensor_filler.try_refresh(&mut tensor).unwrap();
+    slice_filler.try_fill_slice(&mut slice).unwrap();
+
+    assert_eq!(values(&tensor), slice);
+}
+
+#[test]
 fn rng_kind_none_defaults_to_small_rng() {
     let kind = RandType::Uniform {
         low: -1.0,

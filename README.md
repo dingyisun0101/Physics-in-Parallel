@@ -242,6 +242,7 @@ TensorRandFiller::new(rand_type, rng_config)
 TensorRandFiller::try_new(rand_type, rng_config)?
 filler.refresh(tensor)
 filler.try_refresh(tensor)
+filler.try_fill_slice(values)
 filler.rng_config()
 ```
 
