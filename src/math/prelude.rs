@@ -17,7 +17,7 @@ pub use crate::math::tensor::{
     TensorRandError, TensorRandFiller, TensorResult, TensorTrait, dense, dense_rand, sparse,
     tensor_trait,
 };
-pub use crate::rng::{RngConfig, RngConfigError, RngMethod};
+pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 
 // Rank-2 tensor and matrix/vector abstractions
 pub use crate::math::tensor::rank_2::{

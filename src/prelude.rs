@@ -8,5 +8,5 @@ Import with:
 pub use crate::engines::prelude::*;
 pub use crate::math::prelude::*;
 pub use crate::models::prelude::*;
-pub use crate::rng::{RngConfig, RngConfigError, RngMethod};
+pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 pub use crate::space::prelude::*;

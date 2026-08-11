@@ -17,6 +17,7 @@ use crate::rng::{RngConfig, RngConfigError};
 
 /// Serializable description of one square-lattice displacement distribution.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum KernelType {
     PowerLaw { l: f64, c: f64, mu: f64 },
     Uniform { l: f64, c: f64 },

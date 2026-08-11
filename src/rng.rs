@@ -150,6 +150,101 @@ pub enum RngConfigError {
     },
 }
 
+/// Resolved execution object for schedule-independent indexed randomness.
+///
+/// Each value is a pure function of the resolved [`RngConfig`] and the five
+/// caller-supplied coordinates. Downstream scientific plugins can therefore
+/// define stable random domains without maintaining a cursor or depending on
+/// Rayon scheduling.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct IndexedRng(RngConfig);
+
+impl IndexedRng {
+    /// Resolves unified configuration for indexed SplitMix64 randomness.
+    pub fn new(rng: RngConfig) -> Result<Self, RngConfigError> {
+        rng.resolve_for(
+            "IndexedRng",
+            RngMethod::IndexedSplitMix64,
+            &[RngMethod::IndexedSplitMix64],
+            None,
+        )
+        .map(Self)
+    }
+
+    /// Returns fully resolved configuration for provenance.
+    pub const fn rng_config(self) -> RngConfig {
+        self.0
+    }
+
+    /// Maps one random coordinate to a uniform floating-point value in `[0, 1)`.
+    pub fn unit_f64(self, step: u64, domain: u64, item: u64, component: u64, draw: u64) -> f64 {
+        const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
+        ((self.indexed_word(step, domain, item, component, draw) >> 11) as f64) * SCALE
+    }
+
+    /// Maps indexed words uniformly into `0..upper` using Lemire rejection.
+    ///
+    /// Returns `None` when `upper` is zero.
+    pub fn uniform_index(
+        self,
+        step: u64,
+        domain: u64,
+        item: u64,
+        component: u64,
+        upper: usize,
+    ) -> Option<usize> {
+        if upper == 0 {
+            return None;
+        }
+        let bound = upper as u64;
+        let threshold = bound.wrapping_neg() % bound;
+        let mut draw = 0;
+        loop {
+            let word = self.indexed_word(step, domain, item, component, draw);
+            let product = u128::from(word) * u128::from(bound);
+            if (product as u64) >= threshold {
+                return Some((product >> 64) as usize);
+            }
+            draw = draw.wrapping_add(1);
+        }
+    }
+
+    /// Returns one deterministic standard-normal sample via Box-Muller.
+    pub fn standard_normal(self, step: u64, domain: u64, item: u64, component: u64) -> f64 {
+        const DENOMINATOR: f64 = (1_u64 << 53) as f64;
+        let word = self.indexed_word(step, domain, item, component, 0) >> 11;
+        let u1 = ((word as f64) + 0.5) / DENOMINATOR;
+        let u2 = self.unit_f64(step, domain, item, component, 1);
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+    }
+
+    pub(crate) fn indexed_word(
+        self,
+        step: u64,
+        domain: u64,
+        item: u64,
+        component: u64,
+        draw: u64,
+    ) -> u64 {
+        let mut state = splitmix64(
+            self.rng_config().seed().expect("resolved indexed seed") ^ 0x6a09_e667_f3bc_c909,
+        );
+        for value in [step, domain, item, component, draw] {
+            state = splitmix64(state ^ splitmix64(value.wrapping_add(0x9e37_79b9_7f4a_7c15)));
+        }
+        state
+    }
+}
+
+#[inline]
+const fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
 impl fmt::Display for RngConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

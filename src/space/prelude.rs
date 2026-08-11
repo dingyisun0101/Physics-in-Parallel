@@ -5,7 +5,7 @@ Import with:
 `use physics_in_parallel::space::prelude::*;`
 */
 
-pub use crate::rng::{RngConfig, RngConfigError, RngMethod};
+pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 pub use crate::space::space_trait::Space;
 
 pub use crate::space::continuous::boundary::{

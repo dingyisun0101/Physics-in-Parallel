@@ -11,7 +11,7 @@ construction, particle observers, integrators, thermostats, boundary adapters,
 and particle interaction wrappers.
 */
 
-pub use crate::rng::{RngConfig, RngConfigError, RngMethod};
+pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 
 pub use crate::models::laws::{
     PowerLawDecay, PowerLawError, PowerLawRange, Spring, SpringCutoff, SpringLawError,
