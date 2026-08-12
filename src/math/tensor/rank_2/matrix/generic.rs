@@ -6,6 +6,7 @@ may be ordinary rank-N dense/sparse tensor storage or a structured matrix
 backend that stores only canonical entries and derives the rest from symmetry.
 */
 
+use core::fmt;
 use core::marker::PhantomData;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
@@ -38,6 +39,52 @@ pub type DenseMatrix<T> = Matrix<T, RankNDense<T>>;
 
 /// Sparse rank-N-backed matrix.
 pub type SparseMatrix<T> = Matrix<T, RankNSparse<T>>;
+
+/// Failure while constructing a matrix or applying it to a vector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MatrixError {
+    /// Matrix dimensions must both be nonzero.
+    InvalidShape { rows: usize, cols: usize },
+    /// The logical element count cannot be represented by `usize`.
+    ShapeProductOverflow { rows: usize, cols: usize },
+    /// Row-major storage did not contain exactly `rows * cols` elements.
+    DataLengthMismatch { expected: usize, actual: usize },
+    /// The input vector length did not match the matrix column count.
+    InputLength { expected: usize, actual: usize },
+    /// The output vector length did not match the matrix row count.
+    OutputLength { expected: usize, actual: usize },
+}
+
+impl fmt::Display for MatrixError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidShape { rows, cols } => {
+                write!(formatter, "matrix shape must be nonzero, got {rows}x{cols}")
+            }
+            Self::ShapeProductOverflow { rows, cols } => {
+                write!(
+                    formatter,
+                    "matrix shape {rows}x{cols} overflows its element count"
+                )
+            }
+            Self::DataLengthMismatch { expected, actual } => write!(
+                formatter,
+                "matrix data length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::InputLength { expected, actual } => write!(
+                formatter,
+                "matrix input length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::OutputLength { expected, actual } => write!(
+                formatter,
+                "matrix output length mismatch: expected {expected}, got {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MatrixError {}
 
 impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     /// Wrap an already-constructed backend in the public matrix facade.
@@ -102,6 +149,46 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     #[inline]
     pub fn get(&self, row: isize, col: isize) -> T {
         self.backend.get(row, col)
+    }
+
+    /// Computes `output = self * input` without allocating.
+    ///
+    /// Dense backends read their contiguous row-major storage directly. Other
+    /// backends use logical scalar access, preserving their storage semantics.
+    pub fn mul_vector_into(&self, input: &[T], output: &mut [T]) -> Result<(), MatrixError> {
+        if input.len() != self.cols() {
+            return Err(MatrixError::InputLength {
+                expected: self.cols(),
+                actual: input.len(),
+            });
+        }
+        if output.len() != self.rows() {
+            return Err(MatrixError::OutputLength {
+                expected: self.rows(),
+                actual: output.len(),
+            });
+        }
+
+        if let Some(data) = self.contiguous_data() {
+            for (row, output_value) in data.chunks_exact(self.cols()).zip(output.iter_mut()) {
+                *output_value = row
+                    .iter()
+                    .copied()
+                    .zip(input.iter().copied())
+                    .map(|(coefficient, value)| coefficient * value)
+                    .sum();
+            }
+        } else {
+            for (row, output_value) in output.iter_mut().enumerate() {
+                *output_value = input
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(column, value)| self.get(row as isize, column as isize) * value)
+                    .sum();
+            }
+        }
+        Ok(())
     }
 
     /// Write the scalar at `(row, col)`.
@@ -419,18 +506,30 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
 }
 
 impl<T: Scalar> Matrix<T, RankNDense<T>> {
+    /// Builds a dense matrix from checked row-major storage.
+    pub fn try_from_vec(rows: usize, cols: usize, data: Vec<T>) -> Result<Self, MatrixError> {
+        if rows == 0 || cols == 0 {
+            return Err(MatrixError::InvalidShape { rows, cols });
+        }
+        let expected = rows
+            .checked_mul(cols)
+            .ok_or(MatrixError::ShapeProductOverflow { rows, cols })?;
+        if data.len() != expected {
+            return Err(MatrixError::DataLengthMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        Ok(Self::from_backend(RankNDense {
+            tensor: Tensor::<T, Dense>::from_vec(&[rows, cols], data),
+        }))
+    }
+
     /// Build a dense matrix from row-major values.
     #[inline]
     pub fn from_vec(rows: usize, cols: usize, data: Vec<T>) -> Self {
-        assert_eq!(
-            data.len(),
-            rows.checked_mul(cols)
-                .expect("matrix shape product overflow"),
-            "dense matrix data length mismatch"
-        );
-        Self::from_backend(RankNDense {
-            tensor: Tensor::<T, Dense>::from_vec(&[rows, cols], data),
-        })
+        Self::try_from_vec(rows, cols, data)
+            .unwrap_or_else(|error| panic!("DenseMatrix::from_vec: {error}"))
     }
 
     /// Build a dense matrix from a coordinate function.

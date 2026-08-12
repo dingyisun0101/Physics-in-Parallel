@@ -54,6 +54,7 @@ pub trait Space<T: ScalarSerde> {
 
     /// Save this space to an external file, optionally reducing the side length
     /// for formats that support lattice-style downsampling.
+    #[allow(clippy::ptr_arg)]
     fn save(&self, output_file: &PathBuf, l_target: usize) -> std::io::Result<()>;
 
     /// Fill every represented site with the same value.

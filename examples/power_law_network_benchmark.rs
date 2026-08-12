@@ -127,8 +127,8 @@ fn run_naive_version(
         n
     ];
     let mut interactions = Vec::with_capacity(pairs.len());
-    for i in 0..n {
-        particles[i].r = [i as f64 * 0.001, 0.0, 0.0];
+    for (i, particle) in particles.iter_mut().enumerate().take(n) {
+        particle.r = [i as f64 * 0.001, 0.0, 0.0];
     }
     for &(u, v) in pairs {
         interactions.push((u, v, law));
@@ -200,10 +200,10 @@ fn run_comparison(n: usize, steps: usize) {
 
     let mut max_diff: f64 = 0.0;
     let pip_r = pip.objects.core.get::<f64>(ATTR_R).unwrap();
-    for i in 0..n {
+    for (i, particle) in naive.particles.iter().enumerate().take(n) {
         let p_r = pip_r.get_vec(i as isize);
-        for axis in 0..3 {
-            max_diff = max_diff.max((naive.particles[i].r[axis] - p_r[axis]).abs());
+        for (axis, &pip_value) in p_r.iter().enumerate().take(3) {
+            max_diff = max_diff.max((particle.r[axis] - pip_value).abs());
         }
     }
     let validation_passed = max_diff < 1e-10;
@@ -220,6 +220,7 @@ fn run_comparison(n: usize, steps: usize) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_chart(
     n: usize,
     m: usize,

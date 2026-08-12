@@ -183,7 +183,11 @@ impl VectorListRand for NNVectors {
 #[inline]
 fn decode_nearest_neighbor_code(code: usize, row: &mut [isize]) {
     let axis = code / 2;
-    let sign = if code % 2 == 0 { 1isize } else { -1isize };
+    let sign = if code.is_multiple_of(2) {
+        1isize
+    } else {
+        -1isize
+    };
     for (k, x) in row.iter_mut().enumerate() {
         *x = if k == axis { sign } else { 0 };
     }

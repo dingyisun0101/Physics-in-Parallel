@@ -91,6 +91,73 @@ Core consistency rules used across the crate:
 - Explicit conversion APIs have explicit names such as `try_cast_to`, `cast_to`, `to_dense`, `to_sparse`, and `to_ndarray`.
 - Boolean particle masks use compact numeric storage internally, while users normally call bool-facing helpers such as `set_alive`, `is_alive`, `set_rigid`, and `is_rigid`.
 
+## Supported public API
+
+This is PiP's exhaustive supported API allowlist. Users may rely on the items
+below, their public enum variants, and their documented public methods. The
+crate-wide `physics_in_parallel::prelude::*` exports the union of the four
+domain preludes plus the RNG types. Compiler-visible implementation paths not
+listed here are not compatibility promises.
+
+- Randomness: `IndexedRng`, `RngConfig`, `RngConfigError`, and `RngMethod`.
+- Math scalars and conversion: `Complex`, `Scalar`, `ScalarCastError`,
+  `ScalarSerde`, and `NdarrayConvert`.
+- Tensors and random filling: `Backend`, `DenseBackend`, `SparseBackend`,
+  `Tensor`, `TensorError`, `TensorResult`, `TensorTrait`, `RandType`,
+  `TensorRandError`, `TensorRandFiller`, `TensorRandElement`, `NUM_RNGS`, and
+  the `dense`, `dense_rand`, `sparse`, and `tensor_trait` modules. Their
+  low-level surface also includes `dense::Tensor`, `sparse::Tensor`, and the
+  `errors` helpers `validate_shape`, `checked_num_elements`,
+  `ensure_same_shape`, `ensure_index_rank`, and `ensure_rank`.
+- Tensor operation functions: `abs`, `conj`, `cross`, `dot`, `elem_div`,
+  `elem_mul`, `hermitian_dot`, `hermitian_transpose`, `map`, `matmul`, `norm`,
+  `norm_sqr`, `norm_sqr_real`, `scalar_mul`, `size`, `sqrt`, `transpose`,
+  `wedge`, `zip_with`, and `assert_same_shape` in `math::tensor::rank_n::ops`.
+- Rank-two math: `Matrix`, `DenseMatrix`, `SparseMatrix`, `MatrixBackend`,
+  `MatrixError`, `DiagonalMatrix`, `SymmetricMatrix`,
+  `AntiSymmetricMatrix`, `UpperTriangularMatrix`,
+  `StrictUpperTriangularMatrix`, `LowerTriangularMatrix`,
+  `StrictLowerTriangularMatrix`, `RankNDense`, `RankNSparse`, `Diagonal`,
+  `Symmetric`, `AntiSymmetric`, `Triangular`, `VectorList`, `DynVectorList`,
+  `VectorListRand`, `HaarVectors`, and `NNVectors`.
+- Math interchange schema: `JSON_SCHEMA_VERSION`, `FlatPayload`,
+  `SparsePayload`, `SparsePayloadParts`, `ToJsonPayload`, `FromJsonPayload`,
+  `TensorStringConvert`, and the JSON helpers `checked_num_elements` and
+  `scalar_kind`.
+- Continuous space: `BoundaryError`, `ClampBox`, `ContinuousBoundary`,
+  `PeriodicBox`, `ReflectBox`, `VectorSamplingError`,
+  `VectorSamplingMethod`, and `sample_vectors`.
+- General and lattice space: `Space`, `BoundaryCondition`, `Kernel`,
+  `KernelError`, `KernelType`, `NearestNeighborKernel`,
+  `PairGenerationError`, `PowerLawKernel`, `RandPairGenerator`, `SourceMode`,
+  `SquareLattice`, `SquareLatticeConfig`, `SquareLatticeConfigError`,
+  `SquareLatticeInitMethod`, `UniformKernel`, `create_kernel`,
+  `try_create_kernel`, and `save_square_lattice`.
+- Generic engines: `MeanReducer`, `Reducer`, `AttrId`, `AttrsCore`,
+  `AttrsError`, `AttrsMeta`, `PhysObj`, `ObjId`, `InteractionId`,
+  `Interaction`, `InteractionError`, `InteractionNodes`, `InteractionOrder`,
+  `InteractionTopology`, `NeighborList`, and `NeighborListError`.
+- Physical laws: `PowerLawDecay`, `PowerLawError`, `PowerLawRange`, `Spring`,
+  `SpringCutoff`, and `SpringLawError`.
+- Particle attributes: `ParticleSelection`, `ALIVE_FALSE`, `ALIVE_TRUE`,
+  `RIGID_FALSE`, `RIGID_TRUE`, `ATTR_A`, `ATTR_ALIVE`, `ATTR_M`,
+  `ATTR_M_INV`, `ATTR_R`, `ATTR_RIGID`, `ATTR_V`, `alive_value`,
+  `is_alive`, `is_alive_value`, `is_rigid`, `is_rigid_value`,
+  `rigid_value`, `set_alive`, and `set_rigid`.
+- Particle construction and dynamics: `MassiveParticlesError`,
+  `VelocitySamplingMethod`, `create_template`, `randomize_r`, `randomize_v`,
+  `ParticleBoundary`, `ParticleBoundaryError`, `ExplicitEuler`, `Integrator`,
+  `IntegratorError`, `SemiImplicitEuler`, `LangevinThermostat`, `Thermostat`,
+  and `ThermostatError`.
+- Particle observation and interactions: `KineticEnergyObserver`,
+  `ObserveError`, `Observer`, `TemperatureObserver`, `ParticleNeighborList`,
+  `ParticleNeighborListError`, `PowerLawNetwork`, `PowerLawNetworkError`,
+  `SpringNetwork`, and `SpringNetworkError`.
+
+The Math, Space, Engines, and Models sections below exhaustively catalogue the
+supported constructors and operations for these items. Generated crate
+documentation is the exact signature reference.
+
 ## Unified RNG Configuration
 
 `RngConfig` is the only randomness input used by PiP's public stochastic APIs.
@@ -268,6 +335,7 @@ Core creation API:
 ```rust
 DenseMatrix::<T>::empty(rows, cols)
 DenseMatrix::<T>::from_vec(rows, cols, data)
+DenseMatrix::<T>::try_from_vec(rows, cols, data)?
 SparseMatrix::<T>::empty(rows, cols)
 SparseMatrix::<T>::from_triplets(rows, cols, triplets)
 DiagonalMatrix::<T>::empty(n, n)
@@ -299,6 +367,7 @@ matrix.transpose()
 matrix.hermitian_transpose()
 matrix.trace()
 matrix.matmul(&rhs)
+matrix.mul_vector_into(input, output)?
 matrix.try_cast_to::<U>()
 matrix.cast_to::<U>()
 matrix.to_dense()
@@ -317,6 +386,7 @@ Core types:
 - `LowerTriangularMatrix<T>`
 - `StrictUpperTriangularMatrix<T>`
 - `StrictLowerTriangularMatrix<T>`
+- `MatrixError`
 
 ### VectorList
 

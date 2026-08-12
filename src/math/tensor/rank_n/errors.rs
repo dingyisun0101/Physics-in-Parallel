@@ -83,7 +83,7 @@ impl std::error::Error for TensorError {}
 /// Validate that a tensor shape has at least one axis and no zero-length axes.
 #[inline]
 pub fn validate_shape(shape: &[usize]) -> TensorResult<()> {
-    if shape.is_empty() || shape.iter().any(|&dim| dim == 0) {
+    if shape.is_empty() || shape.contains(&0) {
         return Err(TensorError::InvalidShape {
             shape: shape.to_vec(),
         });

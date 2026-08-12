@@ -1,4 +1,4 @@
-use physics_in_parallel::math::tensor::{DenseMatrix, SparseMatrix};
+use physics_in_parallel::math::tensor::{DenseMatrix, MatrixError, SparseMatrix};
 
 use crate::matrix_support::print_matrix;
 
@@ -29,6 +29,53 @@ fn dense_matrix_construction_access_fill_print_and_cast_are_consistent() {
 
     let casted = generated.cast_to::<f64>();
     assert_eq!(casted.get(1, 0), 10.0);
+}
+
+#[test]
+fn fallible_dense_construction_reports_shape_and_storage_errors() {
+    assert!(matches!(
+        DenseMatrix::<f64>::try_from_vec(0, 2, Vec::new()),
+        Err(MatrixError::InvalidShape { rows: 0, cols: 2 })
+    ));
+    assert!(matches!(
+        DenseMatrix::<f64>::try_from_vec(2, 2, vec![1.0, 2.0, 3.0]),
+        Err(MatrixError::DataLengthMismatch {
+            expected: 4,
+            actual: 3,
+        })
+    ));
+}
+
+#[test]
+fn matrix_vector_application_reuses_caller_output_for_dense_and_sparse_storage() {
+    let dense = DenseMatrix::<f64>::try_from_vec(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        .expect("valid dense matrix");
+    let mut output = [0.0; 2];
+    dense
+        .mul_vector_into(&[2.0, 1.0, -1.0], &mut output)
+        .expect("matching vector dimensions");
+    assert_eq!(output, [1.0, 7.0]);
+
+    let sparse = dense.to_sparse();
+    sparse
+        .mul_vector_into(&[2.0, 1.0, -1.0], &mut output)
+        .expect("matching vector dimensions");
+    assert_eq!(output, [1.0, 7.0]);
+
+    assert_eq!(
+        dense.mul_vector_into(&[1.0], &mut output),
+        Err(MatrixError::InputLength {
+            expected: 3,
+            actual: 1,
+        })
+    );
+    assert_eq!(
+        dense.mul_vector_into(&[1.0, 2.0, 3.0], &mut [0.0]),
+        Err(MatrixError::OutputLength {
+            expected: 2,
+            actual: 1,
+        })
+    );
 }
 
 #[test]

@@ -164,10 +164,10 @@ impl ParticleNeighborList {
                 return;
             }
 
-            if let Some(flags) = &alive_flags {
-                if !flags[i] || !flags[j] {
-                    return;
-                }
+            if let Some(flags) = &alive_flags
+                && (!flags[i] || !flags[j])
+            {
+                return;
             }
 
             let i0 = i * dim;

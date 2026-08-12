@@ -235,8 +235,8 @@ impl TensorRandFiller {
     /// Refresh tensor values in-place.
     ///
     /// Panics:
-    ///	- when the filler distribution is invalid for `T`;
-    ///	- when distribution parameters are invalid.
+    /// - when the filler distribution is invalid for `T`;
+    /// - when distribution parameters are invalid.
     #[inline]
     pub fn refresh<T: TensorRandElement>(&mut self, tensor: &mut Tensor<T>) {
         self.try_refresh(tensor)

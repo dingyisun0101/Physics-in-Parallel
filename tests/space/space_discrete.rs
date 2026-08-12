@@ -31,7 +31,7 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 
 #[test]
 fn lattice_config_and_init_public_surface() {
-    let cfg = SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None);
     assert_eq!(cfg.shape(), [4, 4]);
     assert_eq!(cfg.tensor_shape(), vec![4, 4]);
     assert_eq!(cfg.num_sites(), 16);
@@ -55,7 +55,7 @@ fn lattice_config_and_init_public_surface() {
     .unwrap();
     assert!(random.data().iter().all(|x| [11, 22, 33].contains(x)));
 
-    let cfg_1d = SquareLatticeConfig::new(&vec![7; 1], BoundaryCondition::Reflective, None);
+    let cfg_1d = SquareLatticeConfig::new(&[7; 1], BoundaryCondition::Reflective, None);
     let seeded = SquareLattice::<usize>::new(
         cfg_1d.clone(),
         SquareLatticeInitMethod::SeededCenter { val: 9 },
@@ -106,7 +106,7 @@ fn lattice_config_owns_neighbor_geometry_and_laplacian() {
 
 #[test]
 fn lattice_space_trait_boundary_and_rescale_surface() {
-    let cfg = SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::new(&[5; 1], BoundaryCondition::Periodic, None);
     let mut lattice =
         SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 }).unwrap();
 
@@ -123,7 +123,7 @@ fn lattice_space_trait_boundary_and_rescale_surface() {
     assert!(lattice.data().iter().all(|&x| x == 2));
 
     let mut reflective = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![5; 1], BoundaryCondition::Reflective, None),
+        SquareLatticeConfig::new(&[5; 1], BoundaryCondition::Reflective, None),
         SquareLatticeInitMethod::Uniform { val: 1 },
     )
     .unwrap();
@@ -133,7 +133,7 @@ fn lattice_space_trait_boundary_and_rescale_surface() {
     assert_eq!(*Space::get(&reflective, &[3]), 88);
 
     let lattice_2d = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 5 },
     )
     .unwrap();

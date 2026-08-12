@@ -334,6 +334,7 @@ impl AttrsCore {
         ))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_three_mut<T: Scalar + 'static>(
         &mut self,
         first: &str,

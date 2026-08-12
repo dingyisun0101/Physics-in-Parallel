@@ -152,6 +152,7 @@ impl<T: Scalar> Tensor<T> {
     /// # Panics
     /// - Only if `idx.len() != self.shape.len()` (debug assertion).
     #[inline]
+    ///
     /// Details:
     /// - Purpose: Converts a wrapped multidimensional coordinate into the
     ///   row-major flat key used in the sparse hash map.

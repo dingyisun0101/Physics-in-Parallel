@@ -263,8 +263,8 @@ impl NeighborList {
     #[inline]
     fn linear_id(&self, coord: &[usize]) -> usize {
         let mut id = 0usize;
-        for axis in 0..self.dim {
-            id += coord[axis] * self.strides[axis];
+        for (axis, &value) in coord.iter().enumerate().take(self.dim) {
+            id += value * self.strides[axis];
         }
         id
     }

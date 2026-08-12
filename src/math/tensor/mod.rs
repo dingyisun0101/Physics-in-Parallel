@@ -3,7 +3,7 @@ pub mod rank_n;
 
 pub use rank_2::{
     AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
-    MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
+    MatrixBackend, MatrixError, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
     StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix, VectorList,
     VectorListRand,
 };

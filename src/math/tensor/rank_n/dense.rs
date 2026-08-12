@@ -189,12 +189,10 @@ where
     /// - Parameters:
     ///   - (none): Sums every logical tensor element.
     fn get_sum(&self) -> T {
-        let result = self
-            .data
+        self.data
             .par_iter()
             .cloned()
-            .reduce(|| T::zero(), |a, b| a + b);
-        result
+            .reduce(|| T::zero(), |a, b| a + b)
     }
 
     /// Shape vector.
@@ -213,6 +211,7 @@ where
     /// - Accepts negative indices and arbitrarily large/small signed values.
     /// - Never panics due to out-of-bounds (only rank mismatch is debug-asserted).
     #[inline(always)]
+    ///
     /// Details:
     /// - Purpose: Converts a full multidimensional coordinate into the
     ///   corresponding row-major flat buffer index, applying periodic wrapping

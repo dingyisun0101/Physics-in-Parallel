@@ -43,7 +43,7 @@ fn lattice_config_is_a_complete_validated_serde_boundary() {
 #[test]
 fn lattice_periodic_roundtrip_uses_lattice_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![3; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::new(&[3; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 7 },
     )
     .unwrap();
@@ -64,7 +64,7 @@ fn lattice_periodic_roundtrip_uses_lattice_schema() {
 #[test]
 fn lattice_reflective_roundtrip_uses_kind_tag() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![2; 3], BoundaryCondition::Reflective, None),
+        SquareLatticeConfig::new(&[2; 3], BoundaryCondition::Reflective, None),
         SquareLatticeInitMethod::Uniform { val: 1 },
     )
     .unwrap();
@@ -134,7 +134,7 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
 #[test]
 fn save_square_lattice_writes_flat_payload_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&vec![4; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None),
         SquareLatticeInitMethod::Uniform { val: 9 },
     )
     .unwrap();

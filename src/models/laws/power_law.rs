@@ -40,10 +40,10 @@ impl PowerLawDecay {
         if !self.alpha.is_finite() {
             return Err(PowerLawError::InvalidExponent { alpha: self.alpha });
         }
-        if let Some((min, max)) = self.range {
-            if !min.is_finite() || !max.is_finite() || min < 0.0 || max < min {
-                return Err(PowerLawError::InvalidRange { min, max });
-            }
+        if let Some((min, max)) = self.range
+            && (!min.is_finite() || !max.is_finite() || min < 0.0 || max < min)
+        {
+            return Err(PowerLawError::InvalidRange { min, max });
         }
         Ok(())
     }

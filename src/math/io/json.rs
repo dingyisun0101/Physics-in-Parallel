@@ -192,16 +192,16 @@ pub fn checked_num_elements(shape: &[usize], context: &str) -> Result<usize, Str
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct FlatPayloadRef<'a, T> {
-    pub kind: &'a str,
-    pub version: u32,
-    pub scalar: &'static str,
-    pub shape: &'a [usize],
-    pub data: &'a [T],
+pub(crate) struct FlatPayloadRef<'a, T> {
+    pub(crate) kind: &'a str,
+    pub(crate) version: u32,
+    pub(crate) scalar: &'static str,
+    pub(crate) shape: &'a [usize],
+    pub(crate) data: &'a [T],
 }
 
 impl<'a, T: Scalar> FlatPayloadRef<'a, T> {
-    pub fn new(kind: &'a str, shape: &'a [usize], data: &'a [T]) -> Self {
+    pub(crate) fn new(kind: &'a str, shape: &'a [usize], data: &'a [T]) -> Self {
         Self {
             kind,
             version: JSON_SCHEMA_VERSION,

@@ -100,7 +100,7 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
         F: Fn(T) -> T + Sync + Send;
 
     /// Backend-native parallel in-place zip:
-    ///	`self[i] <- f(self[i], other[i])`.
+    /// `self[i] <- f(self[i], other[i])`.
     fn par_zip_with_inplace<F, Rhs>(&mut self, other: &Rhs, f: F)
     where
         Rhs: TensorTrait<T>,

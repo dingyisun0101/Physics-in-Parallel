@@ -22,7 +22,7 @@ pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 // Rank-2 tensor and matrix/vector abstractions
 pub use crate::math::tensor::rank_2::{
     AntiSymmetricMatrix, DenseMatrix, DiagonalMatrix, HaarVectors, LowerTriangularMatrix, Matrix,
-    MatrixBackend, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
+    MatrixBackend, MatrixError, NNVectors, SparseMatrix, StrictLowerTriangularMatrix,
     StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix, VectorList,
     VectorListRand,
 };

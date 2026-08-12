@@ -234,7 +234,7 @@ where
             let idx = flat_to_index(tensor.shape(), k);
             tensor.get(&idx).norm_sqr_real()
         })
-        .reduce(|| T::Real::zero(), |a, b| a + b)
+        .reduce(T::Real::zero, |a, b| a + b)
 }
 
 /// Type-preserving Euclidean norm: `sqrt(sum(norm_sqr_real(x_i)))`.

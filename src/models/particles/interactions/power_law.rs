@@ -409,6 +409,7 @@ fn accumulate_power_law_3d(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn accumulate_power_law_generic(
     interactions: &Interaction<PowerLawDecay>,
     r_data: &[f64],

@@ -2,7 +2,7 @@ use physics_in_parallel::space::prelude::*;
 
 #[test]
 fn space_prelude_compiles_for_common_types() {
-    let cfg = SquareLatticeConfig::new(&vec![4; 1], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::new(&[4; 1], BoundaryCondition::Periodic, None);
     let mut g =
         SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 }).unwrap();
     g.set(&[1], 0);

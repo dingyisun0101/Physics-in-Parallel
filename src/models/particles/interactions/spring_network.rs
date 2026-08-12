@@ -276,12 +276,9 @@ impl SpringNetwork {
             let r_data = r.as_tensor().data.clone();
 
             let m_inv_data = gather_inverse_mass(objects, n)?;
-            for i in 0..n {
-                if !m_inv_data[i].is_finite() || m_inv_data[i] < 0.0 {
-                    return Err(SpringNetworkError::InvalidInverseMass {
-                        index: i,
-                        value: m_inv_data[i],
-                    });
+            for (i, &value) in m_inv_data.iter().enumerate().take(n) {
+                if !value.is_finite() || value < 0.0 {
+                    return Err(SpringNetworkError::InvalidInverseMass { index: i, value });
                 }
             }
 
@@ -547,6 +544,7 @@ fn accumulate_hooke_3d(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn accumulate_hooke_generic(
     springs: &Interaction<Spring>,
     r_data: &[f64],

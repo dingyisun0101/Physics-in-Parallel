@@ -39,10 +39,10 @@ impl Spring {
         if !self.l_0.is_finite() || self.l_0 < 0.0 {
             return Err(SpringLawError::InvalidRestLength { l_0: self.l_0 });
         }
-        if let Some((min, max)) = self.cutoff {
-            if !min.is_finite() || !max.is_finite() || min < 0.0 || max < min {
-                return Err(SpringLawError::InvalidCutoff { min, max });
-            }
+        if let Some((min, max)) = self.cutoff
+            && (!min.is_finite() || !max.is_finite() || min < 0.0 || max < min)
+        {
+            return Err(SpringLawError::InvalidCutoff { min, max });
         }
         Ok(())
     }

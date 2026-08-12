@@ -143,7 +143,7 @@ fn validate_flat_vector_list(
     dim: usize,
     len: usize,
 ) -> Result<(), BoundaryError> {
-    if len % dim != 0 {
+    if !len.is_multiple_of(dim) {
         return Err(BoundaryError::InvalidFlatVectorListLength { label, dim, len });
     }
     Ok(())

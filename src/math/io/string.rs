@@ -24,8 +24,8 @@ fn format_dense_parts<T: Display>(data: &[T], shape: &[usize]) -> String {
     fn format_recursive<T: Display>(data: &[T], shape: &[usize]) -> String {
         if shape.len() == 1 {
             let mut line = String::new();
-            for i in 0..shape[0] {
-                line.push_str(&format!("{}", data[i]));
+            for (i, value) in data.iter().take(shape[0]).enumerate() {
+                line.push_str(&format!("{value}"));
                 if i + 1 != shape[0] {
                     line.push(';');
                 }
@@ -65,8 +65,7 @@ where
     let rows: Vec<Vec<T>> = normalized
         .split('|')
         .map(|row| {
-            row.replace('[', "")
-                .replace(']', "")
+            row.replace(['[', ']'], "")
                 .split(';')
                 .filter(|x| !x.trim().is_empty())
                 .map(|num| {

@@ -327,9 +327,7 @@ impl InteractionTopology {
     }
 
     fn remove_nodes(&mut self, nodes: InteractionNodes) -> Option<InteractionId> {
-        let Some(id) = self.id_of_nodes.remove(&nodes) else {
-            return None;
-        };
+        let id = self.id_of_nodes.remove(&nodes)?;
 
         self.nodes_of_id[id] = None;
         self.free_ids.push(id);
