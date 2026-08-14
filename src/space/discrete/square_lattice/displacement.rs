@@ -240,9 +240,11 @@ impl RandPairGenerator {
                     mean: 0.0,
                     std: 1.0,
                 });
+                let direction_components = directions.dim();
                 self.random_filler
-                    .try_fill_slice_at(
+                    .try_fill_slice_at_layout(
                         directions.as_tensor_mut().data_mut(),
+                        direction_components,
                         sweep,
                         DOMAIN_HAAR_COMPONENT,
                     )

@@ -321,7 +321,22 @@ impl TensorRandFiller {
         let Some(key) = self.indexed else {
             return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
         };
-        T::try_fill_slice_indexed(self, key, values, step, domain)
+        T::try_fill_slice_indexed(self, key, values, step, domain, 1)
+    }
+
+    /// Fills row-major values using `(row, component)` random coordinates.
+    pub fn try_fill_slice_at_layout<T: TensorRandElement>(
+        &self,
+        values: &mut [T],
+        components: usize,
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        assert!(components > 0, "indexed fill components must be positive");
+        let Some(key) = self.indexed else {
+            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
+        };
+        T::try_fill_slice_indexed(self, key, values, step, domain, components)
     }
 
     #[inline]
@@ -445,6 +460,7 @@ pub trait TensorRandElement: sealed::Sealed + Sized + Scalar {
         values: &mut [Self],
         step: u64,
         domain: u64,
+        components: usize,
     ) -> Result<(), TensorRandError>;
 
     fn try_fill(
@@ -468,6 +484,7 @@ impl TensorRandElement for f64 {
         values: &mut [f64],
         step: u64,
         domain: u64,
+        components: usize,
     ) -> Result<(), TensorRandError> {
         let Some((_, chunk_len)) = filler.chunk_plan(values.len()) else {
             return Ok(());
@@ -483,7 +500,14 @@ impl TensorRandElement for f64 {
                     .for_each(|(chunk_index, chunk)| {
                         let start = chunk_index * chunk_len;
                         for (offset, value) in chunk.iter_mut().enumerate() {
-                            let unit = key.unit_f64(step, domain, (start + offset) as u64, 0, 0);
+                            let index = start + offset;
+                            let unit = key.unit_f64(
+                                step,
+                                domain,
+                                (index / components) as u64,
+                                (index % components) as u64,
+                                0,
+                            );
                             *value = low + (high - low) * unit;
                         }
                     });
@@ -498,9 +522,15 @@ impl TensorRandElement for f64 {
                     .for_each(|(chunk_index, chunk)| {
                         let start = chunk_index * chunk_len;
                         for (offset, value) in chunk.iter_mut().enumerate() {
+                            let index = start + offset;
                             *value = mean
                                 + std
-                                    * key.standard_normal(step, domain, (start + offset) as u64, 0);
+                                    * key.standard_normal(
+                                        step,
+                                        domain,
+                                        (index / components) as u64,
+                                        (index % components) as u64,
+                                    );
                         }
                     });
             }
@@ -514,12 +544,19 @@ impl TensorRandElement for f64 {
                     .for_each(|(chunk_index, chunk)| {
                         let start = chunk_index * chunk_len;
                         for (offset, value) in chunk.iter_mut().enumerate() {
-                            *value =
-                                if key.unit_f64(step, domain, (start + offset) as u64, 0, 0) < p {
-                                    1.0
-                                } else {
-                                    0.0
-                                };
+                            let index = start + offset;
+                            *value = if key.unit_f64(
+                                step,
+                                domain,
+                                (index / components) as u64,
+                                (index % components) as u64,
+                                0,
+                            ) < p
+                            {
+                                1.0
+                            } else {
+                                0.0
+                            };
                         }
                     });
             }
@@ -582,6 +619,7 @@ impl TensorRandElement for i64 {
         _values: &mut [i64],
         _step: u64,
         _domain: u64,
+        _components: usize,
     ) -> Result<(), TensorRandError> {
         Err(TensorRandError::UnsupportedDistribution {
             scalar: "i64",
@@ -632,6 +670,7 @@ impl TensorRandElement for usize {
         _values: &mut [usize],
         _step: u64,
         _domain: u64,
+        _components: usize,
     ) -> Result<(), TensorRandError> {
         Err(TensorRandError::UnsupportedDistribution {
             scalar: "usize",
@@ -682,6 +721,7 @@ impl TensorRandElement for isize {
         _values: &mut [isize],
         _step: u64,
         _domain: u64,
+        _components: usize,
     ) -> Result<(), TensorRandError> {
         Err(TensorRandError::UnsupportedDistribution {
             scalar: "isize",
