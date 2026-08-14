@@ -348,11 +348,27 @@ pub(crate) enum BuiltinKernel {
 }
 
 impl BuiltinKernel {
-    pub(crate) fn sample_resolved(&self, rng: IndexedRng, sweep: u64, sample_index: u64) -> f64 {
+    pub(crate) fn sample_unit(&self, unit: f64) -> f64 {
         match self {
-            Self::PowerLaw(kernel) => kernel.sample_resolved(rng, sweep, sample_index),
-            Self::Uniform(kernel) => kernel.sample_resolved(rng, sweep, sample_index),
-            Self::NearestNeighbor(kernel) => kernel.sample_resolved(rng, sweep, sample_index),
+            Self::PowerLaw(kernel) => {
+                let (mu, c) = match kernel.kind {
+                    KernelType::PowerLaw { c, mu, .. } => (mu, c),
+                    _ => unreachable!("power-law kernel kind is fixed at construction"),
+                };
+                (unit * (kernel.l_pow - kernel.c_pow) + kernel.c_pow)
+                    .powf(-1.0 / mu)
+                    .max(c)
+            }
+            Self::Uniform(kernel) => {
+                let (low, high) = match kernel.kind {
+                    KernelType::Uniform { l, c } => (c, l),
+                    _ => unreachable!("uniform kernel kind is fixed at construction"),
+                };
+                low + (high - low) * unit
+            }
+            Self::NearestNeighbor(kernel) => {
+                (unit * kernel.num_neighbors as f64).floor() as usize as f64
+            }
         }
     }
 }

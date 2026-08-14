@@ -172,6 +172,14 @@ impl IndexedRng {
         .map(Self)
     }
 
+    /// Builds an indexed key from a configuration already resolved by a
+    /// lower-level stochastic component.
+    pub(crate) fn from_resolved(rng: RngConfig) -> Self {
+        debug_assert_eq!(rng.method(), Some(RngMethod::IndexedSplitMix64));
+        debug_assert!(rng.seed().is_some());
+        Self(rng)
+    }
+
     /// Returns fully resolved configuration for provenance.
     pub const fn rng_config(self) -> RngConfig {
         self.0

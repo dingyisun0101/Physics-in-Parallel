@@ -54,17 +54,6 @@ pub(crate) fn uniform_index(
         .expect("positive upper bound")
 }
 
-/// Returns one deterministic standard-normal sample via Box-Muller.
-pub(crate) fn standard_normal(
-    key: IndexedRng,
-    sweep: u64,
-    domain: u64,
-    item: u64,
-    component: u64,
-) -> f64 {
-    key.standard_normal(sweep, domain, item, component)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ndarray::{ArrayD, IxDyn};
 
 use physics_in_parallel::math::prelude::VectorList;
-use physics_in_parallel::rng::RngConfig;
+use physics_in_parallel::rng::{RngConfig, RngMethod};
 use physics_in_parallel::space::{
     discrete::square_lattice::{
         BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PairGenerationError,
@@ -303,6 +303,32 @@ fn pair_generation_is_independent_of_rayon_worker_count() {
     }
 
     assert_eq!(generate(1), generate(4));
+}
+
+#[test]
+fn pair_generation_accepts_random_fill_parallelism() {
+    let config = RngConfig::new(
+        Some(0x5eed),
+        Some(RngMethod::IndexedSplitMix64),
+        std::num::NonZeroUsize::new(2),
+    );
+    let mut generator = RandPairGenerator::new(
+        &[17, 19],
+        KernelType::PowerLaw {
+            l: 12.0,
+            c: 1.0,
+            mu: 1.7,
+        },
+        1_024,
+        SourceMode::RandomUniform,
+        config,
+    )
+    .unwrap();
+    generator.refresh_at(37);
+    assert_eq!(
+        generator.rng_config().parallel_streams(),
+        std::num::NonZeroUsize::new(2)
+    );
 }
 
 #[test]

@@ -16,12 +16,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::math::prelude::VectorList;
+use crate::math::prelude::{RandType, TensorRandError, TensorRandFiller, VectorList};
 
 use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
-use super::random::{
-    DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE, IndexedRng, standard_normal, uniform_index,
-};
+use super::random::{DOMAIN_HAAR_COMPONENT, DOMAIN_SOURCE_COORDINATE};
 use crate::rng::{RngConfig, RngConfigError};
 
 /// Rule for selecting each pair's source coordinate.
@@ -47,6 +45,7 @@ pub enum PairGenerationError {
     },
     Kernel(KernelError),
     RngConfig(RngConfigError),
+    TensorRand(TensorRandError),
 }
 
 impl fmt::Display for PairGenerationError {
@@ -72,6 +71,7 @@ impl fmt::Display for PairGenerationError {
             ),
             Self::Kernel(error) => error.fmt(formatter),
             Self::RngConfig(error) => error.fmt(formatter),
+            Self::TensorRand(error) => error.fmt(formatter),
         }
     }
 }
@@ -81,6 +81,7 @@ impl Error for PairGenerationError {
         match self {
             Self::Kernel(error) => Some(error),
             Self::RngConfig(error) => Some(error),
+            Self::TensorRand(error) => Some(error),
             _ => None,
         }
     }
@@ -98,6 +99,12 @@ impl From<RngConfigError> for PairGenerationError {
     }
 }
 
+impl From<TensorRandError> for PairGenerationError {
+    fn from(value: TensorRandError) -> Self {
+        Self::TensorRand(value)
+    }
+}
+
 /// Reusable buffers and immutable configuration for indexed random pairs.
 #[derive(Clone)]
 pub struct RandPairGenerator {
@@ -105,7 +112,8 @@ pub struct RandPairGenerator {
     kernel: BuiltinKernel,
     kernel_type: KernelType,
     source_mode: SourceMode,
-    rng: IndexedRng,
+    random_filler: TensorRandFiller,
+    scalar_random_cache: Vec<f64>,
     generated_sweep: Option<u64>,
     source_coords_cache: VectorList<isize>,
     direction_cache: Option<VectorList<f64>>,
@@ -120,7 +128,7 @@ impl fmt::Debug for RandPairGenerator {
             .field("shape", &self.shape)
             .field("kernel_type", &self.kernel_type)
             .field("source_mode", &self.source_mode)
-            .field("rng", &self.rng.rng_config())
+            .field("rng", &self.random_filler.rng_config())
             .field("generated_sweep", &self.generated_sweep)
             .field("num_pairs", &self.num_pairs())
             .finish_non_exhaustive()
@@ -142,7 +150,13 @@ impl RandPairGenerator {
         }
         validate_kernel_rank(kernel_type, shape.len())?;
         let kernel = try_create_builtin_kernel(kernel_type)?;
-        let rng = IndexedRng::new(rng)?;
+        let random_filler = TensorRandFiller::try_new_indexed(
+            RandType::Uniform {
+                low: 0.0,
+                high: 1.0,
+            },
+            rng,
+        )?;
         let rank = shape.len();
         let direction_cache = match kernel_type {
             KernelType::NearestNeighbor { .. } => None,
@@ -156,7 +170,8 @@ impl RandPairGenerator {
             kernel,
             kernel_type,
             source_mode,
-            rng,
+            random_filler,
+            scalar_random_cache: vec![0.0; num_pairs],
             generated_sweep: None,
             source_coords_cache: VectorList::empty(rank, num_pairs),
             direction_cache,
@@ -180,21 +195,20 @@ impl RandPairGenerator {
         match self.source_mode {
             SourceMode::Origin => self.source_coords_cache.fill(0),
             SourceMode::RandomUniform => {
-                let shape = &self.shape;
-                let key = self.rng;
-                self.source_coords_cache
-                    .par_for_each_vec_mut(|pair_index, row| {
-                        for (axis, coordinate) in row.iter_mut().enumerate() {
-                            *coordinate = uniform_index(
-                                key,
-                                sweep,
-                                DOMAIN_SOURCE_COORDINATE,
-                                pair_index as u64,
-                                axis as u64,
-                                shape[axis],
-                            ) as isize;
-                        }
-                    });
+                for (axis, &extent) in self.shape.iter().enumerate() {
+                    self.random_filler
+                        .try_fill_slice_at(
+                            &mut self.scalar_random_cache,
+                            sweep,
+                            DOMAIN_SOURCE_COORDINATE ^ axis as u64,
+                        )
+                        .expect("validated indexed uniform source filler");
+                    let random = &self.scalar_random_cache;
+                    self.source_coords_cache
+                        .par_for_each_vec_mut(|pair_index, row| {
+                            row[axis] = (random[pair_index] * extent as f64).floor() as isize;
+                        });
+                }
             }
         }
     }
@@ -202,52 +216,60 @@ impl RandPairGenerator {
     fn refresh_displacements_at(&mut self, sweep: u64) {
         match self.kernel_type {
             KernelType::NearestNeighbor { .. } => {
-                let key = self.rng;
+                self.random_filler.set_kind(RandType::Uniform {
+                    low: 0.0,
+                    high: 1.0,
+                });
+                self.random_filler
+                    .try_fill_slice_at(&mut self.scalar_random_cache, sweep, DOMAIN_HAAR_COMPONENT)
+                    .expect("validated indexed uniform direction filler");
                 let kernel = &self.kernel;
+                let random = &self.scalar_random_cache;
                 self.displacement_coords_cache
                     .par_for_each_vec_mut(|pair_index, row| {
-                        let code = kernel.sample_resolved(key, sweep, pair_index as u64) as usize;
+                        let code = kernel.sample_unit(random[pair_index]) as usize;
                         decode_nearest_neighbor_code(code, row);
                     });
             }
             KernelType::PowerLaw { .. } | KernelType::Uniform { .. } => {
-                let key = self.rng;
                 let directions = self
                     .direction_cache
                     .as_mut()
                     .expect("non-nearest kernel has a direction cache");
-                directions.par_for_each_vec_mut(|pair_index, row| {
-                    let mut squared_norm = 0.0;
-                    for (axis, component) in row.iter_mut().enumerate() {
-                        let value = standard_normal(
-                            key,
-                            sweep,
-                            DOMAIN_HAAR_COMPONENT,
-                            pair_index as u64,
-                            axis as u64,
-                        );
-                        *component = value;
-                        squared_norm += value * value;
-                    }
-                    if squared_norm > 0.0 && squared_norm.is_finite() {
-                        let inverse_norm = squared_norm.sqrt().recip();
-                        for component in row {
-                            *component *= inverse_norm;
-                        }
-                    } else {
-                        row.fill(0.0);
-                        row[0] = 1.0;
-                    }
+                self.random_filler.set_kind(RandType::Normal {
+                    mean: 0.0,
+                    std: 1.0,
                 });
+                self.random_filler
+                    .try_fill_slice_at(
+                        directions.as_tensor_mut().data_mut(),
+                        sweep,
+                        DOMAIN_HAAR_COMPONENT,
+                    )
+                    .expect("validated indexed normal direction filler");
+                directions.normalize();
+
+                self.random_filler.set_kind(RandType::Uniform {
+                    low: 0.0,
+                    high: 1.0,
+                });
+                self.random_filler
+                    .try_fill_slice_at(
+                        &mut self.scalar_random_cache,
+                        sweep,
+                        super::random::DOMAIN_KERNEL_SAMPLE,
+                    )
+                    .expect("validated indexed uniform kernel filler");
 
                 let directions = self
                     .direction_cache
                     .as_ref()
                     .expect("non-nearest kernel has a direction cache");
                 let kernel = &self.kernel;
+                let random = &self.scalar_random_cache;
                 self.displacement_coords_cache
                     .par_for_each_vec_mut(|pair_index, row| {
-                        let length = kernel.sample_resolved(key, sweep, pair_index as u64);
+                        let length = kernel.sample_unit(random[pair_index]);
                         for (axis, component) in row.iter_mut().enumerate() {
                             *component = (directions.get(pair_index as isize, axis as isize)
                                 * length) as isize;
@@ -290,7 +312,7 @@ impl RandPairGenerator {
     }
 
     pub fn rng_config(&self) -> RngConfig {
-        self.rng.rng_config()
+        self.random_filler.rng_config()
     }
 
     /// Returns the sweep represented by the current buffers, if generated.

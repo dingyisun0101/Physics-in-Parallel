@@ -15,9 +15,9 @@ Supported element/distribution pairs:
     - `usize`: `UniformInt`;
     - `isize`: `UniformInt`.
 
-`new` and `try_new` are the only construction interfaces. Optional arguments
-select deterministic seeding, the RNG family, and stream count; omitted values
-use the documented defaults.
+`new` and `try_new` construct stateful fillers. `try_new_indexed` constructs an
+explicit-step filler. Optional arguments select deterministic seeding, the RNG
+family, and random-fill worker count; omitted values use documented defaults.
 */
 
 use std::num::NonZeroUsize;
@@ -32,7 +32,7 @@ use rayon::prelude::*;
 
 use crate::math::scalar::Scalar;
 use crate::math::tensor::dense::Tensor;
-use crate::rng::{RngConfig, RngConfigError, RngMethod};
+use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 
 //===================================================================
 // ---------------------------- Config ------------------------------
@@ -91,6 +91,8 @@ pub enum TensorRandError {
         low: i64,
         high: i64,
     },
+    IndexedStepRequired,
+    StatefulMethodDoesNotSupportIndexedFill,
 }
 
 impl fmt::Display for TensorRandError {
@@ -126,6 +128,14 @@ impl fmt::Display for TensorRandError {
                 formatter,
                 "integer uniform bounds [{low}, {high}] are outside scalar {scalar}"
             ),
+            Self::IndexedStepRequired => write!(
+                formatter,
+                "indexed tensor random fillers require an explicit step and domain"
+            ),
+            Self::StatefulMethodDoesNotSupportIndexedFill => write!(
+                formatter,
+                "stateful tensor random fillers do not support explicit indexed fills"
+            ),
         }
     }
 }
@@ -145,6 +155,7 @@ pub struct TensorRandFiller {
     rng: RngConfig,
     num_rngs: usize,
     rngs: Vec<TensorRng>,
+    indexed: Option<IndexedRng>,
 }
 
 impl TensorRandFiller {
@@ -189,6 +200,32 @@ impl TensorRandFiller {
         ))
     }
 
+    /// Constructs a schedule-independent filler for explicit scientific steps.
+    ///
+    /// `parallel_streams` controls only how many random-fill chunks are
+    /// submitted to Rayon. It does not configure or limit the surrounding
+    /// Rayon pool, nor any transformations performed after filling.
+    pub fn try_new_indexed(kind: RandType, rng: RngConfig) -> Result<Self, TensorRandError> {
+        let rng = rng
+            .resolve_for(
+                "TensorRandFiller",
+                RngMethod::IndexedSplitMix64,
+                &[RngMethod::IndexedSplitMix64],
+                NonZeroUsize::new(NUM_RNGS),
+            )
+            .map_err(TensorRandError::RngConfig)?;
+        Ok(Self {
+            kind,
+            rng,
+            num_rngs: rng
+                .parallel_streams()
+                .expect("indexed filler resolves parallel streams")
+                .get(),
+            rngs: Vec::new(),
+            indexed: Some(IndexedRng::from_resolved(rng)),
+        })
+    }
+
     fn from_master_rng(
         kind: RandType,
         rng: RngConfig,
@@ -205,6 +242,7 @@ impl TensorRandFiller {
             rng,
             num_rngs,
             rngs,
+            indexed: None,
         }
     }
 
@@ -249,6 +287,9 @@ impl TensorRandFiller {
         &mut self,
         tensor: &mut Tensor<T>,
     ) -> Result<(), TensorRandError> {
+        if self.indexed.is_some() {
+            return Err(TensorRandError::IndexedStepRequired);
+        }
         T::try_fill(self, tensor)
     }
 
@@ -261,7 +302,26 @@ impl TensorRandFiller {
         &mut self,
         values: &mut [T],
     ) -> Result<(), TensorRandError> {
+        if self.indexed.is_some() {
+            return Err(TensorRandError::IndexedStepRequired);
+        }
         T::try_fill_slice(self, values)
+    }
+
+    /// Fills a slice reproducibly for an explicit step and random domain.
+    ///
+    /// Results do not depend on `parallel_streams` or Rayon scheduling. The
+    /// stream count controls only the number of parallel fill chunks.
+    pub fn try_fill_slice_at<T: TensorRandElement>(
+        &self,
+        values: &mut [T],
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        let Some(key) = self.indexed else {
+            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
+        };
+        T::try_fill_slice_indexed(self, key, values, step, domain)
     }
 
     #[inline]
@@ -379,6 +439,14 @@ pub trait TensorRandElement: sealed::Sealed + Sized + Scalar {
         values: &mut [Self],
     ) -> Result<(), TensorRandError>;
 
+    fn try_fill_slice_indexed(
+        filler: &TensorRandFiller,
+        key: IndexedRng,
+        values: &mut [Self],
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError>;
+
     fn try_fill(
         filler: &mut TensorRandFiller,
         tensor: &mut Tensor<Self>,
@@ -394,6 +462,72 @@ pub trait TensorRandElement: sealed::Sealed + Sized + Scalar {
 
 // ---------------------------- f64 ---------------------------------
 impl TensorRandElement for f64 {
+    fn try_fill_slice_indexed(
+        filler: &TensorRandFiller,
+        key: IndexedRng,
+        values: &mut [f64],
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        let Some((_, chunk_len)) = filler.chunk_plan(values.len()) else {
+            return Ok(());
+        };
+        match filler.kind {
+            RandType::Uniform { low, high } => {
+                if !(low.is_finite() && high.is_finite() && low < high) {
+                    return Err(TensorRandError::InvalidUniformBounds { low, high });
+                }
+                values
+                    .par_chunks_mut(chunk_len)
+                    .enumerate()
+                    .for_each(|(chunk_index, chunk)| {
+                        let start = chunk_index * chunk_len;
+                        for (offset, value) in chunk.iter_mut().enumerate() {
+                            let unit = key.unit_f64(step, domain, (start + offset) as u64, 0, 0);
+                            *value = low + (high - low) * unit;
+                        }
+                    });
+            }
+            RandType::Normal { mean, std } => {
+                if !(std.is_finite() && std > 0.0) {
+                    return Err(TensorRandError::InvalidNormalStd { std });
+                }
+                values
+                    .par_chunks_mut(chunk_len)
+                    .enumerate()
+                    .for_each(|(chunk_index, chunk)| {
+                        let start = chunk_index * chunk_len;
+                        for (offset, value) in chunk.iter_mut().enumerate() {
+                            *value = mean
+                                + std
+                                    * key.standard_normal(step, domain, (start + offset) as u64, 0);
+                        }
+                    });
+            }
+            RandType::Bernoulli { p } => {
+                if !(p.is_finite() && (0.0..=1.0).contains(&p)) {
+                    return Err(TensorRandError::InvalidBernoulliProbability { p });
+                }
+                values
+                    .par_chunks_mut(chunk_len)
+                    .enumerate()
+                    .for_each(|(chunk_index, chunk)| {
+                        let start = chunk_index * chunk_len;
+                        for (offset, value) in chunk.iter_mut().enumerate() {
+                            *value =
+                                if key.unit_f64(step, domain, (start + offset) as u64, 0, 0) < p {
+                                    1.0
+                                } else {
+                                    0.0
+                                };
+                        }
+                    });
+            }
+            kind => return Err(unsupported::<f64>(kind)),
+        }
+        Ok(())
+    }
+
     fn try_fill_slice(
         filler: &mut TensorRandFiller,
         values: &mut [f64],
@@ -442,6 +576,19 @@ impl TensorRandElement for f64 {
 
 // ---------------------------- i64 ---------------------------------
 impl TensorRandElement for i64 {
+    fn try_fill_slice_indexed(
+        _filler: &TensorRandFiller,
+        _key: IndexedRng,
+        _values: &mut [i64],
+        _step: u64,
+        _domain: u64,
+    ) -> Result<(), TensorRandError> {
+        Err(TensorRandError::UnsupportedDistribution {
+            scalar: "i64",
+            distribution: "indexed",
+        })
+    }
+
     fn try_fill_slice(
         filler: &mut TensorRandFiller,
         values: &mut [i64],
@@ -479,6 +626,19 @@ impl TensorRandElement for i64 {
 
 // ---------------------------- usize -------------------------------
 impl TensorRandElement for usize {
+    fn try_fill_slice_indexed(
+        _filler: &TensorRandFiller,
+        _key: IndexedRng,
+        _values: &mut [usize],
+        _step: u64,
+        _domain: u64,
+    ) -> Result<(), TensorRandError> {
+        Err(TensorRandError::UnsupportedDistribution {
+            scalar: "usize",
+            distribution: "indexed",
+        })
+    }
+
     fn try_fill_slice(
         filler: &mut TensorRandFiller,
         values: &mut [usize],
@@ -516,6 +676,19 @@ impl TensorRandElement for usize {
 
 // ---------------------------- isize -------------------------------
 impl TensorRandElement for isize {
+    fn try_fill_slice_indexed(
+        _filler: &TensorRandFiller,
+        _key: IndexedRng,
+        _values: &mut [isize],
+        _step: u64,
+        _domain: u64,
+    ) -> Result<(), TensorRandError> {
+        Err(TensorRandError::UnsupportedDistribution {
+            scalar: "isize",
+            distribution: "indexed",
+        })
+    }
+
     fn try_fill_slice(
         filler: &mut TensorRandFiller,
         values: &mut [isize],

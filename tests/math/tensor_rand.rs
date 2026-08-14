@@ -145,6 +145,33 @@ fn fallible_constructor_rejects_incompatible_rng_method() {
 }
 
 #[test]
+fn indexed_filler_accepts_parallel_streams_and_replays_explicit_steps() {
+    let config = RngConfig::new(
+        Some(91),
+        Some(RngMethod::IndexedSplitMix64),
+        std::num::NonZeroUsize::new(2),
+    );
+    let filler = TensorRandFiller::try_new_indexed(
+        RandType::Normal {
+            mean: 0.0,
+            std: 1.0,
+        },
+        config,
+    )
+    .unwrap();
+    assert_eq!(
+        filler.rng_config().parallel_streams(),
+        std::num::NonZeroUsize::new(2)
+    );
+
+    let mut first = vec![0.0; 257];
+    let mut replay = vec![0.0; 257];
+    filler.try_fill_slice_at(&mut first, 7, 11).unwrap();
+    filler.try_fill_slice_at(&mut replay, 7, 11).unwrap();
+    assert_eq!(first, replay);
+}
+
+#[test]
 fn try_refresh_reports_invalid_distribution_parameters() {
     let mut floats = dense::Tensor::<f64>::empty(&[4]);
 

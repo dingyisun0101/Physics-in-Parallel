@@ -1,6 +1,6 @@
 [package]
 name = "physics_in_parallel"
-version = "3.2.2"
+version = "3.3.0"
 edition = "2024"
 description = "High-performance infrastructure for numerical simulations in physics"
 license = "MIT"

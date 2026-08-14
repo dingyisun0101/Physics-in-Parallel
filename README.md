@@ -177,9 +177,12 @@ let rng = RngConfig::new(
 ```
 
 Stateful tensor sampling supports `SmallRng`, PCG, and ChaCha methods plus an
-optional parallel stream count. Indexed lattice algorithms use
-`IndexedSplitMix64`, are independent of worker scheduling, and do not accept a
-stream count. `RngConfig::default()` lets each component select all defaults.
+optional parallel stream count. Explicit-step tensor filling and lattice pair
+generation use `IndexedSplitMix64`; their output is independent of worker
+scheduling and parallel stream count. For `TensorRandFiller`,
+`parallel_streams` controls only the number of parallel random-fill chunks
+submitted to Rayon. It does not configure a Rayon pool or limit later
+transformations. `RngConfig::default()` lets each component select all defaults.
 
 Construction resolves all missing values. Long-lived stochastic objects expose
 the resulting `rng_config()`; one-shot sampling functions return it. Use
