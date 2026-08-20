@@ -217,7 +217,7 @@ fn try_refresh_reports_invalid_distribution_parameters() {
     let mut normal = TensorRandFiller::new(
         RandType::Normal {
             mean: 0.0,
-            std: 0.0,
+            std: -1.0,
         },
         rng(1, None),
     );
@@ -225,6 +225,16 @@ fn try_refresh_reports_invalid_distribution_parameters() {
         normal.try_refresh(&mut floats),
         Err(TensorRandError::InvalidNormalStd { .. })
     ));
+
+    let mut degenerate_normal = TensorRandFiller::new(
+        RandType::Normal {
+            mean: 2.5,
+            std: 0.0,
+        },
+        rng(1, None),
+    );
+    degenerate_normal.try_refresh(&mut floats).unwrap();
+    assert!(values(&floats).iter().all(|&value| value == 2.5));
 
     let mut bernoulli = TensorRandFiller::new(RandType::Bernoulli { p: 2.0 }, rng(1, None));
     assert!(matches!(

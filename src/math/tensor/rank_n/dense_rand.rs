@@ -119,7 +119,7 @@ impl fmt::Display for TensorRandError {
             Self::InvalidNormalStd { std } => {
                 write!(
                     formatter,
-                    "normal standard deviation must be finite and positive; got {std}"
+                    "normal standard deviation must be finite and nonnegative; got {std}"
                 )
             }
             Self::InvalidBernoulliProbability { p } => write!(
@@ -550,8 +550,12 @@ impl TensorRandElement for f64 {
                     });
             }
             RandType::Normal { mean, std } => {
-                if !(std.is_finite() && std > 0.0) {
+                if !(std.is_finite() && std >= 0.0) {
                     return Err(TensorRandError::InvalidNormalStd { std });
+                }
+                if std == 0.0 {
+                    values.par_iter_mut().for_each(|value| *value = mean);
+                    return Ok(());
                 }
                 values
                     .par_chunks_mut(chunk_len)
@@ -621,8 +625,12 @@ impl TensorRandElement for f64 {
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
             }
             RandType::Normal { mean, std } => {
-                if !(std.is_finite() && std > 0.0) {
+                if !(std.is_finite() && std >= 0.0) {
                     return Err(TensorRandError::InvalidNormalStd { std });
+                }
+                if std == 0.0 {
+                    values.par_iter_mut().for_each(|value| *value = mean);
+                    return Ok(());
                 }
                 let dist = Normal::new(mean, std)
                     .map_err(|_| TensorRandError::InvalidNormalStd { std })?;
