@@ -35,6 +35,7 @@ use rayon::slice::ParallelSliceMut;
 use std::ops::{Add, BitAnd, Div, Mul, Sub};
 
 use super::dense::{Tensor as TensorDense, checked_num_elements};
+use super::layout::{RowMajorLayout, flat_index_wrapped};
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
 
@@ -117,28 +118,6 @@ impl<T: Scalar> Tensor<T> {
 }
 
 // ===================================================================
-// ---------------------- Index Wrapping (toroidal) ------------------
-// ===================================================================
-
-/// Euclidean modulo for axis indices (supports negatives).
-#[inline(always)]
-/// Details:
-/// - Purpose: Converts any signed coordinate on one axis into the valid
-///   periodic index range `[0, dim)`, matching dense tensor wrapping.
-/// - Parameters:
-///   - `idx` (`isize`): Caller-provided coordinate, possibly negative or
-///     larger than the axis length.
-///   - `dim` (`usize`): Positive axis length used as the wrapping period.
-fn wrap_axis_index(idx: isize, dim: usize) -> usize {
-    debug_assert!(dim > 0);
-    let d = dim as isize;
-    let mut m = idx % d;
-    if m < 0 {
-        m += d;
-    }
-    m as usize
-}
-
 // ===================================================================
 // ----------------------------- Basics ------------------------------
 // ===================================================================
@@ -160,15 +139,7 @@ impl<T: Scalar> Tensor<T> {
     ///   - `idx` (`&[isize]`): One signed coordinate per tensor axis; the
     ///     slice length must match the tensor rank.
     pub fn index(&self, idx: &[isize]) -> usize {
-        assert_eq!(idx.len(), self.shape.len(), "Index rank mismatch");
-        let mut flat = 0usize;
-        let mut stride = 1usize;
-        for (&dim, &a_raw) in self.shape.iter().rev().zip(idx.iter().rev()) {
-            let a = wrap_axis_index(a_raw, dim);
-            flat += a * stride;
-            stride *= dim;
-        }
-        flat
+        flat_index_wrapped(&self.shape, idx).expect("Index rank mismatch")
     }
 
     /// Get `Option<&T>` at multi-index (`None` if implicit zero).
@@ -572,10 +543,11 @@ impl<T: Scalar> Tensor<T> {
         entries.par_sort_unstable_by_key(|&(k, _)| k);
 
         let shown = entries.len().min(32);
+        let layout = RowMajorLayout::new(&self.shape);
         for (k, value) in entries.iter().take(shown) {
             println!(
                 "  [{:?}] flat={} value={}",
-                self.unravel_index(*k),
+                layout.coordinate(*k).expect("stored flat index is valid"),
                 k,
                 value
             );
@@ -584,17 +556,6 @@ impl<T: Scalar> Tensor<T> {
         if entries.len() > shown {
             println!("  ... {} more stored entries", entries.len() - shown);
         }
-    }
-
-    fn unravel_index(&self, flat: usize) -> Vec<usize> {
-        let mut rem = flat;
-        let mut idx = vec![0usize; self.shape.len()];
-        for axis in (0..self.shape.len()).rev() {
-            let dim = self.shape[axis];
-            idx[axis] = rem % dim;
-            rem /= dim;
-        }
-        idx
     }
 }
 

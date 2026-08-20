@@ -13,9 +13,9 @@ pub use crate::math::NdarrayConvert;
 
 // Generic tensor front API
 pub use crate::math::tensor::{
-    Backend, Dense as DenseBackend, RandType, Sparse as SparseBackend, Tensor, TensorError,
-    TensorRandError, TensorRandFiller, TensorResult, TensorTrait, dense, dense_rand, sparse,
-    tensor_trait,
+    Backend, Dense as DenseBackend, RandType, RowMajorLayout, Sparse as SparseBackend, Tensor,
+    TensorError, TensorRandError, TensorRandFiller, TensorResult, TensorTrait, dense, dense_rand,
+    layout, sparse, tensor_trait,
 };
 pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 

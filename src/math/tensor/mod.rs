@@ -10,6 +10,6 @@ pub use rank_2::{
 pub use rank_n::dense_rand::{RandType, TensorRandError, TensorRandFiller};
 pub use rank_n::tensor_trait::TensorTrait;
 pub use rank_n::{
-    Backend, Dense, Sparse, Tensor, TensorError, TensorResult, dense, dense_rand, errors, sparse,
-    tensor_trait,
+    Backend, Dense, RowMajorLayout, Sparse, Tensor, TensorError, TensorResult, dense, dense_rand,
+    errors, flat_index_wrapped, layout, sparse, tensor_trait,
 };

@@ -13,6 +13,8 @@ Changing its mapping is a scientific format change and requires updating
 pub(crate) use crate::rng::IndexedRng;
 
 pub(crate) const DOMAIN_SOURCE_COORDINATE: u64 = 0x20dd_7f45_5d92_4a31;
+pub(crate) const DOMAIN_INDEPENDENT_SOURCE_SITE: u64 = 0x5fc7_f80b_2257_ae21;
+pub(crate) const DOMAIN_INDEPENDENT_TARGET_SITE: u64 = 0xe895_319d_634c_c4d3;
 pub(crate) const DOMAIN_HAAR_COMPONENT: u64 = 0x64a4_a4fe_1a89_827d;
 pub(crate) const DOMAIN_KERNEL_SAMPLE: u64 = 0xbeb3_9487_4b9c_a7f5;
 
@@ -61,13 +63,13 @@ mod tests {
 
     #[test]
     fn complete_random_coordinate_changes_the_word() {
-        let key = IndexedRng::new(RngConfig::new(Some(17), None, None)).unwrap();
+        let key = IndexedRng::new(RngConfig::new(Some(17), None)).unwrap();
         let base = indexed_word(key, 2, 3, 4, 5, 6);
         assert_eq!(base, 0x995b_eef1_54ed_1885);
         assert_ne!(
             base,
             indexed_word(
-                IndexedRng::new(RngConfig::new(Some(18), None, None)).unwrap(),
+                IndexedRng::new(RngConfig::new(Some(18), None)).unwrap(),
                 2,
                 3,
                 4,
@@ -84,7 +86,7 @@ mod tests {
 
     #[test]
     fn public_identity_is_stable() {
-        let key = IndexedRng::new(RngConfig::new(Some(12_345), None, None)).unwrap();
+        let key = IndexedRng::new(RngConfig::new(Some(12_345), None)).unwrap();
         let config = key.rng_config();
         assert_eq!(config.encode_seed().as_deref(), Some("12345"));
         assert_eq!(config.method().unwrap().name(), "splitmix64_indexed");

@@ -29,7 +29,9 @@ use std::{error::Error, fmt};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::math::prelude::{DenseBackend, Scalar, ScalarSerde, Tensor};
+use crate::math::prelude::{
+    DenseBackend, RowMajorLayout, Scalar, ScalarSerde, Tensor, TensorError,
+};
 use crate::space::space_trait::Space;
 
 use super::random::IndexedRng;
@@ -64,9 +66,7 @@ pub struct SquareLatticeConfig {
     boundary: BoundaryCondition,
     spacing: Vec<f64>,
     #[serde(skip)]
-    strides: Vec<usize>,
-    #[serde(skip)]
-    num_sites: usize,
+    layout: RowMajorLayout,
 }
 
 impl SquareLatticeConfig {
@@ -79,17 +79,23 @@ impl SquareLatticeConfig {
         if shape.is_empty() {
             return Err(SquareLatticeConfigError::EmptyShape);
         }
-        let mut sites = 1usize;
-        for (axis, &length) in shape.iter().enumerate() {
-            if length == 0 {
-                return Err(SquareLatticeConfigError::ZeroAxis { axis });
+        let layout = RowMajorLayout::try_new(shape).map_err(|error| match error {
+            TensorError::InvalidShape { .. } if shape.is_empty() => {
+                SquareLatticeConfigError::EmptyShape
             }
-            sites = sites.checked_mul(length).ok_or_else(|| {
+            TensorError::InvalidShape { .. } => SquareLatticeConfigError::ZeroAxis {
+                axis: shape
+                    .iter()
+                    .position(|extent| *extent == 0)
+                    .expect("invalid nonempty shape has a zero axis"),
+            },
+            TensorError::ShapeProductOverflow { .. } => {
                 SquareLatticeConfigError::SiteCountOverflow {
                     shape: shape.to_vec(),
                 }
-            })?;
-        }
+            }
+            _ => unreachable!("row-major layout construction reports only shape errors"),
+        })?;
         let spacing = match spacing {
             Some(spacing) if spacing.len() != shape.len() => {
                 return Err(SquareLatticeConfigError::SpacingRank {
@@ -105,16 +111,11 @@ impl SquareLatticeConfig {
                 return Err(SquareLatticeConfigError::InvalidSpacing { axis });
             }
         }
-        let mut strides = vec![1; shape.len()];
-        for axis in (0..shape.len().saturating_sub(1)).rev() {
-            strides[axis] = strides[axis + 1] * shape[axis + 1];
-        }
         Ok(Self {
             shape: shape.to_vec(),
             boundary,
             spacing,
-            strides,
-            num_sites: sites,
+            layout,
         })
     }
 
@@ -150,7 +151,7 @@ impl SquareLatticeConfig {
 
     #[inline]
     pub fn num_sites(&self) -> usize {
-        self.num_sites
+        self.layout.size()
     }
 
     #[inline]
@@ -172,30 +173,30 @@ impl SquareLatticeConfig {
     /// Returns cached row-major strides.
     #[inline]
     pub fn strides(&self) -> &[usize] {
-        &self.strides
+        self.layout.strides()
     }
 
     /// Converts a valid flat row-major site into its coordinate.
     pub fn coordinate(&self, flat: usize) -> Option<Vec<usize>> {
-        (flat < self.num_sites).then(|| {
-            self.strides
-                .iter()
-                .zip(&self.shape)
-                .map(|(&stride, &length)| (flat / stride) % length)
+        self.layout.coordinate(flat).map(|coordinate| {
+            coordinate
+                .into_iter()
+                .map(|component| component as usize)
                 .collect()
         })
     }
 
     /// Resolves one axis neighbor under the configured boundary.
     pub fn neighbor(&self, flat: usize, axis: usize, offset: isize) -> Option<usize> {
-        if flat >= self.num_sites || axis >= self.rank() {
+        if flat >= self.num_sites() || axis >= self.rank() {
             return None;
         }
-        let coordinate = (flat / self.strides[axis]) % self.shape[axis];
+        let stride = self.layout.strides()[axis];
+        let coordinate = (flat / stride) % self.shape[axis];
         let normalized = self
             .boundary
             .normalize(coordinate as isize + offset, self.shape[axis]);
-        Some(flat - coordinate * self.strides[axis] + normalized * self.strides[axis])
+        Some(flat - coordinate * stride + normalized * stride)
     }
 
     /// Applies the scalar-grid Laplacian independently to interleaved components.
@@ -206,7 +207,7 @@ impl SquareLatticeConfig {
         output: &mut [f64],
     ) -> Result<(), SquareLatticeConfigError> {
         let expected = self
-            .num_sites
+            .num_sites()
             .checked_mul(components)
             .ok_or(SquareLatticeConfigError::ValueCountOverflow)?;
         if components == 0 || input.len() != expected || output.len() != expected {
@@ -216,7 +217,7 @@ impl SquareLatticeConfig {
                 output: output.len(),
             });
         }
-        for flat in 0..self.num_sites {
+        for flat in 0..self.num_sites() {
             for component in 0..components {
                 let center_index = flat * components + component;
                 let center = input[center_index];

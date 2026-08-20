@@ -9,7 +9,7 @@ use physics_in_parallel::models::particles::thermostat::{
 use physics_in_parallel::rng::RngConfig;
 
 fn rng(seed: u64) -> RngConfig {
-    RngConfig::new(Some(seed), None, None)
+    RngConfig::new(Some(seed), None)
 }
 
 #[test]

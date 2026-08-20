@@ -43,6 +43,7 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use rayon::prelude::*;
 
 use super::errors;
+use super::layout::flat_index_wrapped;
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
@@ -122,30 +123,6 @@ impl<T: Scalar> Tensor<T> {
     }
 }
 
-//===================================================================
-// ------------------------ Index Wrapping --------------------------
-//===================================================================
-
-/// Euclidean modulo for axis indices (supports negatives).
-#[inline(always)]
-/// Details:
-/// - Purpose: Converts any signed coordinate on one axis into the valid
-///   periodic index range `[0, dim)`, so `-1` selects the last element and
-///   `dim` wraps to zero.
-/// - Parameters:
-///   - `idx` (`isize`): Caller-provided coordinate, possibly negative or
-///     larger than the axis length.
-///   - `dim` (`usize`): Positive axis length used as the wrapping period.
-fn wrap_axis_index(idx: isize, dim: usize) -> usize {
-    debug_assert!(dim > 0);
-    let d = dim as isize;
-    let mut m = idx % d;
-    if m < 0 {
-        m += d;
-    }
-    m as usize
-}
-
 pub(crate) fn checked_num_elements(shape: &[usize], context: &str) -> usize {
     errors::checked_num_elements(shape).unwrap_or_else(|error| panic!("{context}: {error}"))
 }
@@ -220,19 +197,7 @@ where
     ///   - `indices` (`&[isize]`): One signed coordinate per tensor axis; the
     ///     slice length must match the tensor rank.
     fn index(&self, indices: &[isize]) -> usize {
-        assert_eq!(indices.len(), self.shape.len(), "Index rank mismatch");
-
-        // Compute flat index by accumulating a * stride.
-        // We iterate from the last axis to the first to build the stride.
-        let mut flat = 0usize;
-        let mut stride = 1usize;
-
-        for (&dim, &raw_a) in self.shape.iter().rev().zip(indices.iter().rev()) {
-            let a = wrap_axis_index(raw_a, dim);
-            flat += a * stride;
-            stride *= dim;
-        }
-        flat
+        flat_index_wrapped(&self.shape, indices).expect("Index rank mismatch")
     }
 
     /// Get by (wrapped) multi-index. Returns a copy of T (Scalar assumed Copy).

@@ -8,12 +8,14 @@ fn space_prelude_compiles_for_common_types() {
     g.set(&[1], 0);
     assert_eq!(*g.get(&[1]), 0);
 
-    let mut rpg = RandPairGenerator::new(
+    let mut rpg = PairGenerator::new(
         &[4],
-        KernelType::NearestNeighbor { d: 1 },
-        8,
-        SourceMode::Origin,
-        RngConfig::new(Some(7), None, None),
+        PairGeneratorConfig::kernel(
+            KernelType::NearestNeighbor { d: 1 },
+            8,
+            SourceMode::Origin,
+            RngConfig::new(Some(7), None),
+        ),
     )
     .expect("valid pair generator");
     rpg.refresh_at(0);

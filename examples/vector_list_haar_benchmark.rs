@@ -1,5 +1,4 @@
 use std::hint::black_box;
-use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use physics_in_parallel::math::tensor::rank_2::vector_list::{
@@ -19,7 +18,6 @@ fn main() {
     let dim = parse_arg(1).unwrap_or(DEFAULT_DIM);
     let num_vecs = parse_arg(2).unwrap_or(DEFAULT_NUM_VECS);
     let repeats = parse_arg(3).unwrap_or(DEFAULT_REPEATS);
-    let rngs = parse_arg(4).unwrap_or_else(rayon::current_num_threads);
 
     println!("vector-list Haar generation benchmark");
     println!("dim: {dim}");
@@ -31,10 +29,9 @@ fn main() {
     );
     println!("repeats: {repeats}");
     println!("rayon threads available: {}", rayon::current_num_threads());
-    println!("vector-list RNG shards: {rngs}");
     println!();
 
-    let vector_list = benchmark_vector_list_haar(dim, num_vecs, repeats, rngs);
+    let vector_list = benchmark_vector_list_haar(dim, num_vecs, repeats);
     let sequential = benchmark_sequential_haar(dim, num_vecs, repeats);
 
     println!(
@@ -73,13 +70,9 @@ struct Timing {
     sum: Vec<f64>,
 }
 
-fn benchmark_vector_list_haar(dim: usize, num_vecs: usize, repeats: usize, rngs: usize) -> Timing {
-    let mut generator = HaarVectors::new(
-        dim,
-        num_vecs,
-        RngConfig::new(None, None, NonZeroUsize::new(rngs)),
-    )
-    .expect("valid RNG configuration");
+fn benchmark_vector_list_haar(dim: usize, num_vecs: usize, repeats: usize) -> Timing {
+    let mut generator = HaarVectors::new(dim, num_vecs, RngConfig::new(None, None))
+        .expect("valid RNG configuration");
     generator.refresh();
 
     let timings = (0..repeats)

@@ -8,6 +8,7 @@ use num_traits::Zero;
 use rayon::prelude::*;
 
 use super::errors;
+use super::layout::RowMajorLayout;
 use super::tensor_trait::TensorTrait;
 
 /// Dense logical size implied by a shape.
@@ -195,10 +196,11 @@ where
     Rhs: TensorTrait<T>,
 {
     assert_same_shape::<T, _, _>(lhs, rhs);
+    let layout = RowMajorLayout::new(lhs.shape());
     (0..lhs.size())
         .into_par_iter()
         .map(|k| {
-            let idx = flat_to_index(lhs.shape(), k);
+            let idx = layout.coordinate(k).expect("flat index is within tensor");
             lhs.get(&idx) * rhs.get(&idx)
         })
         .reduce(|| T::zero(), |a, b| a + b)
@@ -212,10 +214,11 @@ where
     Rhs: TensorTrait<T>,
 {
     assert_same_shape::<T, _, _>(lhs, rhs);
+    let layout = RowMajorLayout::new(lhs.shape());
     (0..lhs.size())
         .into_par_iter()
         .map(|k| {
-            let idx = flat_to_index(lhs.shape(), k);
+            let idx = layout.coordinate(k).expect("flat index is within tensor");
             lhs.get(&idx).conj() * rhs.get(&idx)
         })
         .reduce(|| T::zero(), |a, b| a + b)
@@ -228,10 +231,11 @@ where
     T::Real: Send + Sync,
     A: TensorTrait<T>,
 {
+    let layout = RowMajorLayout::new(tensor.shape());
     (0..tensor.size())
         .into_par_iter()
         .map(|k| {
-            let idx = flat_to_index(tensor.shape(), k);
+            let idx = layout.coordinate(k).expect("flat index is within tensor");
             tensor.get(&idx).norm_sqr_real()
         })
         .reduce(T::Real::zero, |a, b| a + b)
@@ -345,16 +349,6 @@ where
         out.set(&[idx.0, idx.1], value);
     }
     out
-}
-
-fn flat_to_index(shape: &[usize], mut flat: usize) -> Vec<isize> {
-    let mut idx = vec![0isize; shape.len()];
-    for axis in (0..shape.len()).rev() {
-        let dim = shape[axis];
-        idx[axis] = (flat % dim) as isize;
-        flat /= dim;
-    }
-    idx
 }
 
 fn assert_vector<T, A>(tensor: &A, op: &str)

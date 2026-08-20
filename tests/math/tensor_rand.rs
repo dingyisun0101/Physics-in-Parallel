@@ -1,12 +1,10 @@
-use std::num::NonZeroUsize;
-
 use physics_in_parallel::math::tensor::{
     RandType, TensorRandError, TensorRandFiller, TensorTrait, dense,
 };
 use physics_in_parallel::rng::{RngConfig, RngConfigError, RngMethod};
 
-fn rng(seed: u64, method: Option<RngMethod>, streams: usize) -> RngConfig {
-    RngConfig::new(Some(seed), method, NonZeroUsize::new(streams))
+fn rng(seed: u64, method: Option<RngMethod>) -> RngConfig {
+    RngConfig::new(Some(seed), method)
 }
 
 fn values<T>(tensor: &dense::Tensor<T>) -> Vec<T>
@@ -26,8 +24,8 @@ fn seeded_filler_is_deterministic_across_refresh_sequences() {
     };
     let mut a = dense::Tensor::<f64>::empty(&[32]);
     let mut b = dense::Tensor::<f64>::empty(&[32]);
-    let mut filler_a = TensorRandFiller::new(kind, rng(12345, None, 4));
-    let mut filler_b = TensorRandFiller::new(kind, rng(12345, None, 4));
+    let mut filler_a = TensorRandFiller::new(kind, rng(12345, None));
+    let mut filler_b = TensorRandFiller::new(kind, rng(12345, None));
 
     filler_a.refresh(&mut a);
     filler_b.refresh(&mut b);
@@ -46,8 +44,8 @@ fn contiguous_slice_fill_matches_tensor_refresh() {
     };
     let mut tensor = dense::Tensor::<f64>::empty(&[32]);
     let mut slice = vec![0.0; 32];
-    let mut tensor_filler = TensorRandFiller::new(kind, rng(91, None, 4));
-    let mut slice_filler = TensorRandFiller::new(kind, rng(91, None, 4));
+    let mut tensor_filler = TensorRandFiller::new(kind, rng(91, None));
+    let mut slice_filler = TensorRandFiller::new(kind, rng(91, None));
 
     tensor_filler.try_refresh(&mut tensor).unwrap();
     slice_filler.try_fill_slice(&mut slice).unwrap();
@@ -63,8 +61,8 @@ fn rng_kind_none_defaults_to_small_rng() {
     };
     let mut default_tensor = dense::Tensor::<f64>::empty(&[32]);
     let mut explicit_tensor = dense::Tensor::<f64>::empty(&[32]);
-    let mut default_filler = TensorRandFiller::new(kind, rng(12345, None, 4));
-    let mut explicit_filler = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::SmallRng), 4));
+    let mut default_filler = TensorRandFiller::new(kind, rng(12345, None));
+    let mut explicit_filler = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::SmallRng)));
 
     default_filler.refresh(&mut default_tensor);
     explicit_filler.refresh(&mut explicit_tensor);
@@ -88,8 +86,8 @@ fn selected_rng_kind_is_recorded_and_deterministic() {
     };
     let mut a = dense::Tensor::<f64>::empty(&[32]);
     let mut b = dense::Tensor::<f64>::empty(&[32]);
-    let mut filler_a = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::Pcg64Mcg), 4));
-    let mut filler_b = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::Pcg64Mcg), 4));
+    let mut filler_a = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::Pcg64Mcg)));
+    let mut filler_b = TensorRandFiller::new(kind, rng(12345, Some(RngMethod::Pcg64Mcg)));
 
     filler_a.refresh(&mut a);
     filler_b.refresh(&mut b);
@@ -106,14 +104,14 @@ fn uniform_float_and_integer_ranges_are_respected() {
             low: 2.0,
             high: 3.0,
         },
-        rng(7, None, 8),
+        rng(7, None),
     );
     float_filler.refresh(&mut floats);
     assert!(values(&floats).iter().all(|&x| (2.0..3.0).contains(&x)));
 
     let mut ints = dense::Tensor::<i64>::empty(&[128]);
     let mut int_filler =
-        TensorRandFiller::new(RandType::UniformInt { low: -2, high: 2 }, rng(7, None, 8));
+        TensorRandFiller::new(RandType::UniformInt { low: -2, high: 2 }, rng(7, None));
     int_filler.refresh(&mut ints);
     assert!(values(&ints).iter().all(|&x| (-2..=2).contains(&x)));
 }
@@ -121,12 +119,12 @@ fn uniform_float_and_integer_ranges_are_respected() {
 #[test]
 fn bernoulli_outputs_are_binary_for_float_and_integer_tensors() {
     let mut floats = dense::Tensor::<f64>::empty(&[128]);
-    let mut float_filler = TensorRandFiller::new(RandType::Bernoulli { p: 0.25 }, rng(11, None, 4));
+    let mut float_filler = TensorRandFiller::new(RandType::Bernoulli { p: 0.25 }, rng(11, None));
     float_filler.refresh(&mut floats);
     assert!(values(&floats).iter().all(|&x| x == 0.0 || x == 1.0));
 
     let mut ints = dense::Tensor::<i64>::empty(&[128]);
-    let mut int_filler = TensorRandFiller::new(RandType::Bernoulli { p: 0.25 }, rng(11, None, 4));
+    let mut int_filler = TensorRandFiller::new(RandType::Bernoulli { p: 0.25 }, rng(11, None));
     int_filler.refresh(&mut ints);
     assert!(values(&ints).iter().all(|&x| x == 0 || x == 1));
 }
@@ -135,7 +133,7 @@ fn bernoulli_outputs_are_binary_for_float_and_integer_tensors() {
 fn fallible_constructor_rejects_incompatible_rng_method() {
     let err = TensorRandFiller::try_new(
         RandType::Bernoulli { p: 0.5 },
-        RngConfig::new(Some(1), Some(RngMethod::IndexedSplitMix64), None),
+        RngConfig::new(Some(1), Some(RngMethod::IndexedSplitMix64)),
     )
     .unwrap_err();
     assert!(matches!(
@@ -145,12 +143,8 @@ fn fallible_constructor_rejects_incompatible_rng_method() {
 }
 
 #[test]
-fn indexed_filler_accepts_parallel_streams_and_replays_explicit_steps() {
-    let config = RngConfig::new(
-        Some(91),
-        Some(RngMethod::IndexedSplitMix64),
-        std::num::NonZeroUsize::new(2),
-    );
+fn indexed_filler_replays_explicit_steps() {
+    let config = RngConfig::new(Some(91), Some(RngMethod::IndexedSplitMix64));
     let filler = TensorRandFiller::try_new_indexed(
         RandType::Normal {
             mean: 0.0,
@@ -159,16 +153,49 @@ fn indexed_filler_accepts_parallel_streams_and_replays_explicit_steps() {
         config,
     )
     .unwrap();
-    assert_eq!(
-        filler.rng_config().parallel_streams(),
-        std::num::NonZeroUsize::new(2)
-    );
-
     let mut first = vec![0.0; 257];
     let mut replay = vec![0.0; 257];
     filler.try_fill_slice_at(&mut first, 7, 11).unwrap();
     filler.try_fill_slice_at(&mut replay, 7, 11).unwrap();
     assert_eq!(first, replay);
+}
+
+#[test]
+fn indexed_site_fill_is_exact_and_bounded() {
+    fn fill() -> Vec<usize> {
+        let filler = TensorRandFiller::try_new_indexed(
+            RandType::Uniform {
+                low: 0.0,
+                high: 1.0,
+            },
+            rng(91, Some(RngMethod::IndexedSplitMix64)),
+        )
+        .unwrap();
+        let mut sites = vec![0; 1_024];
+        filler
+            .try_fill_indices_at(&mut sites, 17, 7, 0xfeed)
+            .unwrap();
+        sites
+    }
+
+    let sites = fill();
+    assert!(sites.iter().all(|site| *site < 17));
+}
+
+#[test]
+fn indexed_site_fill_rejects_an_empty_range() {
+    let filler = TensorRandFiller::try_new_indexed(
+        RandType::Uniform {
+            low: 0.0,
+            high: 1.0,
+        },
+        rng(91, Some(RngMethod::IndexedSplitMix64)),
+    )
+    .unwrap();
+    assert_eq!(
+        filler.try_fill_indices_at(&mut [0; 1], 0, 0, 0),
+        Err(TensorRandError::InvalidIndexUpperBound)
+    );
 }
 
 #[test]
@@ -180,7 +207,7 @@ fn try_refresh_reports_invalid_distribution_parameters() {
             low: 3.0,
             high: 2.0,
         },
-        rng(1, None, 2),
+        rng(1, None),
     );
     assert!(matches!(
         uniform.try_refresh(&mut floats),
@@ -192,14 +219,14 @@ fn try_refresh_reports_invalid_distribution_parameters() {
             mean: 0.0,
             std: 0.0,
         },
-        rng(1, None, 2),
+        rng(1, None),
     );
     assert!(matches!(
         normal.try_refresh(&mut floats),
         Err(TensorRandError::InvalidNormalStd { .. })
     ));
 
-    let mut bernoulli = TensorRandFiller::new(RandType::Bernoulli { p: 2.0 }, rng(1, None, 2));
+    let mut bernoulli = TensorRandFiller::new(RandType::Bernoulli { p: 2.0 }, rng(1, None));
     assert!(matches!(
         bernoulli.try_refresh(&mut floats),
         Err(TensorRandError::InvalidBernoulliProbability { .. })
@@ -209,8 +236,7 @@ fn try_refresh_reports_invalid_distribution_parameters() {
 #[test]
 fn try_refresh_reports_unsupported_distribution_for_scalar_type() {
     let mut floats = dense::Tensor::<f64>::empty(&[4]);
-    let mut filler =
-        TensorRandFiller::new(RandType::UniformInt { low: 0, high: 1 }, rng(1, None, 2));
+    let mut filler = TensorRandFiller::new(RandType::UniformInt { low: 0, high: 1 }, rng(1, None));
 
     assert!(matches!(
         filler.try_refresh(&mut floats),
@@ -221,8 +247,7 @@ fn try_refresh_reports_unsupported_distribution_for_scalar_type() {
 #[test]
 fn try_refresh_reports_integer_bounds_out_of_range() {
     let mut unsigned = dense::Tensor::<usize>::empty(&[4]);
-    let mut filler =
-        TensorRandFiller::new(RandType::UniformInt { low: -1, high: 1 }, rng(1, None, 2));
+    let mut filler = TensorRandFiller::new(RandType::UniformInt { low: -1, high: 1 }, rng(1, None));
 
     assert!(matches!(
         filler.try_refresh(&mut unsigned),

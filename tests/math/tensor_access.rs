@@ -1,4 +1,21 @@
-use physics_in_parallel::math::tensor::{Dense, Sparse, Tensor};
+use physics_in_parallel::math::tensor::{Dense, RowMajorLayout, Sparse, Tensor};
+
+#[test]
+fn row_major_layout_round_trips_flat_and_wrapped_coordinates() {
+    let layout = RowMajorLayout::try_new(&[2, 3, 5]).unwrap();
+    assert_eq!(layout.size(), 30);
+    assert_eq!(layout.strides(), [15, 5, 1]);
+
+    let mut coordinate = [0; 3];
+    for flat in 0..layout.size() {
+        layout.coordinate_into(flat, &mut coordinate);
+        assert_eq!(layout.index_wrapped(&coordinate), flat);
+        assert_eq!(layout.coordinate(flat).unwrap(), coordinate);
+    }
+    assert_eq!(layout.index_wrapped(&[-1, -1, -1]), 29);
+    assert_eq!(layout.index_wrapped(&[2, 3, 5]), 0);
+    assert_eq!(layout.coordinate(layout.size()), None);
+}
 
 #[test]
 fn dense_get_set_and_periodic_indexing_are_consistent() {

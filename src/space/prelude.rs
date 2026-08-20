@@ -14,10 +14,12 @@ pub use crate::space::continuous::boundary::{
 pub use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
+#[allow(deprecated)]
 pub use crate::space::discrete::square_lattice::{
     BoundaryCondition, Kernel, KernelError, KernelType, NearestNeighborKernel, PairGenerationError,
-    PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig,
-    SquareLatticeConfigError, SquareLatticeInitMethod, UniformKernel, create_kernel,
+    PairGenerator, PairGeneratorConfig, PairingMethod, PowerLawKernel, RandPairGenerator,
+    SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
+    SquareLatticeInitMethod, UniformDistanceKernel, UniformKernel, create_kernel,
     try_create_kernel,
 };
 pub use crate::space::io::square_lattice::save_square_lattice;

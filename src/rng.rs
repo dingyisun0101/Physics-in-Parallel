@@ -5,7 +5,6 @@
 //! randomness has no cursor, while tensor fillers own stateful generators.
 
 use std::fmt;
-use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Serialize};
 
@@ -76,21 +75,12 @@ impl RngMethod {
 pub struct RngConfig {
     seed: Option<u64>,
     method: Option<RngMethod>,
-    parallel_streams: Option<NonZeroUsize>,
 }
 
 impl RngConfig {
     /// Creates the sole PiP randomness configuration object.
-    pub const fn new(
-        seed: Option<u64>,
-        method: Option<RngMethod>,
-        parallel_streams: Option<NonZeroUsize>,
-    ) -> Self {
-        Self {
-            seed,
-            method,
-            parallel_streams,
-        }
+    pub const fn new(seed: Option<u64>, method: Option<RngMethod>) -> Self {
+        Self { seed, method }
     }
 
     pub const fn seed(self) -> Option<u64> {
@@ -99,10 +89,6 @@ impl RngConfig {
 
     pub const fn method(self) -> Option<RngMethod> {
         self.method
-    }
-
-    pub const fn parallel_streams(self) -> Option<NonZeroUsize> {
-        self.parallel_streams
     }
 
     /// Returns the resolved seed as stable decimal provenance.
@@ -120,19 +106,14 @@ impl RngConfig {
         component: &'static str,
         default_method: RngMethod,
         supported_methods: &[RngMethod],
-        default_parallel_streams: Option<NonZeroUsize>,
     ) -> Result<Self, RngConfigError> {
         let method = self.method.unwrap_or(default_method);
         if !supported_methods.contains(&method) {
             return Err(RngConfigError::UnsupportedMethod { component, method });
         }
-        if self.parallel_streams.is_some() && default_parallel_streams.is_none() {
-            return Err(RngConfigError::ParallelStreamsUnsupported { component });
-        }
         Ok(Self {
             seed: Some(self.seed.unwrap_or_else(rand::random)),
             method: Some(method),
-            parallel_streams: self.parallel_streams.or(default_parallel_streams),
         })
     }
 }
@@ -144,9 +125,6 @@ pub enum RngConfigError {
     UnsupportedMethod {
         component: &'static str,
         method: RngMethod,
-    },
-    ParallelStreamsUnsupported {
-        component: &'static str,
     },
 }
 
@@ -167,7 +145,6 @@ impl IndexedRng {
             "IndexedRng",
             RngMethod::IndexedSplitMix64,
             &[RngMethod::IndexedSplitMix64],
-            None,
         )
         .map(Self)
     }
@@ -261,10 +238,6 @@ impl fmt::Display for RngConfigError {
                 "RNG method `{}` is not supported by {component}",
                 method.name()
             ),
-            Self::ParallelStreamsUnsupported { component } => write!(
-                formatter,
-                "parallel RNG stream configuration is not supported by {component}"
-            ),
         }
     }
 }
@@ -277,7 +250,7 @@ mod tests {
 
     #[test]
     fn serde_preserves_one_unified_configuration() {
-        let config = RngConfig::new(Some(42), Some(RngMethod::ChaCha12), NonZeroUsize::new(4));
+        let config = RngConfig::new(Some(42), Some(RngMethod::ChaCha12));
         let json = serde_json::to_string(&config).unwrap();
         assert_eq!(serde_json::from_str::<RngConfig>(&json).unwrap(), config);
     }
@@ -285,24 +258,13 @@ mod tests {
     #[test]
     fn resolution_fills_defaults_and_rejects_unsupported_options() {
         let resolved = RngConfig::default()
-            .resolve_for(
-                "test",
-                RngMethod::SmallRng,
-                &[RngMethod::SmallRng],
-                NonZeroUsize::new(8),
-            )
+            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng])
             .unwrap();
         assert!(resolved.seed().is_some());
         assert_eq!(resolved.method(), Some(RngMethod::SmallRng));
-        assert_eq!(resolved.parallel_streams(), NonZeroUsize::new(8));
 
-        let error = RngConfig::new(None, Some(RngMethod::IndexedSplitMix64), None)
-            .resolve_for(
-                "test",
-                RngMethod::SmallRng,
-                &[RngMethod::SmallRng],
-                NonZeroUsize::new(8),
-            )
+        let error = RngConfig::new(None, Some(RngMethod::IndexedSplitMix64))
+            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng])
             .unwrap_err();
         assert!(matches!(error, RngConfigError::UnsupportedMethod { .. }));
     }

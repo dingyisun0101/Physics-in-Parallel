@@ -19,9 +19,19 @@ use crate::rng::{RngConfig, RngConfigError};
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum KernelType {
-    PowerLaw { l: f64, c: f64, mu: f64 },
-    Uniform { l: f64, c: f64 },
-    NearestNeighbor { d: usize },
+    PowerLaw {
+        l: f64,
+        c: f64,
+        mu: f64,
+    },
+    #[serde(alias = "uniform")]
+    UniformDistance {
+        l: f64,
+        c: f64,
+    },
+    NearestNeighbor {
+        d: usize,
+    },
 }
 
 /// Invalid displacement-kernel configuration.
@@ -29,7 +39,7 @@ pub enum KernelType {
 #[non_exhaustive]
 pub enum KernelError {
     InvalidPowerLaw { l: f64, c: f64, mu: f64 },
-    InvalidUniform { l: f64, c: f64 },
+    InvalidUniformDistance { l: f64, c: f64 },
     InvalidNearestNeighborDimension { dimension: usize },
     RngConfig(RngConfigError),
 }
@@ -41,9 +51,9 @@ impl fmt::Display for KernelError {
                 formatter,
                 "power-law kernel requires finite l > c > 0 and finite mu > 0; got l={l}, c={c}, mu={mu}"
             ),
-            Self::InvalidUniform { l, c } => write!(
+            Self::InvalidUniformDistance { l, c } => write!(
                 formatter,
-                "uniform kernel requires finite l > c; got l={l}, c={c}"
+                "uniform-distance kernel requires finite l > c; got l={l}, c={c}"
             ),
             Self::InvalidNearestNeighborDimension { dimension } => write!(
                 formatter,
@@ -63,7 +73,8 @@ impl Error for KernelError {
     }
 }
 
-/// Indexed displacement distribution used by [`RandPairGenerator`](super::RandPairGenerator).
+/// Indexed displacement distribution used by kernel-configured
+/// [`PairGenerator`](super::PairGenerator).
 pub trait Kernel: Send + Sync {
     /// Samples one value from `(sweep, sample_index)` using unified RNG configuration.
     fn sample_indexed(
@@ -98,7 +109,7 @@ impl Clone for Box<dyn Kernel> {
 pub fn try_create_kernel(kernel_type: KernelType) -> Result<Box<dyn Kernel>, KernelError> {
     match kernel_type {
         KernelType::PowerLaw { l, c, mu } => Ok(Box::new(PowerLawKernel::try_new(l, c, mu)?)),
-        KernelType::Uniform { l, c } => Ok(Box::new(UniformKernel::try_new(l, c)?)),
+        KernelType::UniformDistance { l, c } => Ok(Box::new(UniformDistanceKernel::try_new(l, c)?)),
         KernelType::NearestNeighbor { d } => Ok(Box::new(NearestNeighborKernel::try_new(d)?)),
     }
 }
@@ -177,26 +188,26 @@ impl PowerLawKernel {
 }
 
 #[derive(Debug, Clone)]
-pub struct UniformKernel {
+pub struct UniformDistanceKernel {
     kind: KernelType,
 }
 
-impl UniformKernel {
+impl UniformDistanceKernel {
     pub fn try_new(l: f64, c: f64) -> Result<Self, KernelError> {
         if !l.is_finite() || !c.is_finite() || l <= c {
-            return Err(KernelError::InvalidUniform { l, c });
+            return Err(KernelError::InvalidUniformDistance { l, c });
         }
         Ok(Self {
-            kind: KernelType::Uniform { l, c },
+            kind: KernelType::UniformDistance { l, c },
         })
     }
 
     pub fn new(l: f64, c: f64) -> Self {
-        Self::try_new(l, c).expect("invalid uniform kernel configuration")
+        Self::try_new(l, c).expect("invalid uniform-distance kernel configuration")
     }
 }
 
-impl Kernel for UniformKernel {
+impl Kernel for UniformDistanceKernel {
     fn sample_indexed(
         &self,
         rng: RngConfig,
@@ -225,11 +236,11 @@ impl Kernel for UniformKernel {
     }
 }
 
-impl UniformKernel {
+impl UniformDistanceKernel {
     fn sample_resolved(&self, key: IndexedRng, sweep: u64, sample_index: u64) -> f64 {
         let (low, high) = match self.kind {
-            KernelType::Uniform { l, c } => (c, l),
-            _ => unreachable!("UniformKernel kind is fixed at construction"),
+            KernelType::UniformDistance { l, c } => (c, l),
+            _ => unreachable!("UniformDistanceKernel kind is fixed at construction"),
         };
         let u = unit_f64(key, sweep, DOMAIN_KERNEL_SAMPLE, sample_index, 0, 0);
         low + (high - low) * u
@@ -311,7 +322,7 @@ impl ResolvedKernel for PowerLawKernel {
     }
 }
 
-impl ResolvedKernel for UniformKernel {
+impl ResolvedKernel for UniformDistanceKernel {
     fn sample_resolved(&self, rng: IndexedRng, sweep: u64, sample_index: u64) -> f64 {
         Self::sample_resolved(self, rng, sweep, sample_index)
     }
@@ -343,7 +354,7 @@ fn sample_batch_resolved<K: ResolvedKernel + Sync>(
 #[derive(Clone)]
 pub(crate) enum BuiltinKernel {
     PowerLaw(PowerLawKernel),
-    Uniform(UniformKernel),
+    UniformDistance(UniformDistanceKernel),
     NearestNeighbor(NearestNeighborKernel),
 }
 
@@ -359,10 +370,10 @@ impl BuiltinKernel {
                     .powf(-1.0 / mu)
                     .max(c)
             }
-            Self::Uniform(kernel) => {
+            Self::UniformDistance(kernel) => {
                 let (low, high) = match kernel.kind {
-                    KernelType::Uniform { l, c } => (c, l),
-                    _ => unreachable!("uniform kernel kind is fixed at construction"),
+                    KernelType::UniformDistance { l, c } => (c, l),
+                    _ => unreachable!("uniform-distance kernel kind is fixed at construction"),
                 };
                 low + (high - low) * unit
             }
@@ -380,9 +391,15 @@ pub(crate) fn try_create_builtin_kernel(
         KernelType::PowerLaw { l, c, mu } => {
             Ok(BuiltinKernel::PowerLaw(PowerLawKernel::try_new(l, c, mu)?))
         }
-        KernelType::Uniform { l, c } => Ok(BuiltinKernel::Uniform(UniformKernel::try_new(l, c)?)),
+        KernelType::UniformDistance { l, c } => Ok(BuiltinKernel::UniformDistance(
+            UniformDistanceKernel::try_new(l, c)?,
+        )),
         KernelType::NearestNeighbor { d } => Ok(BuiltinKernel::NearestNeighbor(
             NearestNeighborKernel::try_new(d)?,
         )),
     }
 }
+
+/// Compatibility alias for the former ambiguous kernel name.
+#[deprecated(note = "use UniformDistanceKernel")]
+pub type UniformKernel = UniformDistanceKernel;

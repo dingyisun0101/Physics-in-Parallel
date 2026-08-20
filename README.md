@@ -129,9 +129,10 @@ listed here are not compatibility promises.
   `VectorSamplingMethod`, and `sample_vectors`.
 - General and lattice space: `Space`, `BoundaryCondition`, `Kernel`,
   `KernelError`, `KernelType`, `NearestNeighborKernel`,
-  `PairGenerationError`, `PowerLawKernel`, `RandPairGenerator`, `SourceMode`,
+  `PairGenerationError`, `PairGenerator`, `PairGeneratorConfig`, `PairingMethod`,
+  `PowerLawKernel`, `RandPairGenerator`, `SourceMode`,
   `SquareLattice`, `SquareLatticeConfig`, `SquareLatticeConfigError`,
-  `SquareLatticeInitMethod`, `UniformKernel`, `create_kernel`,
+  `SquareLatticeInitMethod`, `UniformDistanceKernel`, `create_kernel`,
   `try_create_kernel`, and `save_square_lattice`.
 - Generic engines: `MeanReducer`, `Reducer`, `AttrId`, `AttrsCore`,
   `AttrsError`, `AttrsMeta`, `PhysObj`, `ObjId`, `InteractionId`,
@@ -161,28 +162,25 @@ documentation is the exact signature reference.
 ## Unified RNG Configuration
 
 `RngConfig` is the only randomness input used by PiP's public stochastic APIs.
-Its seed, method, and parallel stream count are independently optional. Missing
-values select the receiving component's documented defaults; a missing seed is
-resolved from host entropy.
+Its seed and method are independently optional. Missing values select the
+receiving component's documented defaults; a missing seed is resolved from
+host entropy.
 
 ```rust
-use std::num::NonZeroUsize;
 use physics_in_parallel::prelude::*;
 
 let rng = RngConfig::new(
     Some(42),
     Some(RngMethod::SmallRng),
-    NonZeroUsize::new(8),
 );
 ```
 
-Stateful tensor sampling supports `SmallRng`, PCG, and ChaCha methods plus an
-optional parallel stream count. Explicit-step tensor filling and lattice pair
-generation use `IndexedSplitMix64`; their output is independent of worker
-scheduling and parallel stream count. For `TensorRandFiller`,
-`parallel_streams` controls only the number of parallel random-fill chunks
-submitted to Rayon. It does not configure a Rayon pool or limit later
-transformations. `RngConfig::default()` lets each component select all defaults.
+Stateful tensor sampling supports `SmallRng`, PCG, and ChaCha methods.
+Explicit-step tensor filling and lattice pair generation use
+`IndexedSplitMix64`; their output is independent of worker scheduling. Tensor
+random fills use the crate-wide static `NUM_RNGS` partition count, currently
+32, rather than exposing execution tuning through scientific configuration.
+`RngConfig::default()` lets each component select all defaults.
 
 Construction resolves all missing values. Long-lived stochastic objects expose
 the resulting `rng_config()`; one-shot sampling functions return it. Use
@@ -304,12 +302,16 @@ Core types:
 Purpose:
 
 `TensorRandFiller` fills dense tensor storage in parallel. It is the shared random infrastructure used directly by tensors and indirectly by vector-list random generators and continuous-space sampling.
+Indexed fillers also provide exact schedule-independent site/index sampling over
+`0..upper` through `try_fill_indices_at`; this is the native backend used by
+independent-uniform lattice pairing.
 
 Core API:
 
 ```rust
 TensorRandFiller::new(rand_type, rng_config)
 TensorRandFiller::try_new(rand_type, rng_config)?
+indexed_filler.try_fill_indices_at(indices, upper, step, domain)?
 filler.refresh(tensor)
 filler.try_refresh(tensor)
 filler.try_fill_slice(values)
@@ -617,12 +619,24 @@ vacancy sentinel: zero remains a valid scientific value unless a model says othe
 
 Purpose:
 
-Kernels define reproducible displacement rules for square-lattice workflows.
-`RandPairGenerator` creates source coordinates, raw displacements, and raw
-targets from one resolved `RngConfig` and scientific sweep. Every value is
-indexed by seed, sweep, domain, pair, and component, so generated batches are
-identical across Rayon worker counts. Boundary interpretation is intentionally
-left to `SquareLattice` access methods.
+Pairing methods define complete source-target selection rules. Independent
+uniform pairing samples both sites directly, independently, and with
+replacement; self-pairs are therefore ordinary outcomes with probability
+`1 / num_sites`. Kernel pairing instead samples a source and a displacement.
+Independent uniform pairing is not represented as a kernel.
+
+`PairGenerator` creates source coordinates, raw displacements, and raw targets
+from one resolved `RngConfig` and scientific sweep. All methods produce
+`[num_pairs, rank]` buffers with `target = source + displacement`. Sources are
+canonical coordinates. Targets are raw coordinates and may be outside the
+lattice for displacement kernels; pass them to `SquareLattice` access methods
+so the space applies its boundary condition. Do not use raw targets as unchecked
+flat storage indices.
+
+Every random value is indexed by seed, sweep, domain, pair, and component, so
+generated batches are identical across Rayon worker counts. Independent uniform
+pairing uses exact integer site sampling from PiP's `TensorRandFiller`; it does
+not use floating-point coordinate scaling or downstream randomness.
 
 Core API:
 
@@ -631,8 +645,11 @@ try_create_kernel(kernel_type)
 kernel.sample_indexed(rng_config, sweep, sample_index)?
 kernel.sample_batch_indexed(rng_config, sweep, n)?
 kernel.kind()
-RandPairGenerator::new(shape, kernel_type, num_pairs, source_mode, rng_config)?
+PairGeneratorConfig::independent_uniform(num_pairs, rng_config)
+PairGeneratorConfig::kernel(kernel_type, num_pairs, source_mode, rng_config)
+PairGenerator::new(shape, config)?
 gen.refresh_at(sweep)
+gen.method()
 gen.rng_config()
 gen.sources()
 gen.displacements()
@@ -647,13 +664,19 @@ Core types:
 - `Kernel`
 - `KernelType`
 - `NearestNeighborKernel`
-- `UniformKernel`
+- `UniformDistanceKernel`
 - `PowerLawKernel`
+- `PairGenerator`
+- `PairGeneratorConfig`
+- `PairingMethod`
 - `RandPairGenerator`
 - `RngConfig`
 - `RngMethod`
 - `PairGenerationError`
 - `SourceMode`
+
+`RandPairGenerator` is the deprecated compatibility wrapper for the original
+kernel-only constructor. New code should use `PairGenerator`.
 
 Indexed algorithms resolve to `RngMethod::IndexedSplitMix64`. Record the
 resolved configuration plus the method's name, version, and seed encoding. PiP

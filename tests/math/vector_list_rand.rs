@@ -40,6 +40,43 @@ fn haar_vectors_refresh_generates_unit_vectors_in_parallel_storage() {
 }
 
 #[test]
+fn indexed_haar_vectors_specialize_low_dimensions_and_replay_steps() {
+    for dim in 1..=4 {
+        let mut generator = HaarVectors::try_new_indexed(dim, 256, RngConfig::default()).unwrap();
+        generator.try_refresh_at(7, 0x4841_4152).unwrap();
+        let first = generator.to_ndarray();
+        generator.try_refresh_at(8, 0x4841_4152).unwrap();
+        assert_ne!(generator.to_ndarray(), first);
+        generator.try_refresh_at(7, 0x4841_4152).unwrap();
+        assert_eq!(generator.to_ndarray(), first);
+
+        for row in first.rows() {
+            let norm = row.iter().map(|value| value * value).sum::<f64>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-10);
+            if dim == 1 {
+                assert!(row[0] == -1.0 || row[0] == 1.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn indexed_nearest_neighbor_vectors_are_exact_and_replay_steps() {
+    let mut generator = NNVectors::try_new_indexed(5, 512, RngConfig::default()).unwrap();
+    generator.try_refresh_at(11, 0x4e4e).unwrap();
+    let first = generator.to_ndarray();
+    generator.try_refresh_at(12, 0x4e4e).unwrap();
+    assert_ne!(generator.to_ndarray(), first);
+    generator.try_refresh_at(11, 0x4e4e).unwrap();
+    assert_eq!(generator.to_ndarray(), first);
+
+    for row in first.rows() {
+        assert_eq!(row.iter().filter(|&&value| value != 0).count(), 1);
+        assert!(row.iter().all(|value| (-1..=1).contains(value)));
+    }
+}
+
+#[test]
 fn nearest_neighbor_vectors_refresh_generates_one_hot_signed_rows() {
     let mut generator = NNVectors::new(4, 32, RngConfig::default()).unwrap();
     generator.refresh();

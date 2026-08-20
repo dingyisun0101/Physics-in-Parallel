@@ -6,19 +6,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ndarray::{ArrayD, IxDyn};
 
 use physics_in_parallel::math::prelude::VectorList;
-use physics_in_parallel::rng::{RngConfig, RngMethod};
+use physics_in_parallel::rng::RngConfig;
 use physics_in_parallel::space::{
     discrete::square_lattice::{
         BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PairGenerationError,
-        PowerLawKernel, RandPairGenerator, SourceMode, SquareLattice, SquareLatticeConfig,
-        SquareLatticeInitMethod, UniformKernel, create_kernel,
+        PairGenerator, PairGeneratorConfig, PairingMethod, PowerLawKernel, SourceMode,
+        SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, UniformDistanceKernel,
+        create_kernel,
     },
     io::square_lattice::save_square_lattice,
     space_trait::Space,
 };
 
 fn rng(seed: u64) -> RngConfig {
-    RngConfig::new(Some(seed), None, None)
+    RngConfig::new(Some(seed), None)
 }
 
 fn unique_tmp_json(name: &str) -> PathBuf {
@@ -178,8 +179,8 @@ fn kernel_public_surface() {
     assert_eq!(ps.len(), 64);
     assert!(ps.iter().all(|x| x.is_finite()));
 
-    let u = UniformKernel::new(5.0, 2.0);
-    assert!(matches!(u.kind(), KernelType::Uniform { .. }));
+    let u = UniformDistanceKernel::new(5.0, 2.0);
+    assert!(matches!(u.kind(), KernelType::UniformDistance { .. }));
     let us = u.sample_batch_indexed(rng(91), 7, 64).unwrap();
     assert_eq!(us.len(), 64);
     assert!(us.iter().all(|x| *x >= 2.0 && *x < 5.0));
@@ -190,8 +191,8 @@ fn kernel_public_surface() {
     assert_eq!(ns.len(), 64);
     assert!(ns.iter().all(|x| *x >= 0.0 && *x < 6.0));
 
-    let k: Box<dyn Kernel> = create_kernel(KernelType::Uniform { l: 9.0, c: 1.5 });
-    assert!(matches!(k.kind(), KernelType::Uniform { .. }));
+    let k: Box<dyn Kernel> = create_kernel(KernelType::UniformDistance { l: 9.0, c: 1.5 });
+    assert!(matches!(k.kind(), KernelType::UniformDistance { .. }));
     let k_clone = k.clone();
     assert_eq!(k.sample_batch_indexed(rng(91), 7, 16).unwrap().len(), 16);
     assert_eq!(
@@ -201,13 +202,26 @@ fn kernel_public_surface() {
 }
 
 #[test]
-fn rand_pair_generator_public_surface() {
-    let mut nn_gen = RandPairGenerator::new(
+fn uniform_distance_kernel_has_an_unambiguous_serde_name() {
+    let kind = KernelType::UniformDistance { l: 9.0, c: 1.5 };
+    let json = serde_json::to_value(kind).unwrap();
+    assert_eq!(json["kind"], "uniform_distance");
+    assert_eq!(serde_json::from_value::<KernelType>(json).unwrap(), kind);
+
+    let legacy = serde_json::json!({ "kind": "uniform", "l": 9.0, "c": 1.5 });
+    assert_eq!(serde_json::from_value::<KernelType>(legacy).unwrap(), kind);
+}
+
+#[test]
+fn kernel_pair_generator_public_surface() {
+    let mut nn_gen = PairGenerator::new(
         &[5, 7],
-        KernelType::NearestNeighbor { d: 2 },
-        32,
-        SourceMode::RandomUniform,
-        rng(123),
+        PairGeneratorConfig::kernel(
+            KernelType::NearestNeighbor { d: 2 },
+            32,
+            SourceMode::RandomUniform,
+            rng(123),
+        ),
     )
     .expect("valid nearest-neighbor pair generator");
 
@@ -235,16 +249,18 @@ fn rand_pair_generator_public_surface() {
         assert_eq!(tgt.get(i as isize, 1), src.get(i as isize, 1) + dy);
     }
 
-    let mut pl_gen = RandPairGenerator::new(
+    let mut pl_gen = PairGenerator::new(
         &[4, 5, 6],
-        KernelType::PowerLaw {
-            l: 20.0,
-            c: 1.0,
-            mu: 2.0,
-        },
-        16,
-        SourceMode::Origin,
-        rng(456),
+        PairGeneratorConfig::kernel(
+            KernelType::PowerLaw {
+                l: 20.0,
+                c: 1.0,
+                mu: 2.0,
+            },
+            16,
+            SourceMode::Origin,
+            rng(456),
+        ),
     )
     .expect("valid power-law pair generator");
 
@@ -261,6 +277,100 @@ fn rand_pair_generator_public_surface() {
             );
         }
     }
+
+    let mut uniform_distance = PairGenerator::new(
+        &[31],
+        PairGeneratorConfig::kernel(
+            KernelType::UniformDistance { l: 8.0, c: 2.0 },
+            256,
+            SourceMode::Origin,
+            rng(789),
+        ),
+    )
+    .expect("valid uniform-distance pair generator");
+    uniform_distance.refresh_at(4);
+    for pair in 0..uniform_distance.num_pairs() as isize {
+        assert_eq!(uniform_distance.source(pair), [0]);
+        assert_eq!(
+            uniform_distance.target(pair),
+            uniform_distance.displacement(pair)
+        );
+    }
+}
+
+#[test]
+fn independent_uniform_pairs_sample_both_sites_with_replacement() {
+    let shape = [2, 3, 5];
+    let mut generator = PairGenerator::new(
+        &shape,
+        PairGeneratorConfig::independent_uniform(4_096, rng(0x0001_dea1)),
+    )
+    .expect("valid independent-uniform pair generator");
+
+    assert_eq!(generator.method(), PairingMethod::IndependentUniform);
+    generator.refresh_at(12);
+
+    for pair in 0..generator.num_pairs() as isize {
+        let source = generator.source(pair);
+        let target = generator.target(pair);
+        let displacement = generator.displacement(pair);
+        for axis in 0..shape.len() {
+            assert!((0..shape[axis] as isize).contains(&source[axis]));
+            assert!((0..shape[axis] as isize).contains(&target[axis]));
+            assert_eq!(target[axis], source[axis] + displacement[axis]);
+        }
+    }
+
+    let mut one_site =
+        PairGenerator::new(&[1], PairGeneratorConfig::independent_uniform(8, rng(7)))
+            .expect("self-pairs are valid on a one-site lattice");
+    one_site.refresh_at(3);
+    for pair in 0..one_site.num_pairs() as isize {
+        assert_eq!(one_site.source(pair), [0]);
+        assert_eq!(one_site.target(pair), [0]);
+        assert_eq!(one_site.displacement(pair), [0]);
+    }
+}
+
+#[test]
+fn pair_generator_config_serializes_the_pairing_method_explicitly() {
+    let config = PairGeneratorConfig::independent_uniform(64, rng(19));
+    let json = serde_json::to_value(config).unwrap();
+    assert_eq!(json["method"]["kind"], "independent_uniform");
+    assert_eq!(json["num_pairs"], 64);
+    assert_eq!(
+        serde_json::from_value::<PairGeneratorConfig>(json).unwrap(),
+        config
+    );
+}
+
+#[test]
+fn independent_uniform_pairing_is_independent_of_rayon_worker_count() {
+    fn flatten(vectors: &VectorList<isize>) -> Vec<isize> {
+        (0..vectors.num_vectors())
+            .flat_map(|pair| {
+                (0..vectors.dim()).map(move |axis| vectors.get(pair as isize, axis as isize))
+            })
+            .collect()
+    }
+
+    fn generate(worker_count: usize) -> (Vec<isize>, Vec<isize>) {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .build()
+            .expect("test Rayon pool should build")
+            .install(|| {
+                let mut generator = PairGenerator::new(
+                    &[17, 19, 23],
+                    PairGeneratorConfig::independent_uniform(1_024, rng(0x5eed)),
+                )
+                .unwrap();
+                generator.refresh_at(37);
+                (flatten(generator.sources()), flatten(generator.targets()))
+            })
+    }
+
+    assert_eq!(generate(1), generate(4));
 }
 
 #[test]
@@ -281,16 +391,18 @@ fn pair_generation_is_independent_of_rayon_worker_count() {
             .build()
             .expect("test Rayon pool should build")
             .install(|| {
-                let mut generator = RandPairGenerator::new(
+                let mut generator = PairGenerator::new(
                     &[17, 19, 23],
-                    KernelType::PowerLaw {
-                        l: 12.0,
-                        c: 1.0,
-                        mu: 1.7,
-                    },
-                    1_024,
-                    SourceMode::RandomUniform,
-                    rng(0x5eed),
+                    PairGeneratorConfig::kernel(
+                        KernelType::PowerLaw {
+                            l: 12.0,
+                            c: 1.0,
+                            mu: 1.7,
+                        },
+                        1_024,
+                        SourceMode::RandomUniform,
+                        rng(0x5eed),
+                    ),
                 )
                 .expect("valid indexed pair generator");
                 generator.refresh_at(37);
@@ -306,32 +418,6 @@ fn pair_generation_is_independent_of_rayon_worker_count() {
 }
 
 #[test]
-fn pair_generation_accepts_random_fill_parallelism() {
-    let config = RngConfig::new(
-        Some(0x5eed),
-        Some(RngMethod::IndexedSplitMix64),
-        std::num::NonZeroUsize::new(2),
-    );
-    let mut generator = RandPairGenerator::new(
-        &[17, 19],
-        KernelType::PowerLaw {
-            l: 12.0,
-            c: 1.0,
-            mu: 1.7,
-        },
-        1_024,
-        SourceMode::RandomUniform,
-        config,
-    )
-    .unwrap();
-    generator.refresh_at(37);
-    assert_eq!(
-        generator.rng_config().parallel_streams(),
-        std::num::NonZeroUsize::new(2)
-    );
-}
-
-#[test]
 fn pair_generation_replays_an_explicit_sweep_exactly() {
     fn flatten(vectors: &VectorList<isize>) -> Vec<isize> {
         let mut values = Vec::with_capacity(vectors.num_vectors() * vectors.dim());
@@ -343,12 +429,14 @@ fn pair_generation_replays_an_explicit_sweep_exactly() {
         values
     }
 
-    let mut generator = RandPairGenerator::new(
+    let mut generator = PairGenerator::new(
         &[11, 13],
-        KernelType::NearestNeighbor { d: 2 },
-        256,
-        SourceMode::RandomUniform,
-        rng(44),
+        PairGeneratorConfig::kernel(
+            KernelType::NearestNeighbor { d: 2 },
+            256,
+            SourceMode::RandomUniform,
+            rng(44),
+        ),
     )
     .expect("valid indexed pair generator");
 
@@ -370,22 +458,26 @@ fn pair_generation_replays_an_explicit_sweep_exactly() {
 
 #[test]
 fn pair_generator_rejects_invalid_configuration_without_panicking() {
-    let error = RandPairGenerator::new(
+    let error = PairGenerator::new(
         &[4, 0],
-        KernelType::NearestNeighbor { d: 2 },
-        8,
-        SourceMode::Origin,
-        rng(1),
+        PairGeneratorConfig::kernel(
+            KernelType::NearestNeighbor { d: 2 },
+            8,
+            SourceMode::Origin,
+            rng(1),
+        ),
     )
     .unwrap_err();
     assert_eq!(error, PairGenerationError::ZeroAxis { axis: 1 });
 
-    let error = RandPairGenerator::new(
+    let error = PairGenerator::new(
         &[4, 4],
-        KernelType::NearestNeighbor { d: 1 },
-        8,
-        SourceMode::Origin,
-        rng(1),
+        PairGeneratorConfig::kernel(
+            KernelType::NearestNeighbor { d: 1 },
+            8,
+            SourceMode::Origin,
+            rng(1),
+        ),
     )
     .unwrap_err();
     assert_eq!(

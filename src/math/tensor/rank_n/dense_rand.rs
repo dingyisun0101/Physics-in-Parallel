@@ -6,8 +6,9 @@ Random filling for dense rank-N tensors.
 contiguous chunks during refresh. Seeded fillers are deterministic across
 identical construction, RNG kind, and refresh sequences.
 
-[`RngConfig`] controls the seed, method, and parallel stream count through the
-same interface used by every other PiP stochastic component.
+[`RngConfig`] controls the seed and method through the same interface used by
+every other PiP stochastic component. Fill partitioning is a static backend
+choice rather than scientific configuration.
 
 Supported element/distribution pairs:
     - `f64`: `Uniform`, `Normal`, `Bernoulli`;
@@ -15,12 +16,15 @@ Supported element/distribution pairs:
     - `usize`: `UniformInt`;
     - `isize`: `UniformInt`.
 
+Indexed fillers additionally expose exact uniform `usize` index sampling over
+`0..upper` for algorithms that select sites or storage positions directly.
+
 `new` and `try_new` construct stateful fillers. `try_new_indexed` constructs an
-explicit-step filler. Optional arguments select deterministic seeding, the RNG
-family, and random-fill worker count; omitted values use documented defaults.
+explicit-step filler. `RngConfig` selects deterministic seeding and the RNG
+family; omitted values use documented defaults. Parallel fills use the static
+crate-wide [`NUM_RNGS`] partition count.
 */
 
-use std::num::NonZeroUsize;
 use std::{error::Error, fmt};
 
 use rand::SeedableRng;
@@ -38,7 +42,8 @@ use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 // ---------------------------- Config ------------------------------
 //===================================================================
 
-pub const NUM_RNGS: usize = 64;
+/// Static number of random-fill partitions used by PiP tensor backends.
+pub const NUM_RNGS: usize = 32;
 
 //===================================================================
 // -------------------------- Basic Types ---------------------------
@@ -86,6 +91,7 @@ pub enum TensorRandError {
         low: i64,
         high: i64,
     },
+    InvalidIndexUpperBound,
     IntegerBoundsOutOfRange {
         scalar: &'static str,
         low: i64,
@@ -124,6 +130,9 @@ impl fmt::Display for TensorRandError {
                 formatter,
                 "integer uniform bounds require low <= high; got low={low}, high={high}"
             ),
+            Self::InvalidIndexUpperBound => {
+                write!(formatter, "uniform index upper bound must be positive")
+            }
             Self::IntegerBoundsOutOfRange { scalar, low, high } => write!(
                 formatter,
                 "integer uniform bounds [{low}, {high}] are outside scalar {scalar}"
@@ -184,10 +193,9 @@ impl TensorRandFiller {
                     RngMethod::ChaCha12,
                     RngMethod::ChaCha20,
                 ],
-                NonZeroUsize::new(NUM_RNGS),
             )
             .map_err(TensorRandError::RngConfig)?;
-        let req = rng.parallel_streams().map_or(NUM_RNGS, |count| count.get());
+        let req = NUM_RNGS;
         let rng_method = rng.method().expect("resolved RNG method");
         let seed = rng.seed().expect("resolved RNG seed");
         let mut master = SmallRng::seed_from_u64(seed);
@@ -202,25 +210,19 @@ impl TensorRandFiller {
 
     /// Constructs a schedule-independent filler for explicit scientific steps.
     ///
-    /// `parallel_streams` controls only how many random-fill chunks are
-    /// submitted to Rayon. It does not configure or limit the surrounding
-    /// Rayon pool, nor any transformations performed after filling.
+    /// PiP uses the static [`NUM_RNGS`] partition count for parallel filling.
     pub fn try_new_indexed(kind: RandType, rng: RngConfig) -> Result<Self, TensorRandError> {
         let rng = rng
             .resolve_for(
                 "TensorRandFiller",
                 RngMethod::IndexedSplitMix64,
                 &[RngMethod::IndexedSplitMix64],
-                NonZeroUsize::new(NUM_RNGS),
             )
             .map_err(TensorRandError::RngConfig)?;
         Ok(Self {
             kind,
             rng,
-            num_rngs: rng
-                .parallel_streams()
-                .expect("indexed filler resolves parallel streams")
-                .get(),
+            num_rngs: NUM_RNGS,
             rngs: Vec::new(),
             indexed: Some(IndexedRng::from_resolved(rng)),
         })
@@ -310,8 +312,8 @@ impl TensorRandFiller {
 
     /// Fills a slice reproducibly for an explicit step and random domain.
     ///
-    /// Results do not depend on `parallel_streams` or Rayon scheduling. The
-    /// stream count controls only the number of parallel fill chunks.
+    /// Results do not depend on Rayon scheduling. PiP uses [`NUM_RNGS`] static
+    /// partitions for parallel filling.
     pub fn try_fill_slice_at<T: TensorRandElement>(
         &self,
         values: &mut [T],
@@ -337,6 +339,41 @@ impl TensorRandFiller {
             return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
         };
         T::try_fill_slice_indexed(self, key, values, step, domain, components)
+    }
+
+    /// Fills exact uniform indices from `0..upper` for an explicit step.
+    ///
+    /// Sampling uses indexed Lemire rejection and is independent of Rayon
+    /// scheduling. This operation is available only on indexed fillers and
+    /// does not depend on the filler's scalar distribution.
+    pub fn try_fill_indices_at(
+        &self,
+        values: &mut [usize],
+        upper: usize,
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        if upper == 0 {
+            return Err(TensorRandError::InvalidIndexUpperBound);
+        }
+        let Some(key) = self.indexed else {
+            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
+        };
+        let Some((_, chunk_len)) = self.chunk_plan(values.len()) else {
+            return Ok(());
+        };
+        values
+            .par_chunks_mut(chunk_len)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
+                let start = chunk_index * chunk_len;
+                for (offset, value) in chunk.iter_mut().enumerate() {
+                    *value = key
+                        .uniform_index(step, domain, (start + offset) as u64, 0, upper)
+                        .expect("validated positive uniform-index upper bound");
+                }
+            });
+        Ok(())
     }
 
     #[inline]

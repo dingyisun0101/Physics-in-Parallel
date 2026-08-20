@@ -1,5 +1,4 @@
 use std::hint::black_box;
-use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use physics_in_parallel::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense};
@@ -19,8 +18,7 @@ const DEFAULT_RNG_KINDS: &[RngMethod] =
 fn main() {
     let len = parse_arg(1).unwrap_or(DEFAULT_LEN);
     let repeats = parse_arg(2).unwrap_or(DEFAULT_REPEATS);
-    let rngs = parse_arg(3).unwrap_or_else(rayon::current_num_threads);
-    let rng_kinds = parse_rng_kinds(4).unwrap_or_else(|| DEFAULT_RNG_KINDS.to_vec());
+    let rng_kinds = parse_rng_kinds(3).unwrap_or_else(|| DEFAULT_RNG_KINDS.to_vec());
     let kind = RandType::Uniform {
         low: -1.0,
         high: 1.0,
@@ -31,7 +29,6 @@ fn main() {
     println!("bytes per array: {}", bytes_human(len * size_of::<f64>()));
     println!("repeats: {repeats}");
     println!("rayon threads available: {}", rayon::current_num_threads());
-    println!("rayon threads: {rngs}");
     println!(
         "rng kinds: {}",
         rng_kinds
@@ -49,7 +46,7 @@ fn main() {
     println!("{}", "-".repeat(100));
 
     for rng_kind in rng_kinds {
-        let tensor = benchmark_tensor_fill(len, repeats, kind, rngs, rng_kind);
+        let tensor = benchmark_tensor_fill(len, repeats, kind, rng_kind);
         let sequential = benchmark_sequential_vec_fill(len, repeats, rng_kind);
         report(rng_kind, &tensor, &sequential);
     }
@@ -66,14 +63,10 @@ fn benchmark_tensor_fill(
     len: usize,
     repeats: usize,
     kind: RandType,
-    rngs: usize,
     rng_kind: RngMethod,
 ) -> Timing {
     let mut tensor = dense::Tensor::<f64>::empty(&[len]);
-    let mut filler = TensorRandFiller::new(
-        kind,
-        RngConfig::new(Some(SEED), Some(rng_kind), NonZeroUsize::new(rngs)),
-    );
+    let mut filler = TensorRandFiller::new(kind, RngConfig::new(Some(SEED), Some(rng_kind)));
 
     filler.refresh(&mut tensor);
 
