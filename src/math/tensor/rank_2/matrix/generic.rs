@@ -553,6 +553,17 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
 }
 
 impl<T: Scalar> Matrix<T, RankNDense<T>> {
+    /// Return the elementwise absolute value using the dense tensor backend.
+    #[inline]
+    pub fn abs(&self) -> Self
+    where
+        T: Copy + Send + Sync,
+    {
+        Self::from_backend(RankNDense {
+            tensor: self.backend.tensor.abs(),
+        })
+    }
+
     /// Builds a dense matrix from checked row-major storage.
     pub fn try_from_vec(rows: usize, cols: usize, data: Vec<T>) -> Result<Self, MatrixError> {
         if rows == 0 || cols == 0 {
