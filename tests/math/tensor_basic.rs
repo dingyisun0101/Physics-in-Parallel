@@ -1,7 +1,7 @@
 use ndarray::{Array2, array};
 
-use physics_in_parallel::math::scalar::{Complex, ScalarCastError};
-use physics_in_parallel::math::tensor::{Dense, Sparse, Tensor, TensorError, rank_n::ops};
+use physics_in_parallel::prelude::advanced::{Dense, Sparse};
+use physics_in_parallel::prelude::basic::{Complex, ScalarCastError, Tensor};
 
 fn assert_tensor_eq_array2(tensor: &Tensor<f64, Dense>, expected: &Array2<f64>) {
     assert_eq!(tensor.shape(), expected.shape());
@@ -33,31 +33,6 @@ fn dense_tensor_basic_metadata_access_and_wrapping() {
 
     assert_eq!(t.get(&[-1, -1]), expected[[1, 2]]);
     assert_eq!(t.get(&[2, 3]), expected[[0, 0]]);
-}
-
-#[test]
-fn tensor_shape_size_validation_rejects_invalid_shapes() {
-    assert_eq!(ops::size(&[2, 3, 4]), 24);
-    assert!(std::panic::catch_unwind(|| ops::size(&[])).is_err());
-    assert!(std::panic::catch_unwind(|| ops::size(&[2, 0])).is_err());
-    assert!(std::panic::catch_unwind(|| ops::size(&[usize::MAX, 2])).is_err());
-}
-
-#[test]
-fn tensor_error_helpers_report_shape_contract_violations() {
-    let invalid = physics_in_parallel::math::tensor::rank_n::errors::checked_num_elements(&[2, 0])
-        .unwrap_err();
-    assert!(matches!(invalid, TensorError::InvalidShape { .. }));
-
-    let overflow =
-        physics_in_parallel::math::tensor::rank_n::errors::checked_num_elements(&[usize::MAX, 2])
-            .unwrap_err();
-    assert!(matches!(overflow, TensorError::ShapeProductOverflow { .. }));
-
-    let mismatch =
-        physics_in_parallel::math::tensor::rank_n::errors::ensure_same_shape(&[2, 3], &[3, 2])
-            .unwrap_err();
-    assert!(matches!(mismatch, TensorError::ShapeMismatch { .. }));
 }
 
 #[test]

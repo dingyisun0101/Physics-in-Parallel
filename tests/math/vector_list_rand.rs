@@ -1,8 +1,6 @@
 use ndarray::arr2;
-use physics_in_parallel::math::tensor::rank_2::vector_list::{
-    HaarVectors, NNVectors, VectorListRand,
-};
-use physics_in_parallel::rng::RngConfig;
+use physics_in_parallel::prelude::advanced::{HaarVectors, NNVectors, VectorListRand};
+use physics_in_parallel::prelude::basic::RngConfig;
 
 #[test]
 fn haar_vectors_refresh_generates_unit_vectors_in_parallel_storage() {
@@ -17,7 +15,7 @@ fn haar_vectors_refresh_generates_unit_vectors_in_parallel_storage() {
 
     let mut component_sum = vec![0.0; dim];
     for i in 0..n {
-        let row = generator.vl.get_vec(i as isize);
+        let row = generator.vl.vector(i as isize);
         assert_eq!(row.len(), dim);
 
         let norm = row.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -34,7 +32,7 @@ fn haar_vectors_refresh_generates_unit_vectors_in_parallel_storage() {
 
     println!("\nfirst refreshed Haar vectors");
     for i in 0..3 {
-        println!("{:?}", generator.vl.get_vec(i));
+        println!("{:?}", generator.vl.vector(i));
     }
     println!("Haar component sum over {n} vectors: {component_sum:?}");
 }
@@ -82,8 +80,8 @@ fn nearest_neighbor_vectors_refresh_generates_one_hot_signed_rows() {
     generator.refresh();
 
     assert_eq!(generator.vl.shape(), [32, 4]);
-    for i in 0..generator.vl.num_vecs() {
-        let row = generator.vl.get_vec(i as isize);
+    for i in 0..generator.vl.num_vectors() {
+        let row = generator.vl.vector(i as isize);
         let nonzero: Vec<_> = row.iter().copied().filter(|&x| x != 0).collect();
         assert_eq!(nonzero.len(), 1);
         assert!(nonzero[0] == 1 || nonzero[0] == -1);
@@ -91,7 +89,7 @@ fn nearest_neighbor_vectors_refresh_generates_one_hot_signed_rows() {
 
     println!("\nfirst refreshed nearest-neighbor vectors");
     for i in 0..4 {
-        println!("{:?}", generator.vl.get_vec(i));
+        println!("{:?}", generator.vl.vector(i));
     }
 }
 

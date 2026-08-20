@@ -26,7 +26,7 @@ use crate::space::continuous::sampling::{
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsCore, AttrsError, AttrsMeta, PhysObj};
-pub use crate::models::particles::attrs::{
+use crate::models::particles::attrs::{
     ALIVE_TRUE, ATTR_A, ATTR_ALIVE, ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V, RIGID_FALSE,
 };
 use crate::models::particles::state::{ParticleStateError, gather_inverse_mass};
@@ -230,7 +230,7 @@ pub fn randomize_v(
             }
 
             filler
-                .try_refresh(v.as_tensor_mut())
+                .try_refresh_dense(v.as_tensor_mut())
                 .map_err(MassiveParticlesError::Rng)?;
 
             v.as_tensor_mut()

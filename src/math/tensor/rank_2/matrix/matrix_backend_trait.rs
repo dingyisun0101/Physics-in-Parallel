@@ -44,6 +44,12 @@ pub trait MatrixBackend<T: Scalar>: Send + Sync + Clone {
         None
     }
 
+    /// Mutably borrows a complete row-major buffer when this backend stores one.
+    #[inline]
+    fn contiguous_data_mut(&mut self) -> Option<&mut [T]> {
+        None
+    }
+
     /// Returns explicitly stored row-major entries for a genuinely sparse backend.
     ///
     /// Structured matrices return `None` because their canonical storage does

@@ -3,10 +3,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use physics_in_parallel::space::discrete::square_lattice::{
+use physics_in_parallel::prelude::advanced::save_square_lattice;
+use physics_in_parallel::prelude::basic::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod,
 };
-use physics_in_parallel::space::io::square_lattice::save_square_lattice;
 
 fn unique_tmp_json(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -43,7 +43,7 @@ fn lattice_config_is_a_complete_validated_serde_boundary() {
 #[test]
 fn lattice_periodic_roundtrip_uses_lattice_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[3; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::try_new(&[3; 2], BoundaryCondition::Periodic, None).unwrap(),
         SquareLatticeInitMethod::Uniform { val: 7 },
     )
     .unwrap();
@@ -64,7 +64,7 @@ fn lattice_periodic_roundtrip_uses_lattice_schema() {
 #[test]
 fn lattice_reflective_roundtrip_uses_kind_tag() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[2; 3], BoundaryCondition::Reflective, None),
+        SquareLatticeConfig::try_new(&[2; 3], BoundaryCondition::Reflective, None).unwrap(),
         SquareLatticeInitMethod::Uniform { val: 1 },
     )
     .unwrap();
@@ -134,7 +134,7 @@ fn lattice_deserialize_rejects_bad_kind_and_shape() {
 #[test]
 fn save_square_lattice_writes_flat_payload_schema() {
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::try_new(&[4; 2], BoundaryCondition::Periodic, None).unwrap(),
         SquareLatticeInitMethod::Uniform { val: 9 },
     )
     .unwrap();

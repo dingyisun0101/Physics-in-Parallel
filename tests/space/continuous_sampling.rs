@@ -1,7 +1,5 @@
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::rng::RngConfig;
-use physics_in_parallel::space::continuous::sampling::{
-    VectorSamplingError, VectorSamplingMethod, sample_vectors,
+use physics_in_parallel::prelude::basic::{
+    RngConfig, VectorList, VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
 
 #[test]
@@ -18,7 +16,7 @@ fn uniform_centered_sampling_fills_vector_list_inside_box() {
     .unwrap();
 
     for i in 0..positions.num_vectors() {
-        let row = positions.get_vector(i as isize);
+        let row = positions.vector(i as isize);
         assert!(row[0] >= -1.0 && row[0] <= 1.0);
         assert!(row[1] >= -2.0 && row[1] <= 2.0);
     }
@@ -38,10 +36,10 @@ fn jittered_lattice_without_noise_places_regular_points() {
     )
     .unwrap();
 
-    assert_eq!(positions.get_vector(0), [0.0, 0.0].as_slice());
-    assert_eq!(positions.get_vector(1), [10.0, 0.0].as_slice());
-    assert_eq!(positions.get_vector(2), [0.0, 100.0].as_slice());
-    assert_eq!(positions.get_vector(3), [10.0, 100.0].as_slice());
+    assert_eq!(positions.vector(0), [0.0, 0.0].as_slice());
+    assert_eq!(positions.vector(1), [10.0, 0.0].as_slice());
+    assert_eq!(positions.vector(2), [0.0, 100.0].as_slice());
+    assert_eq!(positions.vector(3), [10.0, 100.0].as_slice());
 }
 
 #[test]
@@ -102,7 +100,7 @@ fn uniform_and_gaussian_per_axis_sampling_cover_generic_vectors() {
     .unwrap();
 
     for i in 0..vectors.num_vectors() {
-        for &x in vectors.get_vector(i as isize) {
+        for &x in vectors.vector(i as isize) {
             assert!((-2.0..3.0).contains(&x));
         }
     }
@@ -118,7 +116,7 @@ fn uniform_and_gaussian_per_axis_sampling_cover_generic_vectors() {
     .unwrap();
 
     for i in 0..vectors.num_vectors() {
-        assert_eq!(vectors.get_vector(i as isize), [5.0, -5.0].as_slice());
+        assert_eq!(vectors.vector(i as isize), [5.0, -5.0].as_slice());
     }
 
     assert_eq!(

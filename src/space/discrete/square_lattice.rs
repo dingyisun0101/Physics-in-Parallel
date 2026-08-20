@@ -9,20 +9,14 @@ Purpose:
     representation and displacement semantics later.
 */
 
-pub mod kernel;
-pub mod pairing;
+pub(crate) mod kernel;
+pub(crate) mod pairing;
 pub(crate) mod random;
-pub mod representation;
+pub(crate) mod representation;
 
-#[allow(deprecated)]
-pub use kernel::{
-    Kernel, KernelError, KernelType, NearestNeighborKernel, PowerLawKernel, UniformDistanceKernel,
-    UniformKernel, create_kernel, try_create_kernel,
-};
-#[allow(deprecated)]
+pub use kernel::{KernelError, KernelType};
 pub use pairing::{
-    PairGenerationError, PairGenerator, PairGeneratorConfig, PairingMethod, RandPairGenerator,
-    SourceMode,
+    PairGenerationError, PairGenerator, PairGeneratorConfig, PairingMethod, SourceMode,
 };
 pub use representation::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,

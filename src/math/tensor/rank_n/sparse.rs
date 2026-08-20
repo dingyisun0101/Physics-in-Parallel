@@ -7,8 +7,8 @@ A **hash-backed sparse N-D tensor** where only nonzeros are stored.
 - **Scalars:** `T` implements your project’s `Scalar` trait (reals/complex/etc.).
 - **Elementwise ops:** operate on the **union** of nonzero indices; results that
   become zero are dropped (sparseness preserved).
-- **Parallelism:** `rayon` used for binary ops and many transforms; when
-  `AHashMap` must be consumed, we use `.into_iter().par_bridge()`.
+- **Parallelism:** `rayon` is used for binary ops and many transforms after
+  materializing indexed work so PiP's process-wide partition limit applies.
 - **Computation-only scope:** JSON, ndarray, and string interop live under
   `math::io`.
 
@@ -29,13 +29,13 @@ Every multi-index accessor deterministically targets a valid location; implicit 
 */
 
 use ahash::AHashMap;
-use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
-use rayon::slice::ParallelSliceMut;
 use std::ops::{Add, BitAnd, Div, Mul, Sub};
 
+use crate::parallel::parallel_chunk_len;
+
 use super::dense::{Tensor as TensorDense, checked_num_elements};
-use super::layout::{RowMajorLayout, flat_index_wrapped};
+use super::layout::{RowMajorLayout, flat_index_wrapped, normalize_flat_index};
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
 
@@ -273,11 +273,13 @@ macro_rules! impl_sparse_binop {
                     Vec::with_capacity(self.data.len() + rhs.data.len());
                 keys.extend(self.data.keys().copied());
                 keys.extend(rhs.data.keys().copied());
-                keys.par_sort_unstable();
+                keys.sort_unstable();
                 keys.dedup();
+                let min_entries_per_job = parallel_chunk_len(keys.len()).unwrap_or(1);
 
                 let out_pairs: Vec<(usize, T)> = keys
                     .into_par_iter()
+                    .with_min_len(min_entries_per_job)
                     .filter_map(|k| {
                         let a = self.data.get(&k).copied().unwrap_or_else(T::zero);
                         let b = rhs.data.get(&k).copied().unwrap_or_else(T::zero);
@@ -321,11 +323,13 @@ where
         let mut keys: Vec<usize> = Vec::with_capacity(self.data.len() + rhs.data.len());
         keys.extend(self.data.keys().copied());
         keys.extend(rhs.data.keys().copied());
-        keys.par_sort_unstable();
+        keys.sort_unstable();
         keys.dedup();
+        let min_entries_per_job = parallel_chunk_len(keys.len()).unwrap_or(1);
 
         let out_pairs: Vec<(usize, T)> = keys
             .into_par_iter()
+            .with_min_len(min_entries_per_job)
             .filter_map(|k| {
                 let a = self.data.get(&k).copied().unwrap_or_else(T::zero);
                 let b = rhs.data.get(&k).copied().unwrap_or_else(T::zero);
@@ -345,9 +349,8 @@ where
 /*
 Elementwise ops with a **scalar RHS** (e.g., `S + c`, `S * c`).
 
-We need to consume the hashmap by value to transform values. `AHashMap` by value
-is not `IntoParallelIterator`, so we use **`.into_iter().par_bridge()`** to
-bridge to rayon’s parallel pipeline. Zeros after the op are dropped.
+We consume the hash map into indexed entries so PiP can cap execution
+partitions. Zeros after the operation are dropped.
 */
 
 macro_rules! impl_sparse_scalar_binop_rhs_scalar {
@@ -360,15 +363,17 @@ macro_rules! impl_sparse_scalar_binop_rhs_scalar {
 
             #[inline]
             fn $method(self, rhs: T) -> Self::Output {
-                let out_pairs: Vec<(usize, T)> = self
-                    .data
-                    .into_iter()
-                    .par_bridge()
+                let shape = self.shape;
+                let entries: Vec<(usize, T)> = self.data.into_iter().collect();
+                let min_entries_per_job = parallel_chunk_len(entries.len()).unwrap_or(1);
+                let out_pairs: Vec<(usize, T)> = entries
+                    .into_par_iter()
+                    .with_min_len(min_entries_per_job)
                     .map(|(k, v)| (k, v $op rhs))
                     .filter(|&(_, v)| v != T::zero())
                     .collect();
 
-                Self::from_flat_pairs(self.shape, out_pairs)
+                Self::from_flat_pairs(shape, out_pairs)
             }
         }
     };
@@ -397,10 +402,12 @@ impl<T: Scalar> Tensor<T> {
 
     /// Attempt an elementwise cast into `Tensor<U>` through `Scalar::try_cast`.
     pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
-        let out_pairs: Result<Vec<(usize, U)>, _> = self
-            .data
-            .par_iter()
-            .map(|(&k, &v)| v.try_cast::<U>().map(|u| (k, u)))
+        let entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
+        let min_entries_per_job = parallel_chunk_len(entries.len()).unwrap_or(1);
+        let out_pairs: Result<Vec<(usize, U)>, _> = entries
+            .into_par_iter()
+            .with_min_len(min_entries_per_job)
+            .map(|(k, v)| v.try_cast::<U>().map(|u| (k, u)))
             .filter_map(|res| match res {
                 Ok((k, v)) if v != U::zero() => Some(Ok((k, v))), // drop zeros
                 Ok(_) => None,
@@ -540,7 +547,7 @@ impl<T: Scalar> Tensor<T> {
         }
 
         let mut entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
-        entries.par_sort_unstable_by_key(|&(k, _)| k);
+        entries.sort_unstable_by_key(|&(k, _)| k);
 
         let shown = entries.len().min(32);
         let layout = RowMajorLayout::new(&self.shape);
@@ -592,10 +599,12 @@ where
     ///   zeros contribute nothing.
     /// - Parameters:
     ///   - (none): Reads the sparse storage map.
-    fn get_sum(&self) -> T {
-        self.data
-            .par_iter()
-            .map(|(_, &x)| x)
+    fn sum(&self) -> T {
+        let values: Vec<T> = self.data.values().copied().collect();
+        let min_entries_per_job = parallel_chunk_len(values.len()).unwrap_or(1);
+        values
+            .into_par_iter()
+            .with_min_len(min_entries_per_job)
             .reduce(|| T::zero(), |acc, x| acc + x)
     }
 
@@ -632,6 +641,12 @@ where
         Tensor::<T>::get(self, indices)
     }
 
+    #[inline(always)]
+    fn get_flat(&self, index: isize) -> T {
+        let index = normalize_flat_index(index, self.len_dense());
+        self.data.get(&index).copied().unwrap_or_else(T::zero)
+    }
+
     /// Sparse backend cannot safely yield `&mut T` via multi-index; Panic.
     #[inline(always)]
     /// Details:
@@ -641,6 +656,12 @@ where
     ///   - `indices` (`&[isize]`): One signed coordinate per tensor axis.
     fn get_mut(&mut self, indices: &[isize]) -> &mut T {
         self.get_mut_or_insert_zero(indices)
+    }
+
+    #[inline(always)]
+    fn get_flat_mut(&mut self, index: isize) -> &mut T {
+        let index = normalize_flat_index(index, self.len_dense());
+        self.data.entry(index).or_insert_with(T::zero)
     }
 
     /// Set value at (wrapped) multi-index (zero removes the entry).
@@ -653,6 +674,16 @@ where
     ///   - `val` (`T`): Scalar to store; zero removes explicit storage.
     fn set(&mut self, indices: &[isize], val: T) {
         Tensor::<T>::set(self, indices, val)
+    }
+
+    #[inline(always)]
+    fn set_flat(&mut self, index: isize, val: T) {
+        let index = normalize_flat_index(index, self.len_dense());
+        if val == T::zero() {
+            self.data.remove(&index);
+        } else {
+            self.data.insert(index, val);
+        }
     }
 
     /// Parallel "fill": if `value == 0`, clears all entries; else sets all **existing**
@@ -692,9 +723,11 @@ where
     {
         // Clone pairs, map in parallel to (k, v'), drop zeros, rebuild.
         let pairs: Vec<(usize, T)> = self.iter().map(|(&k, &v)| (k, v)).collect();
+        let min_entries_per_job = parallel_chunk_len(pairs.len()).unwrap_or(1);
 
         let mapped: Vec<(usize, T)> = pairs
             .into_par_iter()
+            .with_min_len(min_entries_per_job)
             .map(|(k, v)| (k, f(v)))
             .filter(|&(_, v)| v != T::zero())
             .collect();
@@ -720,9 +753,11 @@ where
         let dims = self.shape.clone();
 
         let pairs: Vec<(usize, T)> = self.iter().map(|(&k, &v)| (k, v)).collect();
+        let min_entries_per_job = parallel_chunk_len(pairs.len()).unwrap_or(1);
 
         let zipped: Vec<(usize, T)> = pairs
             .into_par_iter()
+            .with_min_len(min_entries_per_job)
             .map(|(k, a)| {
                 // linear -> multi-index (row-major)
                 let mut rem = k;

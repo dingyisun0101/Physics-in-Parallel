@@ -8,14 +8,10 @@ Purpose:
     processed in parallel.
 */
 
-pub mod interaction;
-pub mod neighbor_list;
-pub mod phys_obj;
+pub(crate) mod interaction;
+pub(crate) mod neighbor_list;
+pub(crate) mod phys_obj;
 
 // Canonical SoA exports.
-pub use interaction::{
-    Interaction, InteractionError, InteractionId, InteractionNodes, InteractionOrder,
-    InteractionTopology, ObjId,
-};
+pub(crate) use interaction::{Interaction, InteractionError, InteractionId};
 pub use neighbor_list::{NeighborList, NeighborListError};
-pub use phys_obj::{AttrId, AttrsCore, AttrsError, AttrsMeta, PhysObj};

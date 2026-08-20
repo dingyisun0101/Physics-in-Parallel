@@ -5,17 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ndarray::{ArrayD, IxDyn};
 
-use physics_in_parallel::math::prelude::VectorList;
-use physics_in_parallel::rng::RngConfig;
-use physics_in_parallel::space::{
-    discrete::square_lattice::{
-        BoundaryCondition, Kernel, KernelType, NearestNeighborKernel, PairGenerationError,
-        PairGenerator, PairGeneratorConfig, PairingMethod, PowerLawKernel, SourceMode,
-        SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, UniformDistanceKernel,
-        create_kernel,
-    },
-    io::square_lattice::save_square_lattice,
-    space_trait::Space,
+use physics_in_parallel::prelude::advanced::{
+    Kernel, NearestNeighborKernel, PowerLawKernel, Space, SquareLatticeAdvanced,
+    UniformDistanceKernel, save_square_lattice,
+};
+use physics_in_parallel::prelude::basic::{
+    BoundaryCondition, KernelType, PairGenerationError, PairGenerator, PairGeneratorConfig,
+    PairingMethod, RngConfig, SourceMode, SquareLattice, SquareLatticeConfig,
+    SquareLatticeInitMethod, VectorList,
 };
 
 fn rng(seed: u64) -> RngConfig {
@@ -32,9 +29,8 @@ fn unique_tmp_json(name: &str) -> PathBuf {
 
 #[test]
 fn lattice_config_and_init_public_surface() {
-    let cfg = SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::try_new(&[4; 2], BoundaryCondition::Periodic, None).unwrap();
     assert_eq!(cfg.shape(), [4, 4]);
-    assert_eq!(cfg.tensor_shape(), vec![4, 4]);
     assert_eq!(cfg.num_sites(), 16);
 
     let empty = SquareLattice::<usize>::new(cfg.clone(), SquareLatticeInitMethod::Empty).unwrap();
@@ -56,7 +52,8 @@ fn lattice_config_and_init_public_surface() {
     .unwrap();
     assert!(random.data().iter().all(|x| [11, 22, 33].contains(x)));
 
-    let cfg_1d = SquareLatticeConfig::new(&[7; 1], BoundaryCondition::Reflective, None);
+    let cfg_1d =
+        SquareLatticeConfig::try_new(&[7; 1], BoundaryCondition::Reflective, None).unwrap();
     let seeded = SquareLattice::<usize>::new(
         cfg_1d.clone(),
         SquareLatticeInitMethod::SeededCenter { val: 9 },
@@ -67,7 +64,7 @@ fn lattice_config_and_init_public_surface() {
 
 #[test]
 fn lattice_weighted_initialization_and_explicit_values_are_reproducible() {
-    let cfg = SquareLatticeConfig::new(&[64], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::try_new(&[64], BoundaryCondition::Periodic, None).unwrap();
     let init = || SquareLatticeInitMethod::RandomChoices {
         choices: vec![3usize, 7],
         weights: Some(vec![1.0, 3.0]),
@@ -91,8 +88,11 @@ fn lattice_weighted_initialization_and_explicit_values_are_reproducible() {
 
 #[test]
 fn lattice_config_owns_neighbor_geometry_and_laplacian() {
-    let periodic = SquareLatticeConfig::new(&[3], BoundaryCondition::Periodic, Some(&[2.0]));
-    assert_eq!(periodic.coordinate(2).as_deref(), Some([2].as_slice()));
+    let periodic =
+        SquareLatticeConfig::try_new(&[3], BoundaryCondition::Periodic, Some(&[2.0])).unwrap();
+    assert_eq!(periodic.coordinate(2), vec![2]);
+    assert_eq!(periodic.coordinate(-1), vec![2]);
+    assert_eq!(periodic.flat_index(&[-1]), 2);
     assert_eq!(periodic.neighbor(0, 0, -1), Some(2));
     let mut output = vec![0.0; 3];
     periodic
@@ -100,14 +100,26 @@ fn lattice_config_owns_neighbor_geometry_and_laplacian() {
         .unwrap();
     assert_eq!(output, vec![1.0, 0.25, -1.25]);
 
-    let neumann = SquareLatticeConfig::new(&[3], BoundaryCondition::Neumann, None);
+    let neumann = SquareLatticeConfig::try_new(&[3], BoundaryCondition::Neumann, None).unwrap();
     assert_eq!(neumann.neighbor(0, 0, -1), Some(0));
     assert_eq!(neumann.neighbor(2, 0, 1), Some(2));
+
+    let mut lattice = SquareLattice::new(
+        periodic,
+        SquareLatticeInitMethod::Values {
+            values: vec![10, 20, 30],
+        },
+    )
+    .unwrap();
+    assert_eq!(*lattice.get_flat(-1), 30);
+    *lattice.get_flat_mut(3) = 11;
+    lattice.set_flat(-2, 22);
+    assert_eq!(lattice.data(), &[11, 22, 30]);
 }
 
 #[test]
 fn lattice_space_trait_boundary_and_rescale_surface() {
-    let cfg = SquareLatticeConfig::new(&[5; 1], BoundaryCondition::Periodic, None);
+    let cfg = SquareLatticeConfig::try_new(&[5; 1], BoundaryCondition::Periodic, None).unwrap();
     let mut lattice =
         SquareLattice::<usize>::new(cfg, SquareLatticeInitMethod::Uniform { val: 1 }).unwrap();
 
@@ -124,7 +136,7 @@ fn lattice_space_trait_boundary_and_rescale_surface() {
     assert!(lattice.data().iter().all(|&x| x == 2));
 
     let mut reflective = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[5; 1], BoundaryCondition::Reflective, None),
+        SquareLatticeConfig::try_new(&[5; 1], BoundaryCondition::Reflective, None).unwrap(),
         SquareLatticeInitMethod::Uniform { val: 1 },
     )
     .unwrap();
@@ -134,15 +146,15 @@ fn lattice_space_trait_boundary_and_rescale_surface() {
     assert_eq!(*Space::get(&reflective, &[3]), 88);
 
     let lattice_2d = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::try_new(&[4; 2], BoundaryCondition::Periodic, None).unwrap(),
         SquareLatticeInitMethod::Uniform { val: 5 },
     )
     .unwrap();
-    let small = lattice_2d.rescale(&vec![2; lattice_2d.config().rank()]);
+    let small = lattice_2d.downsample(&vec![2; lattice_2d.config().rank()]);
     assert_eq!(small.config().shape(), [2, 2]);
     assert_eq!(small.data().len(), 4);
 
-    let clone = lattice_2d.rescale(&vec![4; lattice_2d.config().rank()]);
+    let clone = lattice_2d.downsample(&vec![4; lattice_2d.config().rank()]);
     assert_eq!(clone.config().shape(), [4, 4]);
     assert_eq!(clone.data(), lattice_2d.data());
 }
@@ -191,7 +203,7 @@ fn kernel_public_surface() {
     assert_eq!(ns.len(), 64);
     assert!(ns.iter().all(|x| *x >= 0.0 && *x < 6.0));
 
-    let k: Box<dyn Kernel> = create_kernel(KernelType::UniformDistance { l: 9.0, c: 1.5 });
+    let k: Box<dyn Kernel> = Box::new(UniformDistanceKernel::try_new(9.0, 1.5).unwrap());
     assert!(matches!(k.kind(), KernelType::UniformDistance { .. }));
     let k_clone = k.clone();
     assert_eq!(k.sample_batch_indexed(rng(91), 7, 16).unwrap().len(), 16);
@@ -487,4 +499,14 @@ fn pair_generator_rejects_invalid_configuration_without_panicking() {
             rank: 2,
         }
     );
+
+    let error = PairGenerator::new(
+        &[1],
+        PairGeneratorConfig::independent_uniform(usize::MAX, rng(1)),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        PairGenerationError::PairBufferOverflow { .. }
+    ));
 }

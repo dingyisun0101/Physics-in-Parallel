@@ -120,14 +120,10 @@ where
         self.inner.size()
     }
 
+    /// Converts a periodic multidimensional coordinate into a canonical flat index.
     #[inline]
-    /// Details:
-    /// - Purpose: Computes the scalar sum of all logical tensor entries using
-    ///   the backend's native reduction semantics.
-    /// - Parameters:
-    ///   - (none): Reads all logical entries represented by this tensor.
-    pub fn get_sum(&self) -> T {
-        self.inner.get_sum()
+    pub fn flat_index(&self, coordinate: &[isize]) -> usize {
+        self.inner.index(coordinate)
     }
 
     #[inline]
@@ -150,9 +146,24 @@ where
         self.inner.get(idx)
     }
 
+    /// Reads through a periodically normalized row-major flat index.
+    #[inline]
+    pub fn get_flat(&self, index: isize) -> T
+    where
+        T: Copy,
+    {
+        self.inner.get_flat(index)
+    }
+
     #[inline]
     pub fn get_mut(&mut self, idx: &[isize]) -> &mut T {
         self.inner.get_mut(idx)
+    }
+
+    /// Mutably borrows through a periodically normalized flat index.
+    #[inline]
+    pub fn get_flat_mut(&mut self, index: isize) -> &mut T {
+        self.inner.get_flat_mut(index)
     }
 
     #[inline]
@@ -164,6 +175,12 @@ where
     ///   - `val` (`T`): Scalar value to store at that logical coordinate.
     pub fn set(&mut self, idx: &[isize], val: T) {
         self.inner.set(idx, val);
+    }
+
+    /// Writes through a periodically normalized flat index.
+    #[inline]
+    pub fn set_flat(&mut self, index: isize, value: T) {
+        self.inner.set_flat(index, value);
     }
 
     #[inline]

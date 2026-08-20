@@ -29,9 +29,10 @@ use std::{error::Error, fmt};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::math::prelude::{
-    DenseBackend, RowMajorLayout, Scalar, ScalarSerde, Tensor, TensorError,
-};
+use crate::math::scalar::{Scalar, ScalarSerde};
+use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout};
+use crate::math::{Tensor, TensorError};
+use crate::parallel::parallel_chunk_len;
 use crate::space::space_trait::Space;
 
 use super::random::IndexedRng;
@@ -50,7 +51,7 @@ pub enum BoundaryCondition {
 
 impl BoundaryCondition {
     #[inline]
-    pub fn normalize(self, coord: isize, side_len: usize) -> usize {
+    pub(crate) fn normalize(self, coord: isize, side_len: usize) -> usize {
         debug_assert!(side_len > 0);
         match self {
             Self::Periodic => wrap_periodic(coord, side_len),
@@ -94,6 +95,9 @@ impl SquareLatticeConfig {
                     shape: shape.to_vec(),
                 }
             }
+            TensorError::IndexSpaceOverflow { .. } => SquareLatticeConfigError::SiteCountOverflow {
+                shape: shape.to_vec(),
+            },
             _ => unreachable!("row-major layout construction reports only shape errors"),
         })?;
         let spacing = match spacing {
@@ -123,7 +127,11 @@ impl SquareLatticeConfig {
     ///
     /// New fallible boundaries should prefer [`Self::try_new`].
     #[inline]
-    pub fn new(shape: &[usize], boundary: BoundaryCondition, spacing: Option<&[f64]>) -> Self {
+    pub(crate) fn new(
+        shape: &[usize],
+        boundary: BoundaryCondition,
+        spacing: Option<&[f64]>,
+    ) -> Self {
         Self::try_new(shape, boundary, spacing)
             .unwrap_or_else(|error| panic!("invalid SquareLatticeConfig: {error}"))
     }
@@ -155,7 +163,7 @@ impl SquareLatticeConfig {
     }
 
     #[inline]
-    pub fn tensor_shape(&self) -> Vec<usize> {
+    pub(crate) fn tensor_shape(&self) -> Vec<usize> {
         self.shape.clone()
     }
 
@@ -170,33 +178,56 @@ impl SquareLatticeConfig {
         &self.spacing
     }
 
-    /// Returns cached row-major strides.
-    #[inline]
-    pub fn strides(&self) -> &[usize] {
-        self.layout.strides()
+    /// Resolves a signed coordinate to its row-major site index.
+    ///
+    /// Every axis follows this lattice's configured boundary condition.
+    pub fn flat_index(&self, coordinate: &[isize]) -> usize {
+        assert_eq!(
+            coordinate.len(),
+            self.rank(),
+            "lattice coordinate rank mismatch: expected {}, got {}",
+            self.rank(),
+            coordinate.len()
+        );
+        coordinate
+            .iter()
+            .zip(self.shape.iter())
+            .zip(self.layout.strides().iter())
+            .map(|((&component, &extent), &stride)| {
+                self.boundary.normalize(component, extent) * stride
+            })
+            .sum()
     }
 
-    /// Converts a valid flat row-major site into its coordinate.
-    pub fn coordinate(&self, flat: usize) -> Option<Vec<usize>> {
-        self.layout.coordinate(flat).map(|coordinate| {
-            coordinate
-                .into_iter()
-                .map(|component| component as usize)
-                .collect()
-        })
+    /// Converts a signed flat row-major site into its canonical coordinate.
+    ///
+    /// Flat indices follow the configured boundary condition over the complete
+    /// linear site buffer, matching coordinate access without requiring caller
+    /// normalization.
+    pub fn coordinate(&self, flat: isize) -> Vec<isize> {
+        let flat = self.boundary.normalize(flat, self.num_sites());
+        self.layout
+            .coordinate(flat)
+            .expect("normalized flat lattice index is valid")
     }
 
     /// Resolves one axis neighbor under the configured boundary.
-    pub fn neighbor(&self, flat: usize, axis: usize, offset: isize) -> Option<usize> {
-        if flat >= self.num_sites() || axis >= self.rank() {
+    pub fn neighbor(&self, flat: isize, axis: usize, offset: isize) -> Option<usize> {
+        if axis >= self.rank() {
             return None;
         }
+        let flat = self.boundary.normalize(flat, self.num_sites());
+        Some(self.neighbor_canonical(flat, axis, offset))
+    }
+
+    #[inline]
+    fn neighbor_canonical(&self, flat: usize, axis: usize, offset: isize) -> usize {
         let stride = self.layout.strides()[axis];
         let coordinate = (flat / stride) % self.shape[axis];
         let normalized = self
             .boundary
             .normalize(coordinate as isize + offset, self.shape[axis]);
-        Some(flat - coordinate * stride + normalized * stride)
+        flat - coordinate * stride + normalized * stride
     }
 
     /// Applies the scalar-grid Laplacian independently to interleaved components.
@@ -217,26 +248,32 @@ impl SquareLatticeConfig {
                 output: output.len(),
             });
         }
-        for flat in 0..self.num_sites() {
-            for component in 0..components {
-                let center_index = flat * components + component;
-                let center = input[center_index];
-                let mut value = 0.0;
-                for axis in 0..self.rank() {
-                    let plus = self
-                        .neighbor(flat, axis, 1)
-                        .expect("validated site and axis");
-                    let minus = self
-                        .neighbor(flat, axis, -1)
-                        .expect("validated site and axis");
-                    value += (input[plus * components + component]
-                        + input[minus * components + component]
-                        - 2.0 * center)
-                        / self.spacing[axis].powi(2);
+        let inverse_spacing_squared: Vec<f64> = self
+            .spacing
+            .iter()
+            .map(|spacing| 1.0 / (spacing * spacing))
+            .collect();
+        let min_sites_per_job = parallel_chunk_len(self.num_sites()).unwrap_or(1);
+        output
+            .par_chunks_mut(components)
+            .with_min_len(min_sites_per_job)
+            .enumerate()
+            .for_each(|(flat, output_site)| {
+                output_site.fill(0.0);
+                let center_start = flat * components;
+                for (axis, inverse_spacing_squared) in
+                    inverse_spacing_squared.iter().copied().enumerate()
+                {
+                    let plus_start = self.neighbor_canonical(flat, axis, 1) * components;
+                    let minus_start = self.neighbor_canonical(flat, axis, -1) * components;
+                    for component in 0..components {
+                        output_site[component] += (input[plus_start + component]
+                            + input[minus_start + component]
+                            - 2.0 * input[center_start + component])
+                            * inverse_spacing_squared;
+                    }
                 }
-                output[center_index] = value;
-            }
-        }
+            });
         Ok(())
     }
 }
@@ -421,9 +458,11 @@ impl<T: Scalar> SquareLattice<T> {
                 let key = IndexedRng::new(rng).map_err(SquareLatticeConfigError::RngConfig)?;
                 lattice.initialization_rng = Some(key.rng_config());
                 let cumulative = cumulative_weights(&choices, weights.as_deref())?;
+                let min_sites_per_job = parallel_chunk_len(lattice.num_sites()).unwrap_or(1);
                 lattice
                     .cells_mut()
                     .par_iter_mut()
+                    .with_min_len(min_sites_per_job)
                     .enumerate()
                     .for_each(|(index, slot)| {
                         let selected = match &cumulative {
@@ -475,7 +514,7 @@ impl<T: Scalar> SquareLattice<T> {
         Ok(lattice)
     }
 
-    pub fn downsample(&self, target_shape: &[usize]) -> Self {
+    pub(crate) fn downsample(&self, target_shape: &[usize]) -> Self {
         assert_eq!(
             target_shape.len(),
             self.cfg.rank(),
@@ -514,8 +553,10 @@ impl<T: Scalar> SquareLattice<T> {
             initialization_rng: None,
         };
 
+        let min_sites_per_job = parallel_chunk_len(new.num_sites()).unwrap_or(1);
         new.cells_mut()
             .par_iter_mut()
+            .with_min_len(min_sites_per_job)
             .enumerate()
             .for_each(|(flat, slot)| {
                 let mut rem = flat;
@@ -530,16 +571,10 @@ impl<T: Scalar> SquareLattice<T> {
                     .enumerate()
                     .map(|(axis, &x)| (x as f64 * scale[axis]).floor() as isize)
                     .collect();
-                let coord_old = self.boundary_index(&coord_old);
-                *slot = self.cells.get(&coord_old);
+                *slot = *self.get(&coord_old);
             });
 
         new
-    }
-
-    #[inline]
-    pub fn rescale(&self, target_shape: &[usize]) -> Self {
-        self.downsample(target_shape)
     }
 }
 
@@ -559,6 +594,70 @@ impl<T: Scalar> SquareLattice<T> {
     #[inline]
     pub fn data(&self) -> &[T] {
         self.cells.storage().data()
+    }
+
+    /// Returns the tensor-style lattice shape.
+    #[inline]
+    pub fn shape(&self) -> &[usize] {
+        self.cfg.shape()
+    }
+
+    /// Returns the number of spatial axes.
+    #[inline]
+    pub fn rank(&self) -> usize {
+        self.cfg.rank()
+    }
+
+    /// Returns the total number of lattice sites.
+    #[inline]
+    pub fn num_sites(&self) -> usize {
+        self.cfg.num_sites()
+    }
+
+    /// Borrows a site after applying the configured boundary condition.
+    #[inline]
+    pub fn get(&self, coord: &[isize]) -> &T {
+        &self.data()[self.cfg.flat_index(coord)]
+    }
+
+    /// Mutably borrows a site after applying the configured boundary condition.
+    #[inline]
+    pub fn get_mut(&mut self, coord: &[isize]) -> &mut T {
+        let flat = self.cfg.flat_index(coord);
+        &mut self.cells_mut()[flat]
+    }
+
+    /// Stores one site after applying the configured boundary condition.
+    #[inline]
+    pub fn set(&mut self, coord: &[isize], value: T) {
+        let flat = self.cfg.flat_index(coord);
+        self.cells_mut()[flat] = value;
+    }
+
+    /// Borrows a site through a signed flat index under the configured boundary.
+    #[inline]
+    pub fn get_flat(&self, flat: isize) -> &T {
+        let flat = self.cfg.boundary.normalize(flat, self.num_sites());
+        &self.data()[flat]
+    }
+
+    /// Mutably borrows a site through a signed flat index under the configured boundary.
+    #[inline]
+    pub fn get_flat_mut(&mut self, flat: isize) -> &mut T {
+        let flat = self.cfg.boundary.normalize(flat, self.num_sites());
+        &mut self.cells_mut()[flat]
+    }
+
+    /// Stores one site through a signed flat index under the configured boundary.
+    #[inline]
+    pub fn set_flat(&mut self, flat: isize, value: T) {
+        *self.get_flat_mut(flat) = value;
+    }
+
+    /// Fills every lattice site with one value.
+    #[inline]
+    pub fn fill(&mut self, value: T) {
+        self.cells.fill(value);
     }
 
     #[inline]
@@ -586,22 +685,6 @@ impl<T: Scalar> SquareLattice<T> {
             initialization_rng: None,
         }
     }
-
-    #[inline]
-    pub(crate) fn boundary_index(&self, coord: &[isize]) -> Vec<isize> {
-        assert_eq!(
-            coord.len(),
-            self.cfg.rank(),
-            "lattice coordinate rank mismatch: expected {}, got {}",
-            self.cfg.rank(),
-            coord.len()
-        );
-        coord
-            .iter()
-            .zip(self.cfg.shape().iter())
-            .map(|(&c, &axis_len)| self.cfg.boundary().normalize(c, axis_len) as isize)
-            .collect()
-    }
 }
 
 impl<T: ScalarSerde> Space<T> for SquareLattice<T> {
@@ -622,20 +705,17 @@ impl<T: ScalarSerde> Space<T> for SquareLattice<T> {
 
     #[inline]
     fn get(&self, coord: &[isize]) -> &T {
-        let coord = self.boundary_index(coord);
-        self.cells.get_mut_for_ref(&coord)
+        self.get(coord)
     }
 
     #[inline]
     fn get_mut(&mut self, coord: &[isize]) -> &mut T {
-        let coord = self.boundary_index(coord);
-        self.cells.get_mut(&coord)
+        self.get_mut(coord)
     }
 
     #[inline]
     fn set(&mut self, coord: &[isize], val: T) {
-        let coord = self.boundary_index(coord);
-        self.cells.set(&coord, val);
+        self.set(coord, val);
     }
 
     #[inline]
@@ -646,7 +726,7 @@ impl<T: ScalarSerde> Space<T> for SquareLattice<T> {
 
     #[inline]
     fn set_all(&mut self, val: T) {
-        self.cells.fill(val);
+        self.fill(val);
     }
 }
 
@@ -702,22 +782,5 @@ fn reflect_coordinate(coord: isize, side_len: usize) -> usize {
         (period - reflected) as usize
     } else {
         reflected as usize
-    }
-}
-
-trait TensorRefGet<T: Scalar> {
-    fn get_mut_for_ref(&self, coord: &[isize]) -> &T;
-}
-
-impl<T: Scalar> TensorRefGet<T> for Tensor<T, DenseBackend> {
-    #[inline]
-    fn get_mut_for_ref(&self, coord: &[isize]) -> &T {
-        let data = self.storage().data();
-        let shape = self.shape();
-        let mut flat = 0usize;
-        for (&c, &dim) in coord.iter().zip(shape.iter()) {
-            flat = flat * dim + c as usize;
-        }
-        &data[flat]
     }
 }

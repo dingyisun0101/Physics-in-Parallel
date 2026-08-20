@@ -1,4 +1,18 @@
-use physics_in_parallel::math::tensor::{Dense, RowMajorLayout, Sparse, Tensor};
+use physics_in_parallel::prelude::advanced::{Dense, RowMajorLayout, Sparse};
+use physics_in_parallel::prelude::basic::{
+    DEFAULT_PARALLEL_PARTITIONS, ParallelismError, Tensor, parallel_partitions,
+    set_parallel_partitions,
+};
+
+#[test]
+fn process_parallel_partition_policy_has_a_safe_default() {
+    assert_eq!(DEFAULT_PARALLEL_PARTITIONS, 8);
+    assert_eq!(
+        set_parallel_partitions(0),
+        Err(ParallelismError::ZeroPartitions)
+    );
+    assert_eq!(parallel_partitions(), DEFAULT_PARALLEL_PARTITIONS);
+}
 
 #[test]
 fn row_major_layout_round_trips_flat_and_wrapped_coordinates() {
@@ -32,6 +46,23 @@ fn dense_get_set_and_periodic_indexing_are_consistent() {
     assert_eq!(t.get(&[-1, -1]), 22);
     assert_eq!(t.get(&[2, 3]), 10);
     assert_eq!(t.get(&[-1, -1]), t.get(&[1, 2]));
+
+    assert_eq!(t.flat_index(&[-1, -1]), 5);
+    assert_eq!(t.get_flat(-1), 22);
+    *t.get_flat_mut(6) = 99;
+    assert_eq!(t.get(&[0, 0]), 99);
+    t.set_flat(-2, 77);
+    assert_eq!(t.get(&[1, 1]), 77);
+}
+
+#[test]
+fn tensor_layout_rejects_shapes_outside_signed_index_space() {
+    let error = RowMajorLayout::try_new(&[isize::MAX as usize, 2]).unwrap_err();
+    assert!(matches!(
+        error,
+        physics_in_parallel::prelude::basic::TensorError::IndexSpaceOverflow { .. }
+            | physics_in_parallel::prelude::basic::TensorError::ShapeProductOverflow { .. }
+    ));
 }
 
 #[test]

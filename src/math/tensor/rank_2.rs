@@ -1,11 +1,2 @@
-pub mod matrix;
-pub mod vector_list;
-pub use vector_list::rand as vector_list_rand;
-
-pub use matrix::{
-    AntiSymmetric, AntiSymmetricMatrix, DenseMatrix, Diagonal, DiagonalMatrix,
-    LowerTriangularMatrix, Matrix, MatrixBackend, MatrixError, RankNDense, RankNSparse,
-    SparseMatrix, StrictLowerTriangularMatrix, StrictUpperTriangularMatrix, Symmetric,
-    SymmetricMatrix, Triangular, UpperTriangularMatrix,
-};
-pub use vector_list::{HaarVectors, NNVectors, VectorList, VectorListRand};
+pub(crate) mod matrix;
+pub(crate) mod vector_list;

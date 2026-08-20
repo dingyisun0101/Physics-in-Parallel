@@ -20,7 +20,7 @@ where
     where
         S: Serializer,
     {
-        let shape = [self.num_vecs(), self.dim()];
+        let shape = [self.num_vectors(), self.dim()];
         ensure_finite(self.as_tensor().data(), "vector_list").map_err(serde::ser::Error::custom)?;
         FlatPayloadRef::new("vector_list", &shape, self.as_tensor().data()).serialize(serializer)
     }
@@ -50,7 +50,7 @@ where
             .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
         Ok(FlatPayload::new(
             "vector_list",
-            vec![self.num_vecs(), self.dim()],
+            vec![self.num_vectors(), self.dim()],
             self.as_tensor().data().to_vec(),
         ))
     }
@@ -107,7 +107,7 @@ impl<T: Scalar + Copy> VectorList<T> {
 
     pub fn to_ndarray(&self) -> Array2<T> {
         Array2::from_shape_vec(
-            (self.num_vecs(), self.dim()),
+            (self.num_vectors(), self.dim()),
             self.as_tensor().data().to_vec(),
         )
         .expect("VectorList::to_ndarray: shape/data length mismatch")

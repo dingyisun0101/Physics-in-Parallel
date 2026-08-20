@@ -1,7 +1,7 @@
 use ndarray::{Array1, Array2, array};
 
-use physics_in_parallel::math::scalar::Complex;
-use physics_in_parallel::math::tensor::{Dense, Tensor};
+use physics_in_parallel::prelude::advanced::Dense;
+use physics_in_parallel::prelude::basic::{Complex, Tensor};
 
 fn dense_from_array2(array: &Array2<f64>) -> Tensor<f64, Dense> {
     let shape = array.shape();

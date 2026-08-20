@@ -3,7 +3,7 @@ Vector-list wrapper over dense rank-N tensor storage.
 
 Purpose:
     `VectorList<T>` stores a long list of fixed-length vectors as one dense
-    rank-N tensor with logical shape `[num_vecs, dim]`. The wrapper exists so
+    rank-N tensor with logical shape `[num_vectors, dim]`. The wrapper exists so
     users can work with complete vectors as the common manipulation unit instead
     of repeatedly addressing individual scalar tensor entries.
 
@@ -11,15 +11,15 @@ Storage model:
     - Backend:
         `Tensor<T, Dense>`.
     - Shape:
-        `[num_vecs, dim]`, where `num_vecs` is the number of vectors and `dim`
+        `[num_vectors, dim]`, where `num_vectors` is the number of vectors and `dim`
         is the component count in each vector.
     - Layout:
         Row-major dense storage. Each vector occupies one contiguous row, so
-        `get_vec` and `get_vec_mut` can return zero-copy slices.
+        `vector` and `vector_mut` can return zero-copy slices.
 
 API boundary:
-    - Public methods use vector-list language: `get_vec`, `set_vec`,
-        `num_vecs`, `dim`, `axis`, `normalize`.
+    - Public methods use vector-list language: `vector`, `set_vector`,
+        `num_vectors`, `dim`, `axis`, `normalize`.
     - Scalar `get` and `set` remain available for sanity checks and targeted
         component edits.
     - Direct dense tensor access is crate-internal. Other PiP modules may use it
@@ -41,8 +41,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::math::tensor::rank_n::dense::Tensor as DenseStorage;
-use crate::math::tensor::{Dense, Tensor};
+use crate::math::tensor::rank_n::{Dense, Tensor};
 use crate::math::{Scalar, ScalarCastError};
+use crate::parallel::parallel_chunk_len;
 
 #[derive(Debug, Clone)]
 pub struct VectorList<T: Scalar> {
@@ -53,7 +54,7 @@ pub trait DynVectorList: std::fmt::Debug + Send + Sync + erased_serde::Serialize
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn dim(&self) -> usize;
-    fn num_vecs(&self) -> usize;
+    fn num_vectors(&self) -> usize;
     fn type_name(&self) -> &'static str;
     fn scalar_kind(&self) -> &'static str;
     fn clone_box(&self) -> Box<dyn DynVectorList>;
@@ -85,8 +86,8 @@ where
         self.dim()
     }
 
-    fn num_vecs(&self) -> usize {
-        self.num_vecs()
+    fn num_vectors(&self) -> usize {
+        self.num_vectors()
     }
 
     fn type_name(&self) -> &'static str {
@@ -112,41 +113,41 @@ where
 
 impl<T: Scalar> VectorList<T> {
     #[inline]
-    pub fn empty(dim: usize, num_vecs: usize) -> Self {
+    pub fn empty(dim: usize, num_vectors: usize) -> Self {
         assert!(
-            dim > 0 && num_vecs > 0,
-            "VectorList::empty: dim and num_vecs must be nonzero"
+            dim > 0 && num_vectors > 0,
+            "VectorList::empty: dim and num_vectors must be nonzero"
         );
         Self {
-            tensor: Tensor::<T, Dense>::empty(&[num_vecs, dim]),
+            tensor: Tensor::<T, Dense>::empty(&[num_vectors, dim]),
         }
     }
 
     #[inline]
-    pub fn zeros(dim: usize, num_vecs: usize) -> Self {
-        Self::empty(dim, num_vecs)
+    pub fn zeros(dim: usize, num_vectors: usize) -> Self {
+        Self::empty(dim, num_vectors)
     }
 
     #[inline]
-    pub fn from_vec(dim: usize, num_vecs: usize, data: Vec<T>) -> Self {
+    pub fn from_vec(dim: usize, num_vectors: usize, data: Vec<T>) -> Self {
         assert!(
-            dim > 0 && num_vecs > 0,
-            "VectorList::from_vec: dim and num_vecs must be nonzero"
+            dim > 0 && num_vectors > 0,
+            "VectorList::from_vec: dim and num_vectors must be nonzero"
         );
         Self {
-            tensor: Tensor::<T, Dense>::from_vec(&[num_vecs, dim], data),
+            tensor: Tensor::<T, Dense>::from_vec(&[num_vectors, dim], data),
         }
     }
 
-    pub fn from_fn<F>(dim: usize, num_vecs: usize, mut f: F) -> Self
+    pub fn from_fn<F>(dim: usize, num_vectors: usize, mut f: F) -> Self
     where
         F: FnMut(usize, usize) -> T,
     {
-        let data = (0..num_vecs)
+        let data = (0..num_vectors)
             .flat_map(|i| (0..dim).map(move |k| (i, k)))
             .map(|(i, k)| f(i, k))
             .collect();
-        Self::from_vec(dim, num_vecs, data)
+        Self::from_vec(dim, num_vectors, data)
     }
 
     #[inline]
@@ -179,18 +180,13 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
-    pub fn num_vecs(&self) -> usize {
+    pub fn num_vectors(&self) -> usize {
         self.tensor.shape()[0]
     }
 
     #[inline]
-    pub fn num_vectors(&self) -> usize {
-        self.num_vecs()
-    }
-
-    #[inline]
     pub fn shape(&self) -> [usize; 2] {
-        [self.num_vecs(), self.dim()]
+        [self.num_vectors(), self.dim()]
     }
 
     #[inline]
@@ -207,50 +203,40 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
-    pub fn get_vec(&self, i: isize) -> &[T] {
-        let row = wrap_index(i, self.num_vecs());
+    pub fn vector(&self, i: isize) -> &[T] {
+        let row = wrap_index(i, self.num_vectors());
         let dim = self.dim();
         let start = row * dim;
         &self.as_tensor().data()[start..start + dim]
     }
 
     #[inline]
-    pub fn get_vec_mut(&mut self, i: isize) -> &mut [T] {
-        let row = wrap_index(i, self.num_vecs());
+    pub fn vector_mut(&mut self, i: isize) -> &mut [T] {
+        let row = wrap_index(i, self.num_vectors());
         let dim = self.dim();
         let start = row * dim;
         &mut self.as_tensor_mut().data_mut()[start..start + dim]
     }
 
     #[inline]
-    pub fn get_vec_owned(&self, i: isize) -> Vec<T>
+    pub fn vector_owned(&self, i: isize) -> Vec<T>
     where
         T: Copy,
     {
-        self.get_vec(i).to_vec()
+        self.vector(i).to_vec()
     }
 
     #[inline]
-    pub fn get_vector(&self, i: isize) -> &[T] {
-        self.get_vec(i)
-    }
-
-    #[inline]
-    pub fn get_vector_mut(&mut self, i: isize) -> &mut [T] {
-        self.get_vec_mut(i)
-    }
-
-    #[inline]
-    pub fn set_vec(&mut self, i: isize, values: &[T])
+    pub fn set_vector(&mut self, i: isize, values: &[T])
     where
         T: Copy,
     {
         assert_eq!(
             values.len(),
             self.dim(),
-            "VectorList::set_vec: vector length mismatch"
+            "VectorList::set_vector: vector length mismatch"
         );
-        self.get_vec_mut(i).copy_from_slice(values);
+        self.vector_mut(i).copy_from_slice(values);
     }
 
     #[inline]
@@ -267,22 +253,14 @@ impl<T: Scalar> VectorList<T> {
     }
 
     #[inline]
-    pub fn get_axis(&self, k: isize) -> Vec<T>
-    where
-        T: Copy,
-    {
-        self.axis(k)
-    }
-
-    #[inline]
-    pub fn set_axis_from_slice(&mut self, k: isize, values: &[T])
+    pub fn set_axis(&mut self, k: isize, values: &[T])
     where
         T: Copy,
     {
         assert_eq!(
             values.len(),
-            self.num_vecs(),
-            "VectorList::set_axis_from_slice: length mismatch"
+            self.num_vectors(),
+            "VectorList::set_axis: length mismatch"
         );
         let axis = wrap_index(k, self.dim());
         let dim = self.dim();
@@ -291,14 +269,6 @@ impl<T: Scalar> VectorList<T> {
             .chunks_exact_mut(dim)
             .zip(values.iter().copied())
             .for_each(|(row, value)| row[axis] = value);
-    }
-
-    #[inline]
-    pub fn set_vector_from_slice(&mut self, i: isize, values: &[T])
-    where
-        T: Copy,
-    {
-        self.set_vec(i, values);
     }
 
     #[inline]
@@ -313,12 +283,12 @@ impl<T: Scalar> VectorList<T> {
     where
         T: Copy,
     {
-        for i in 0..self.num_vecs() {
-            println!("{:?}", self.get_vec(i as isize));
+        for i in 0..self.num_vectors() {
+            println!("{:?}", self.vector(i as isize));
         }
     }
 
-    pub fn par_for_each_vec<F>(&self, f: F)
+    pub fn par_for_each_vector<F>(&self, f: F)
     where
         T: Sync,
         F: Fn(usize, &[T]) + Send + Sync,
@@ -326,19 +296,22 @@ impl<T: Scalar> VectorList<T> {
         self.as_tensor()
             .data()
             .par_chunks_exact(self.dim())
+            .with_min_len(parallel_chunk_len(self.num_vectors()).unwrap_or(1))
             .enumerate()
             .for_each(|(i, row)| f(i, row));
     }
 
-    pub fn par_for_each_vec_mut<F>(&mut self, f: F)
+    pub fn par_for_each_vector_mut<F>(&mut self, f: F)
     where
         T: Send,
         F: Fn(usize, &mut [T]) + Send + Sync,
     {
         let dim = self.dim();
+        let min_vectors_per_job = parallel_chunk_len(self.num_vectors()).unwrap_or(1);
         self.as_tensor_mut()
             .data_mut()
             .par_chunks_exact_mut(dim)
+            .with_min_len(min_vectors_per_job)
             .enumerate()
             .for_each(|(i, row)| f(i, row));
     }
@@ -349,22 +322,23 @@ impl<T: Scalar> VectorList<T> {
     {
         assert_eq!(
             scales.len(),
-            self.num_vecs(),
+            self.num_vectors(),
             "VectorList::scale_vectors_by_list: length mismatch"
         );
-        self.par_for_each_vec_mut(|i, row| {
+        self.par_for_each_vector_mut(|i, row| {
             let scale = scales[i];
             row.iter_mut().for_each(|x| *x = *x * scale);
         });
     }
 
-    pub fn get_norms(&self) -> Vec<T>
+    pub fn norms(&self) -> Vec<T>
     where
         T: Copy + Send + Sync,
     {
         self.as_tensor()
             .data()
             .par_chunks_exact(self.dim())
+            .with_min_len(parallel_chunk_len(self.num_vectors()).unwrap_or(1))
             .map(|row| {
                 let sum = row
                     .iter()
@@ -385,6 +359,7 @@ impl<T: Scalar> VectorList<T> {
         self.as_tensor()
             .data()
             .par_chunks_exact(self.dim())
+            .with_min_len(parallel_chunk_len(self.num_vectors()).unwrap_or(1))
             .map(|row| {
                 row.iter()
                     .copied()
@@ -400,9 +375,10 @@ impl<T: Scalar> VectorList<T> {
     where
         T: Copy + Send + Sync,
     {
-        let norms = self.get_norms();
+        let norms = self.norms();
         let scales: Vec<T> = norms
             .par_iter()
+            .with_min_len(parallel_chunk_len(norms.len()).unwrap_or(1))
             .copied()
             .map(|norm| {
                 if norm == T::zero() {
@@ -419,10 +395,11 @@ impl<T: Scalar> VectorList<T> {
     where
         T: Copy + Send + Sync,
     {
-        let norms = self.get_norms();
+        let norms = self.norms();
         let mut units = self.clone();
         let scales: Vec<T> = norms
             .par_iter()
+            .with_min_len(parallel_chunk_len(norms.len()).unwrap_or(1))
             .copied()
             .map(|norm| {
                 if norm == T::zero() {
@@ -526,10 +503,11 @@ macro_rules! impl_vl_scalar_binop {
                     .as_tensor()
                     .data()
                     .par_iter()
+                    .with_min_len(parallel_chunk_len(self.as_tensor().data().len()).unwrap_or(1))
                     .copied()
                     .map(|x| x $op rhs)
                     .collect();
-                VectorList::from_vec(self.dim(), self.num_vecs(), data)
+                VectorList::from_vec(self.dim(), self.num_vectors(), data)
             }
         }
     };

@@ -1,4 +1,4 @@
-use physics_in_parallel::space::continuous::boundary::{
+use physics_in_parallel::prelude::basic::{
     BoundaryError, ClampBox, ContinuousBoundary, PeriodicBox, ReflectBox,
 };
 

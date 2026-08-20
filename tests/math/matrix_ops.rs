@@ -1,8 +1,8 @@
-use physics_in_parallel::math::scalar::Complex;
-use physics_in_parallel::math::tensor::{
-    DenseMatrix, DiagonalMatrix, SparseMatrix, StrictUpperTriangularMatrix, SymmetricMatrix,
+use physics_in_parallel::prelude::advanced::{
+    DiagonalMatrix, SparseMatrix, StrictUpperTriangularMatrix, SymmetricMatrix,
     UpperTriangularMatrix,
 };
+use physics_in_parallel::prelude::basic::{Complex, DenseMatrix, MatrixError};
 
 use crate::matrix_support::{assert_panics, print_matrix};
 
@@ -40,6 +40,28 @@ fn type_preserving_dense_matrix_ops_match_manual_results() {
     assert_eq!(absolute.get(1, 1), 4);
 
     assert_eq!(a.max_abs_real(), 4);
+}
+
+#[test]
+fn batched_matrix_application_infers_vectors_and_reuses_output() {
+    let matrix = DenseMatrix::<i64>::from_vec(2, 3, vec![1, 2, 3, 4, 5, 6]);
+    let input = [1, 0, 1, 2, 1, 0];
+    let mut output = [0; 4];
+    matrix.mul_vectors_into(&input, &mut output).unwrap();
+    assert_eq!(output, [4, 10, 4, 13]);
+
+    assert_eq!(matrix.get_flat(-1), 6);
+    let mut writable = matrix.clone();
+    writable.set_flat(6, 9);
+    assert_eq!(writable.get(0, 0), 9);
+
+    assert!(matches!(
+        matrix.mul_vectors_into(&[1, 2], &mut []),
+        Err(MatrixError::BatchInputLength {
+            columns: 3,
+            actual: 2
+        })
+    ));
 }
 
 #[test]

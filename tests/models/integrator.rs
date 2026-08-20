@@ -1,43 +1,38 @@
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::models::particles::attrs::{
-    ATTR_A, ATTR_R, ATTR_RIGID, ATTR_V, set_alive, set_rigid,
-};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::integrator::{
-    ExplicitEuler, Integrator, IntegratorError, SemiImplicitEuler,
-};
+use physics_in_parallel::prelude::advanced::PhysObjAdvanced;
+use physics_in_parallel::prelude::basic::*;
+use physics_in_parallel::prelude::models::*;
 
 #[test]
 fn euler_updates_v_then_r() {
     let mut obj = create_template(1, 1).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_R, 0, &[0.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_A, 0, &[2.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_R, 0, &[0.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_A, 0, &[2.0]).unwrap();
 
     let mut explicit = ExplicitEuler;
     explicit.apply(&mut obj, 0.5).unwrap();
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_V, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_V, 0).unwrap(),
         [2.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
         [0.5].as_slice()
     );
 
     let mut obj2 = create_template(1, 1).unwrap();
-    obj2.core.set_vector_of::<f64>(ATTR_R, 0, &[0.0]).unwrap();
-    obj2.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
-    obj2.core.set_vector_of::<f64>(ATTR_A, 0, &[2.0]).unwrap();
+    obj2.set_attribute_vector::<f64>(ATTR_R, 0, &[0.0]).unwrap();
+    obj2.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+    obj2.set_attribute_vector::<f64>(ATTR_A, 0, &[2.0]).unwrap();
 
     let mut semi = SemiImplicitEuler;
     semi.apply(&mut obj2, 0.5).unwrap();
     assert_eq!(
-        obj2.core.vector_of::<f64>(ATTR_V, 0).unwrap(),
+        obj2.attribute_vector::<f64>(ATTR_V, 0).unwrap(),
         [2.0].as_slice()
     );
     assert_eq!(
-        obj2.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        obj2.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
         [1.0].as_slice()
     );
 }
@@ -47,19 +42,19 @@ fn integrator_respects_alive_mask_and_validates_dt() {
     let mut obj = create_template(1, 1).unwrap();
     set_alive(&mut obj, 0, false).unwrap();
 
-    obj.core.set_vector_of::<f64>(ATTR_R, 0, &[3.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[4.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_A, 0, &[5.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_R, 0, &[3.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[4.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_A, 0, &[5.0]).unwrap();
 
     let mut explicit = ExplicitEuler;
     explicit.apply(&mut obj, 0.5).unwrap();
 
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
         [3.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_V, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_V, 0).unwrap(),
         [4.0].as_slice()
     );
 
@@ -70,35 +65,35 @@ fn integrator_respects_alive_mask_and_validates_dt() {
 #[test]
 fn integrator_respects_rigid_mask_and_does_not_clear_acceleration() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_R, 0, &[0.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_A, 0, &[2.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_R, 1, &[10.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 1, &[3.0]).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_A, 1, &[4.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_R, 0, &[0.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_A, 0, &[2.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_R, 1, &[10.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 1, &[3.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_A, 1, &[4.0]).unwrap();
     set_rigid(&mut obj, 1, true).unwrap();
 
     let mut semi = SemiImplicitEuler;
     semi.apply(&mut obj, 0.5).unwrap();
 
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_R, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
         [1.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_V, 0).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_V, 0).unwrap(),
         [2.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_R, 1).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_R, 1).unwrap(),
         [10.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_V, 1).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_V, 1).unwrap(),
         [3.0].as_slice()
     );
     assert_eq!(
-        obj.core.vector_of::<f64>(ATTR_A, 1).unwrap(),
+        obj.attribute_vector::<f64>(ATTR_A, 1).unwrap(),
         [4.0].as_slice()
     );
 }
@@ -106,9 +101,9 @@ fn integrator_respects_rigid_mask_and_does_not_clear_acceleration() {
 #[test]
 fn integrator_reports_shape_errors() {
     let mut bad_accel = create_template(1, 2).unwrap();
-    bad_accel.core.remove(ATTR_A).unwrap();
+    bad_accel.attributes_mut().remove(ATTR_A).unwrap();
     bad_accel
-        .core
+        .attributes_mut()
         .insert(ATTR_A, VectorList::<f64>::empty(2, 2))
         .unwrap();
 
@@ -123,9 +118,9 @@ fn integrator_reports_shape_errors() {
     );
 
     let mut bad_rigid = create_template(1, 2).unwrap();
-    bad_rigid.core.remove(ATTR_RIGID).unwrap();
+    bad_rigid.attributes_mut().remove(ATTR_RIGID).unwrap();
     bad_rigid
-        .core
+        .attributes_mut()
         .insert(ATTR_RIGID, VectorList::<u8>::empty(2, 2))
         .unwrap();
 

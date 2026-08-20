@@ -21,8 +21,9 @@ Indexed fillers additionally expose exact uniform `usize` index sampling over
 
 `new` and `try_new` construct stateful fillers. `try_new_indexed` constructs an
 explicit-step filler. `RngConfig` selects deterministic seeding and the RNG
-family; omitted values use documented defaults. Parallel fills use the static
-crate-wide [`NUM_RNGS`] partition count.
+family; omitted values use documented defaults. [`NUM_RNGS`] fixes deterministic
+random lanes; the process-wide PiP partition setting independently caps Rayon
+jobs.
 */
 
 use std::{error::Error, fmt};
@@ -35,14 +36,19 @@ use rand_pcg::{Pcg64, Pcg64Mcg};
 use rayon::prelude::*;
 
 use crate::math::scalar::Scalar;
-use crate::math::tensor::dense::Tensor;
+use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
+use crate::math::tensor::rank_n::generic::{Dense, Tensor};
+use crate::parallel::{lanes_per_job, parallel_chunk_len};
 use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 
 //===================================================================
 // ---------------------------- Config ------------------------------
 //===================================================================
 
-/// Static number of random-fill partitions used by PiP tensor backends.
+/// Fixed deterministic RNG lane count used by stateful tensor fillers.
+///
+/// Execution parallelism is controlled independently, so changing PiP's
+/// partition limit does not change the stateful random mapping.
 pub const NUM_RNGS: usize = 32;
 
 //===================================================================
@@ -210,7 +216,8 @@ impl TensorRandFiller {
 
     /// Constructs a schedule-independent filler for explicit scientific steps.
     ///
-    /// PiP uses the static [`NUM_RNGS`] partition count for parallel filling.
+    /// PiP keeps [`NUM_RNGS`] deterministic lanes while independently capping
+    /// the number of Rayon jobs through its process-wide partition setting.
     pub fn try_new_indexed(kind: RandType, rng: RngConfig) -> Result<Self, TensorRandError> {
         let rng = rng
             .resolve_for(
@@ -272,13 +279,18 @@ impl TensorRandFiller {
         }
     }
 
+    #[inline]
+    fn indexed_chunk_len(&self, n: usize) -> Option<usize> {
+        parallel_chunk_len(n)
+    }
+
     /// Refresh tensor values in-place.
     ///
     /// Panics:
     /// - when the filler distribution is invalid for `T`;
     /// - when distribution parameters are invalid.
     #[inline]
-    pub fn refresh<T: TensorRandElement>(&mut self, tensor: &mut Tensor<T>) {
+    pub fn refresh<T: TensorRandElement>(&mut self, tensor: &mut Tensor<T, Dense>) {
         self.try_refresh(tensor)
             .expect("invalid tensor random refresh configuration");
     }
@@ -287,7 +299,17 @@ impl TensorRandFiller {
     #[inline]
     pub fn try_refresh<T: TensorRandElement>(
         &mut self,
-        tensor: &mut Tensor<T>,
+        tensor: &mut Tensor<T, Dense>,
+    ) -> Result<(), TensorRandError> {
+        if self.indexed.is_some() {
+            return Err(TensorRandError::IndexedStepRequired);
+        }
+        T::try_fill(self, tensor.storage_mut())
+    }
+
+    pub(crate) fn try_refresh_dense<T: TensorRandElement>(
+        &mut self,
+        tensor: &mut DenseTensor<T>,
     ) -> Result<(), TensorRandError> {
         if self.indexed.is_some() {
             return Err(TensorRandError::IndexedStepRequired);
@@ -312,8 +334,7 @@ impl TensorRandFiller {
 
     /// Fills a slice reproducibly for an explicit step and random domain.
     ///
-    /// Results do not depend on Rayon scheduling. PiP uses [`NUM_RNGS`] static
-    /// partitions for parallel filling.
+    /// Results do not depend on Rayon scheduling or execution partition count.
     pub fn try_fill_slice_at<T: TensorRandElement>(
         &self,
         values: &mut [T],
@@ -359,7 +380,7 @@ impl TensorRandFiller {
         let Some(key) = self.indexed else {
             return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
         };
-        let Some((_, chunk_len)) = self.chunk_plan(values.len()) else {
+        let Some(chunk_len) = self.indexed_chunk_len(values.len()) else {
             return Ok(());
         };
         values
@@ -372,6 +393,61 @@ impl TensorRandFiller {
                         .uniform_index(step, domain, (start + offset) as u64, 0, upper)
                         .expect("validated positive uniform-index upper bound");
                 }
+            });
+        Ok(())
+    }
+
+    /// Samples two independent uniform indices per row and maps them directly
+    /// into three caller-owned row-major buffers.
+    ///
+    /// This crate-internal bridge keeps indexed sampling inside the random
+    /// backend while allowing consumers to assemble final records without
+    /// allocating temporary index arrays.
+    pub(crate) fn try_fill_index_pairs_with<T, F>(
+        &self,
+        buffers: (&mut [T], &mut [T], &mut [T]),
+        components: usize,
+        upper: usize,
+        step: u64,
+        domains: (u64, u64),
+        map: F,
+    ) -> Result<(), TensorRandError>
+    where
+        T: Send,
+        F: Fn(usize, usize, &mut [T], &mut [T], &mut [T]) + Send + Sync,
+    {
+        let (first, second, third) = buffers;
+        let (first_domain, second_domain) = domains;
+        assert!(components > 0, "indexed pair components must be positive");
+        assert_eq!(first.len(), second.len(), "indexed pair buffer mismatch");
+        assert_eq!(first.len(), third.len(), "indexed pair buffer mismatch");
+        assert_eq!(
+            first.len() % components,
+            0,
+            "indexed pair buffers must contain complete rows"
+        );
+        if upper == 0 {
+            return Err(TensorRandError::InvalidIndexUpperBound);
+        }
+        let Some(key) = self.indexed else {
+            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
+        };
+        let rows = first.len() / components;
+        let min_rows_per_job = parallel_chunk_len(rows).unwrap_or(1);
+        first
+            .par_chunks_mut(components)
+            .zip(second.par_chunks_mut(components))
+            .zip(third.par_chunks_mut(components))
+            .with_min_len(min_rows_per_job)
+            .enumerate()
+            .for_each(|(row, ((first, second), third))| {
+                let first_index = key
+                    .uniform_index(step, first_domain, row as u64, 0, upper)
+                    .expect("validated positive uniform-index upper bound");
+                let second_index = key
+                    .uniform_index(step, second_domain, row as u64, 0, upper)
+                    .expect("validated positive uniform-index upper bound");
+                map(first_index, second_index, first, second, third);
             });
         Ok(())
     }
@@ -502,13 +578,13 @@ pub trait TensorRandElement: sealed::Sealed + Sized + Scalar {
 
     fn try_fill(
         filler: &mut TensorRandFiller,
-        tensor: &mut Tensor<Self>,
+        tensor: &mut DenseTensor<Self>,
     ) -> Result<(), TensorRandError> {
         Self::try_fill_slice(filler, tensor.data_mut())
     }
 
     #[inline]
-    fn fill(filler: &mut TensorRandFiller, tensor: &mut Tensor<Self>) {
+    fn fill(filler: &mut TensorRandFiller, tensor: &mut DenseTensor<Self>) {
         Self::try_fill(filler, tensor).expect("invalid tensor random refresh configuration");
     }
 }
@@ -523,7 +599,7 @@ impl TensorRandElement for f64 {
         domain: u64,
         components: usize,
     ) -> Result<(), TensorRandError> {
-        let Some((_, chunk_len)) = filler.chunk_plan(values.len()) else {
+        let Some(chunk_len) = filler.indexed_chunk_len(values.len()) else {
             return Ok(());
         };
         match filler.kind {
@@ -554,7 +630,9 @@ impl TensorRandElement for f64 {
                     return Err(TensorRandError::InvalidNormalStd { std });
                 }
                 if std == 0.0 {
-                    values.par_iter_mut().for_each(|value| *value = mean);
+                    values
+                        .par_chunks_mut(chunk_len)
+                        .for_each(|chunk| chunk.fill(mean));
                     return Ok(());
                 }
                 values
@@ -614,6 +692,7 @@ impl TensorRandElement for f64 {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
+        let lanes_per_job = lanes_per_job(slices);
 
         match filler.kind {
             RandType::Uniform { low, high } => {
@@ -622,6 +701,7 @@ impl TensorRandElement for f64 {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
             }
             RandType::Normal { mean, std } => {
@@ -629,7 +709,10 @@ impl TensorRandElement for f64 {
                     return Err(TensorRandError::InvalidNormalStd { std });
                 }
                 if std == 0.0 {
-                    values.par_iter_mut().for_each(|value| *value = mean);
+                    values
+                        .par_chunks_mut(chunk_len)
+                        .with_min_len(lanes_per_job)
+                        .for_each(|chunk| chunk.fill(mean));
                     return Ok(());
                 }
                 let dist = Normal::new(mean, std)
@@ -637,6 +720,7 @@ impl TensorRandElement for f64 {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
             }
             RandType::Bernoulli { p } => {
@@ -645,6 +729,7 @@ impl TensorRandElement for f64 {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| {
                         rng.fill_mapped_sample(chunk, &dist, |x| if x { 1.0 } else { 0.0 })
                     });
@@ -680,6 +765,7 @@ impl TensorRandElement for i64 {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
+        let lanes_per_job = lanes_per_job(slices);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {
@@ -688,6 +774,7 @@ impl TensorRandElement for i64 {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
             }
             RandType::Bernoulli { p } => {
@@ -696,6 +783,7 @@ impl TensorRandElement for i64 {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| {
                         rng.fill_mapped_sample(chunk, &dist, |x| if x { 1 } else { 0 })
                     });
@@ -731,6 +819,7 @@ impl TensorRandElement for usize {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
+        let lanes_per_job = lanes_per_job(slices);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {
@@ -749,6 +838,7 @@ impl TensorRandElement for usize {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| rng.fill_sample(chunk, &dist));
             }
             kind => return Err(unsupported::<usize>(kind)),
@@ -782,6 +872,7 @@ impl TensorRandElement for isize {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
+        let lanes_per_job = lanes_per_job(slices);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {
@@ -797,6 +888,7 @@ impl TensorRandElement for isize {
                 values
                     .par_chunks_mut(chunk_len)
                     .zip(rngs.par_iter_mut())
+                    .with_min_len(lanes_per_job)
                     .for_each(|(chunk, rng)| rng.fill_mapped_sample(chunk, &dist, |x| x as isize));
             }
             kind => return Err(unsupported::<isize>(kind)),

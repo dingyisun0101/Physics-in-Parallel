@@ -8,8 +8,5 @@ Purpose:
     payloads behind stable topology slots.
 */
 
-pub mod observe;
-pub mod prelude;
-pub mod soa;
-pub use observe::{MeanReducer, Reducer};
-pub use soa::*;
+pub(crate) mod observe;
+pub(crate) mod soa;

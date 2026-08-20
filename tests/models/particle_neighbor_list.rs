@@ -1,10 +1,6 @@
 use std::collections::BTreeSet;
 
-use physics_in_parallel::models::particles::attrs::{ATTR_R, ParticleSelection, set_alive};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::interactions::{
-    ParticleNeighborList, ParticleNeighborListError,
-};
+use physics_in_parallel::prelude::models::*;
 
 fn pair_set(pairs: Vec<(usize, usize)>) -> BTreeSet<(usize, usize)> {
     pairs.into_iter().collect()
@@ -14,20 +10,16 @@ fn pair_set(pairs: Vec<(usize, usize)>) -> BTreeSet<(usize, usize)> {
 fn particle_neighbor_list_collects_cutoff_filtered_pairs() {
     let mut objects = create_template(2, 4).unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 0, &[0.0, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 0, &[0.0, 0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 1, &[0.5, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 1, &[0.5, 0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 2, &[1.4, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 2, &[1.4, 0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 3, &[4.0, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 3, &[4.0, 0.0])
         .unwrap();
 
     let mut neighbors = ParticleNeighborList::from_bounds(&[0.0, 0.0], &[5.0, 1.0], 1.0).unwrap();
@@ -50,16 +42,13 @@ fn particle_neighbor_list_alive_mask_filters_dead_particles() {
     let mut objects = create_template(2, 3).unwrap();
 
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 0, &[0.0, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 0, &[0.0, 0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 1, &[0.5, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 1, &[0.5, 0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 2, &[0.8, 0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 2, &[0.8, 0.0])
         .unwrap();
 
     set_alive(&mut objects, 0, true).unwrap();

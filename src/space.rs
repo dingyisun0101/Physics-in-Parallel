@@ -4,12 +4,15 @@ Core space abstractions and utilities.
 
 pub mod continuous;
 pub mod discrete;
-pub mod io;
-pub mod prelude;
-pub mod space_trait;
+pub(crate) mod io;
+pub(crate) mod space_trait;
 
-// Canonical top-level exports.
-pub use continuous::boundary::{ClampBox, ContinuousBoundary, PeriodicBox, ReflectBox};
-pub use continuous::sampling::{VectorSamplingMethod, sample_vectors};
-pub use discrete::square_lattice::{Kernel, KernelError, KernelType, PairGenerationError};
-pub use space_trait::Space;
+pub use continuous::boundary::{
+    BoundaryError, ClampBox, ContinuousBoundary, PeriodicBox, ReflectBox,
+};
+pub use continuous::sampling::{VectorSamplingError, VectorSamplingMethod, sample_vectors};
+pub use discrete::square_lattice::{
+    BoundaryCondition, KernelError, KernelType, PairGenerationError, PairGenerator,
+    PairGeneratorConfig, PairingMethod, SourceMode, SquareLattice, SquareLatticeConfig,
+    SquareLatticeConfigError, SquareLatticeInitMethod,
+};

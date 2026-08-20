@@ -1,5 +1,6 @@
-use physics_in_parallel::engines::soa::{AttrId, AttrsCore, AttrsError, AttrsMeta, PhysObj};
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
+use physics_in_parallel::prelude::advanced::{AttrId, AttrsCore, AttrsMeta, PhysObjAdvanced};
+use physics_in_parallel::prelude::basic::VectorList;
+use physics_in_parallel::prelude::models::{AttrsError, PhysObj};
 use std::env;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -56,14 +57,14 @@ fn attrs_core_type_mismatch_and_phys_obj_serialize() {
     let err = core.get::<i64>("r").unwrap_err();
     assert!(matches!(err, AttrsError::WrongType { .. }));
 
-    let obj = PhysObj {
-        meta: AttrsMeta {
+    let obj = PhysObj::from_raw_parts(
+        AttrsMeta {
             id: 7 as AttrId,
             label: "unit_test".to_string(),
             comment: "serialize smoke".to_string(),
         },
         core,
-    };
+    );
 
     let json = obj.serialize().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -76,9 +77,9 @@ fn attrs_core_type_mismatch_and_phys_obj_serialize() {
 #[test]
 fn phys_obj_constructors_metadata_and_save_to_json_are_consistent() {
     let empty = PhysObj::empty();
-    assert_eq!(empty.meta, AttrsMeta::empty());
-    assert!(empty.core.is_empty());
-    assert_eq!(empty.core.n_objects(), None);
+    assert_eq!(empty.metadata(), &AttrsMeta::empty());
+    assert!(empty.attributes().is_empty());
+    assert_eq!(empty.attributes().n_objects(), None);
 
     let meta = AttrsMeta::new(11, "particles", "test state");
     assert_eq!(meta.id, 11);
@@ -104,7 +105,7 @@ fn phys_obj_constructors_metadata_and_save_to_json_are_consistent() {
         std::any::type_name::<i64>()
     );
 
-    let obj = PhysObj::new(meta, core);
+    let obj = PhysObj::from_raw_parts(meta, core);
     let out_dir = unique_tmp_dir("phys_obj_save");
     obj.save_to_json(&out_dir, "state.json")
         .expect("PhysObj::save_to_json should create output");
@@ -159,9 +160,9 @@ fn attrs_core_auto_generated_ids_are_stable_and_optional_for_users() {
 
     core.get_by_id_mut::<f64>(r_id)
         .unwrap()
-        .set_vec(1, &[4.0, 5.0, 6.0]);
+        .set_vector(1, &[4.0, 5.0, 6.0]);
     assert_eq!(
-        core.get_by_id::<f64>(r_id).unwrap().get_vec(1),
+        core.get_by_id::<f64>(r_id).unwrap().vector(1),
         [4.0, 5.0, 6.0].as_slice()
     );
     assert_eq!(

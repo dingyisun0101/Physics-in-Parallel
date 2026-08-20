@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
 };
-use crate::math::prelude::{Scalar, ScalarSerde};
+use crate::math::scalar::{Scalar, ScalarSerde};
 use crate::space::discrete::square_lattice::{
     BoundaryCondition, SquareLattice, SquareLatticeConfig,
 };

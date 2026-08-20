@@ -17,6 +17,7 @@ use rayon::prelude::*;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
 use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
+use crate::parallel::parallel_chunk_len;
 use crate::rng::RngConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +85,7 @@ pub fn sample_vectors(
                 .map_err(VectorSamplingError::Rng)?;
             if dim > 0 && n > 0 {
                 filler
-                    .try_refresh(vectors.as_tensor_mut())
+                    .try_refresh_dense(vectors.as_tensor_mut())
                     .map_err(VectorSamplingError::Rng)?;
             }
             filler.rng_config()
@@ -103,7 +104,7 @@ pub fn sample_vectors(
             .map_err(VectorSamplingError::Rng)?;
             if dim > 0 && n > 0 {
                 filler
-                    .try_refresh(vectors.as_tensor_mut())
+                    .try_refresh_dense(vectors.as_tensor_mut())
                     .map_err(VectorSamplingError::Rng)?;
             }
 
@@ -112,6 +113,7 @@ pub fn sample_vectors(
                     .as_tensor_mut()
                     .data
                     .par_chunks_mut(dim)
+                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
                     .for_each(|row| {
                         for k in 0..dim {
                             let half_span = 0.5 * box_size[k];
@@ -137,7 +139,7 @@ pub fn sample_vectors(
             .map_err(VectorSamplingError::Rng)?;
             if dim > 0 && n > 0 {
                 filler
-                    .try_refresh(vectors.as_tensor_mut())
+                    .try_refresh_dense(vectors.as_tensor_mut())
                     .map_err(VectorSamplingError::Rng)?;
             }
 
@@ -146,6 +148,7 @@ pub fn sample_vectors(
                     .as_tensor_mut()
                     .data
                     .par_chunks_mut(dim)
+                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
                     .for_each(|row| {
                         for k in 0..dim {
                             row[k] = mean[k] + row[k] * std[k];
@@ -170,7 +173,7 @@ pub fn sample_vectors(
             .map_err(VectorSamplingError::Rng)?;
             if dim > 0 && n > 0 {
                 filler
-                    .try_refresh(vectors.as_tensor_mut())
+                    .try_refresh_dense(vectors.as_tensor_mut())
                     .map_err(VectorSamplingError::Rng)?;
             }
 
@@ -180,6 +183,7 @@ pub fn sample_vectors(
                     .as_tensor_mut()
                     .data
                     .par_chunks_mut(dim)
+                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
                     .enumerate()
                     .for_each(|(vector_idx, row)| {
                         let mut lattice_idx = vector_idx;

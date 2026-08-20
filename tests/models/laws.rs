@@ -1,4 +1,4 @@
-use physics_in_parallel::models::laws::{PowerLawDecay, PowerLawError, Spring, SpringLawError};
+use physics_in_parallel::prelude::models::{PowerLawDecay, PowerLawError, Spring, SpringLawError};
 
 #[test]
 fn spring_law_validates_payload_parameters() {

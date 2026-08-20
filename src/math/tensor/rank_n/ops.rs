@@ -4,11 +4,11 @@
 //! but these helpers define the common mathematical behavior.
 
 use crate::math::scalar::Scalar;
+use crate::parallel::parallel_chunk_len;
 use num_traits::Zero;
 use rayon::prelude::*;
 
 use super::errors;
-use super::layout::RowMajorLayout;
 use super::tensor_trait::TensorTrait;
 
 /// Dense logical size implied by a shape.
@@ -137,21 +137,19 @@ where
     assert_eq!(tensor.rank(), 2, "transpose requires a rank-2 tensor");
     let rows = tensor.shape()[0];
     let cols = tensor.shape()[1];
-    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
+    let entries: Vec<(isize, T)> = (0..size(&[rows, cols]))
         .into_par_iter()
+        .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
-            (
-                (j as isize, i as isize),
-                tensor.get(&[i as isize, j as isize]),
-            )
+            ((j * rows + i) as isize, tensor.get_flat(k as isize))
         })
         .collect();
 
     let mut out = A::empty(&[cols, rows]);
-    for (idx, value) in entries {
-        out.set(&[idx.0, idx.1], value);
+    for (index, value) in entries {
+        out.set_flat(index, value);
     }
     out
 }
@@ -169,21 +167,19 @@ where
     );
     let rows = tensor.shape()[0];
     let cols = tensor.shape()[1];
-    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
+    let entries: Vec<(isize, T)> = (0..size(&[rows, cols]))
         .into_par_iter()
+        .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
-            (
-                (j as isize, i as isize),
-                tensor.get(&[i as isize, j as isize]).conj(),
-            )
+            ((j * rows + i) as isize, tensor.get_flat(k as isize).conj())
         })
         .collect();
 
     let mut out = A::empty(&[cols, rows]);
-    for (idx, value) in entries {
-        out.set(&[idx.0, idx.1], value);
+    for (index, value) in entries {
+        out.set_flat(index, value);
     }
     out
 }
@@ -196,13 +192,10 @@ where
     Rhs: TensorTrait<T>,
 {
     assert_same_shape::<T, _, _>(lhs, rhs);
-    let layout = RowMajorLayout::new(lhs.shape());
     (0..lhs.size())
         .into_par_iter()
-        .map(|k| {
-            let idx = layout.coordinate(k).expect("flat index is within tensor");
-            lhs.get(&idx) * rhs.get(&idx)
-        })
+        .with_min_len(parallel_chunk_len(lhs.size()).unwrap_or(1))
+        .map(|k| lhs.get_flat(k as isize) * rhs.get_flat(k as isize))
         .reduce(|| T::zero(), |a, b| a + b)
 }
 
@@ -214,13 +207,10 @@ where
     Rhs: TensorTrait<T>,
 {
     assert_same_shape::<T, _, _>(lhs, rhs);
-    let layout = RowMajorLayout::new(lhs.shape());
     (0..lhs.size())
         .into_par_iter()
-        .map(|k| {
-            let idx = layout.coordinate(k).expect("flat index is within tensor");
-            lhs.get(&idx).conj() * rhs.get(&idx)
-        })
+        .with_min_len(parallel_chunk_len(lhs.size()).unwrap_or(1))
+        .map(|k| lhs.get_flat(k as isize).conj() * rhs.get_flat(k as isize))
         .reduce(|| T::zero(), |a, b| a + b)
 }
 
@@ -231,13 +221,10 @@ where
     T::Real: Send + Sync,
     A: TensorTrait<T>,
 {
-    let layout = RowMajorLayout::new(tensor.shape());
     (0..tensor.size())
         .into_par_iter()
-        .map(|k| {
-            let idx = layout.coordinate(k).expect("flat index is within tensor");
-            tensor.get(&idx).norm_sqr_real()
-        })
+        .with_min_len(parallel_chunk_len(tensor.size()).unwrap_or(1))
+        .map(|k| tensor.get_flat(k as isize).norm_sqr_real())
         .reduce(T::Real::zero, |a, b| a + b)
 }
 
@@ -269,20 +256,9 @@ where
     let b2 = rhs.get(&[2]);
 
     let mut out = Lhs::empty(&[3]);
-    let values: Vec<(usize, T)> = (0..3)
-        .into_par_iter()
-        .map(|i| {
-            let value = match i {
-                0 => a1 * b2 - a2 * b1,
-                1 => a2 * b0 - a0 * b2,
-                _ => a0 * b1 - a1 * b0,
-            };
-            (i, value)
-        })
-        .collect();
-    for (i, value) in values {
-        out.set(&[i as isize], value);
-    }
+    out.set_flat(0, a1 * b2 - a2 * b1);
+    out.set_flat(1, a2 * b0 - a0 * b2);
+    out.set_flat(2, a0 * b1 - a1 * b0);
     out
 }
 
@@ -300,20 +276,21 @@ where
     let n = lhs.shape()[0];
     assert_eq!(rhs.shape()[0], n, "wedge vector length mismatch");
 
-    let entries: Vec<((isize, isize), T)> = (0..size(&[n, n]))
+    let entries: Vec<(isize, T)> = (0..size(&[n, n]))
         .into_par_iter()
+        .with_min_len(parallel_chunk_len(n * n).unwrap_or(1))
         .map(|k| {
             let i = k / n;
             let j = k % n;
-            let value = lhs.get(&[i as isize]) * rhs.get(&[j as isize])
-                - lhs.get(&[j as isize]) * rhs.get(&[i as isize]);
-            ((i as isize, j as isize), value)
+            let value = lhs.get_flat(i as isize) * rhs.get_flat(j as isize)
+                - lhs.get_flat(j as isize) * rhs.get_flat(i as isize);
+            (k as isize, value)
         })
         .collect();
 
     let mut out = Lhs::empty(&[n, n]);
-    for (idx, value) in entries {
-        out.set(&[idx.0, idx.1], value);
+    for (index, value) in entries {
+        out.set_flat(index, value);
     }
     out
 }
@@ -332,21 +309,22 @@ where
     assert_eq!(rhs.shape()[0], inner, "matmul inner dimensions mismatch");
     let cols = rhs.shape()[1];
 
-    let entries: Vec<((isize, isize), T)> = (0..size(&[rows, cols]))
+    let entries: Vec<(isize, T)> = (0..size(&[rows, cols]))
         .into_par_iter()
+        .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
         .map(|k| {
             let i = k / cols;
             let j = k % cols;
             let value = (0..inner).fold(T::zero(), |acc, m| {
-                acc + lhs.get(&[i as isize, m as isize]) * rhs.get(&[m as isize, j as isize])
+                acc + lhs.get_flat((i * inner + m) as isize) * rhs.get_flat((m * cols + j) as isize)
             });
-            ((i as isize, j as isize), value)
+            (k as isize, value)
         })
         .collect();
 
     let mut out = Lhs::empty(&[rows, cols]);
-    for (idx, value) in entries {
-        out.set(&[idx.0, idx.1], value);
+    for (index, value) in entries {
+        out.set_flat(index, value);
     }
     out
 }

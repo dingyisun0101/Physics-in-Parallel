@@ -1,7 +1,7 @@
-use physics_in_parallel::models::prelude::*;
+use physics_in_parallel::prelude::models::*;
 
 #[test]
-fn models_prelude_exports_common_particle_and_law_types() {
+fn models_prelude_exports_common_types() {
     let mut objects = create_template(2, 2).unwrap();
     set_alive(&mut objects, 1, false).unwrap();
     set_rigid(&mut objects, 0, true).unwrap();

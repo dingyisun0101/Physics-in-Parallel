@@ -40,10 +40,11 @@ Goals:
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
+use crate::parallel::parallel_chunk_len;
 use rayon::prelude::*;
 
 use super::errors;
-use super::layout::flat_index_wrapped;
+use super::layout::{flat_index_wrapped, normalize_flat_index};
 use super::sparse::Tensor as TensorSparse;
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
@@ -165,9 +166,10 @@ where
     ///   using a Rayon reduction.
     /// - Parameters:
     ///   - (none): Sums every logical tensor element.
-    fn get_sum(&self) -> T {
+    fn sum(&self) -> T {
         self.data
             .par_iter()
+            .with_min_len(parallel_chunk_len(self.data.len()).unwrap_or(1))
             .cloned()
             .reduce(|| T::zero(), |a, b| a + b)
     }
@@ -214,6 +216,13 @@ where
         unsafe { *self.data.get_unchecked(k) }
     }
 
+    #[inline(always)]
+    fn get_flat(&self, index: isize) -> T {
+        let index = normalize_flat_index(index, self.data.len());
+        // SAFETY: the normalized index is within the nonempty dense buffer.
+        unsafe { *self.data.get_unchecked(index) }
+    }
+
     /// Get mutable reference by (wrapped) multi-index.
     /// Returns `Some(&mut T)` (always `Some` with current semantics).
     #[inline(always)]
@@ -227,6 +236,13 @@ where
         let k = self.index(indices);
         // SAFETY: k is wrapped into [0, len)
         unsafe { self.data.get_unchecked_mut(k) }
+    }
+
+    #[inline(always)]
+    fn get_flat_mut(&mut self, index: isize) -> &mut T {
+        let index = normalize_flat_index(index, self.data.len());
+        // SAFETY: the normalized index is within the nonempty dense buffer.
+        unsafe { self.data.get_unchecked_mut(index) }
     }
 
     /// Set value at (wrapped) multi-index.
@@ -244,6 +260,11 @@ where
         unsafe { *self.data.get_unchecked_mut(k) = val }
     }
 
+    #[inline(always)]
+    fn set_flat(&mut self, index: isize, val: T) {
+        *self.get_flat_mut(index) = val;
+    }
+
     /// Parallel fill with a constant value.
     #[inline]
     /// Details:
@@ -255,7 +276,11 @@ where
     where
         T: Copy + Send + Sync,
     {
-        self.data.par_iter_mut().for_each(|x| *x = value);
+        let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
+        self.data
+            .par_iter_mut()
+            .with_min_len(min_elements_per_job)
+            .for_each(|x| *x = value);
     }
 
     /// Parallel in-place map with a pure function.
@@ -265,7 +290,11 @@ where
         T: Copy + Send + Sync,
         F: Fn(T) -> T + Sync + Send,
     {
-        self.data.par_iter_mut().for_each(|x| *x = f(*x));
+        let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
+        self.data
+            .par_iter_mut()
+            .with_min_len(min_elements_per_job)
+            .for_each(|x| *x = f(*x));
     }
 
     /// Parallel in-place zip with another tensor-like structure.
@@ -280,22 +309,15 @@ where
         F: Fn(T, T) -> T + Sync + Send,
     {
         assert_eq!(self.shape(), other.shape(), "Tensor shape mismatch");
-        let rank = self.shape.len();
-        let dims = self.shape.clone();
-
-        self.data.par_iter_mut().enumerate().for_each(|(k, a)| {
-            // linear -> multi-index (row-major)
-            let mut rem = k;
-            let mut idx = vec![0isize; rank];
-            for ax in (0..rank).rev() {
-                let d = dims[ax];
-                // `rem % d` is in [0, d); convert to isize (non-negative)
-                idx[ax] = (rem % d) as isize;
-                rem /= d;
-            }
-            let b = other.get(&idx);
-            *a = f(*a, b);
-        });
+        let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
+        self.data
+            .par_iter_mut()
+            .with_min_len(min_elements_per_job)
+            .enumerate()
+            .for_each(|(k, a)| {
+                let b = other.get_flat(k as isize);
+                *a = f(*a, b);
+            });
     }
 
     /// Fallible, element-wise type cast.
@@ -336,6 +358,7 @@ macro_rules! impl_tensor_ref_binop {
                 out.data
                     .par_iter_mut()
                     .zip(rhs.data.par_iter())
+                    .with_min_len(parallel_chunk_len(rhs.data.len()).unwrap_or(1))
                     .for_each(|(a, &b)| { *a = *a $op b; });
                 out
             }
@@ -361,6 +384,7 @@ macro_rules! impl_tensor_ref_assign {
                 self.data
                     .par_iter_mut()
                     .zip(rhs.data.par_iter())
+                    .with_min_len(parallel_chunk_len(rhs.data.len()).unwrap_or(1))
                     .for_each(|(a, &b)| { *a = (*a) $op b; });
             }
         }
@@ -383,7 +407,11 @@ macro_rules! impl_tensor_ref_scalar_binop {
             #[inline]
             fn $method(self, rhs: T) -> Self::Output {
                 let mut out = self.clone();
-                out.data.par_iter_mut().for_each(|a| *a = *a $op rhs);
+                let min_elements_per_job = parallel_chunk_len(out.data.len()).unwrap_or(1);
+                out.data
+                    .par_iter_mut()
+                    .with_min_len(min_elements_per_job)
+                    .for_each(|a| *a = *a $op rhs);
                 out
             }
         }
@@ -404,7 +432,11 @@ macro_rules! impl_tensor_scalar_assign {
         {
             #[inline]
             fn $method(&mut self, rhs: T) {
-                self.data.par_iter_mut().for_each(|a| *a = *a $op rhs);
+                let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
+                self.data
+                    .par_iter_mut()
+                    .with_min_len(min_elements_per_job)
+                    .for_each(|a| *a = *a $op rhs);
             }
         }
     };
@@ -425,7 +457,12 @@ impl<T: Scalar> Tensor<T> {
     /// - Each element is converted through `Scalar::try_cast`.
     /// - Parallelized over elements.
     pub fn try_cast_to<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
-        let data: Result<Vec<U>, _> = self.data.par_iter().map(|&x| x.try_cast::<U>()).collect();
+        let data: Result<Vec<U>, _> = self
+            .data
+            .par_iter()
+            .with_min_len(parallel_chunk_len(self.data.len()).unwrap_or(1))
+            .map(|&x| x.try_cast::<U>())
+            .collect();
 
         Ok(Tensor {
             shape: self.shape.clone(),

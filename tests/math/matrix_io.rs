@@ -1,8 +1,8 @@
 use ndarray::array;
 use serde_json::json;
 
-use physics_in_parallel::math::NdarrayConvert;
-use physics_in_parallel::math::tensor::{DenseMatrix, Matrix, SparseMatrix};
+use physics_in_parallel::prelude::advanced::{NdarrayConvert, SparseMatrix};
+use physics_in_parallel::prelude::basic::{DenseMatrix, Matrix};
 
 #[test]
 fn dense_matrix_serializes_as_flat_matrix_payload() {

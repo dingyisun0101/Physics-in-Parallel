@@ -19,11 +19,12 @@ use std::fmt;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::math::prelude::{
-    HaarVectors, NNVectors, RandType, RowMajorLayout, TensorError, TensorRandError,
-    TensorRandFiller, TensorTrait, VectorList,
-};
+use crate::math::tensor::rank_2::vector_list::{HaarVectors, NNVectors, VectorList};
 use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
+use crate::math::tensor::rank_n::layout::RowMajorLayout;
+use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
+use crate::math::{RandType, TensorError, TensorRandError, TensorRandFiller};
+use crate::parallel::parallel_chunk_len;
 
 use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
 use super::random::{
@@ -109,6 +110,10 @@ pub enum PairGenerationError {
     },
     ZeroPairs,
     SiteCountOverflow,
+    PairBufferOverflow {
+        num_pairs: usize,
+        rank: usize,
+    },
     KernelRankMismatch {
         kernel_dimension: usize,
         rank: usize,
@@ -133,8 +138,15 @@ impl fmt::Display for PairGenerationError {
             }
             Self::ZeroPairs => write!(formatter, "pair-generator pair count must be positive"),
             Self::SiteCountOverflow => {
-                write!(formatter, "pair-generator shape site count overflows usize")
+                write!(
+                    formatter,
+                    "pair-generator shape exceeds the signed site-index space"
+                )
             }
+            Self::PairBufferOverflow { num_pairs, rank } => write!(
+                formatter,
+                "pair-generator buffer shape {num_pairs}x{rank} exceeds the signed index space"
+            ),
             Self::KernelRankMismatch {
                 kernel_dimension,
                 rank,
@@ -194,10 +206,7 @@ pub struct PairGenerator {
 
 #[derive(Clone)]
 enum PairingWorkspace {
-    IndependentUniform {
-        source_sites: DenseTensor<usize>,
-        target_sites: DenseTensor<usize>,
-    },
+    IndependentUniform,
     Kernel {
         source_sites: Option<DenseTensor<usize>>,
         directions: Box<KernelDirections>,
@@ -233,6 +242,17 @@ impl PairGenerator {
         }
 
         let rank = shape.len();
+        if config.num_pairs() > isize::MAX as usize
+            || config
+                .num_pairs()
+                .checked_mul(rank)
+                .is_none_or(|size| size > isize::MAX as usize)
+        {
+            return Err(PairGenerationError::PairBufferOverflow {
+                num_pairs: config.num_pairs(),
+                rank,
+            });
+        }
         let random_filler = TensorRandFiller::try_new_indexed(
             RandType::Uniform {
                 low: 0.0,
@@ -242,13 +262,7 @@ impl PairGenerator {
         )?;
         let resolved_rng = random_filler.rng_config();
         let (kernel, workspace) = match config.method() {
-            PairingMethod::IndependentUniform => (
-                None,
-                PairingWorkspace::IndependentUniform {
-                    source_sites: DenseTensor::empty(&[config.num_pairs()]),
-                    target_sites: DenseTensor::empty(&[config.num_pairs()]),
-                },
-            ),
+            PairingMethod::IndependentUniform => (None, PairingWorkspace::IndependentUniform),
             PairingMethod::Kernel { kernel, sources } => {
                 validate_kernel_rank(kernel, rank)?;
                 let (directions, length_units) = match kernel {
@@ -300,34 +314,35 @@ impl PairGenerator {
     /// exactly. No mutable RNG cursor participates in the result.
     pub fn refresh_at(&mut self, sweep: u64) {
         match &mut self.workspace {
-            PairingWorkspace::IndependentUniform {
-                source_sites,
-                target_sites,
-            } => {
+            PairingWorkspace::IndependentUniform => {
+                let rank = self.layout.shape().len();
                 self.random_filler
-                    .try_fill_indices_at(
-                        source_sites.data_mut(),
+                    .try_fill_index_pairs_with(
+                        (
+                            self.source_coords_cache.as_tensor_mut().data_mut(),
+                            self.target_coords_cache.as_tensor_mut().data_mut(),
+                            self.displacement_coords_cache.as_tensor_mut().data_mut(),
+                        ),
+                        rank,
                         self.layout.size(),
                         sweep,
-                        DOMAIN_INDEPENDENT_SOURCE_SITE,
+                        (
+                            DOMAIN_INDEPENDENT_SOURCE_SITE,
+                            DOMAIN_INDEPENDENT_TARGET_SITE,
+                        ),
+                        |source_site, target_site, source, target, displacement| {
+                            self.layout.coordinate_into(source_site, source);
+                            self.layout.coordinate_into(target_site, target);
+                            for ((component, &target), &source) in displacement
+                                .iter_mut()
+                                .zip(target.iter())
+                                .zip(source.iter())
+                            {
+                                *component = target - source;
+                            }
+                        },
                     )
-                    .expect("validated indexed source-site filler");
-                self.random_filler
-                    .try_fill_indices_at(
-                        target_sites.data_mut(),
-                        self.layout.size(),
-                        sweep,
-                        DOMAIN_INDEPENDENT_TARGET_SITE,
-                    )
-                    .expect("validated indexed target-site filler");
-                assemble_independent_uniform(
-                    &self.layout,
-                    source_sites.data(),
-                    target_sites.data(),
-                    &mut self.source_coords_cache,
-                    &mut self.displacement_coords_cache,
-                    &mut self.target_coords_cache,
-                );
+                    .expect("validated indexed independent-uniform filler");
             }
             PairingWorkspace::Kernel {
                 source_sites,
@@ -428,17 +443,17 @@ impl PairGenerator {
     }
 
     pub fn source(&self, index: isize) -> &[isize] {
-        self.source_coords_cache.get_vec(index)
+        self.source_coords_cache.vector(index)
     }
 
     /// Returns the raw displacement for one pair.
     pub fn displacement(&self, index: isize) -> &[isize] {
-        self.displacement_coords_cache.get_vec(index)
+        self.displacement_coords_cache.vector(index)
     }
 
     /// Returns a raw target coordinate. Pass it to boundary-aware space accessors.
     pub fn target(&self, index: isize) -> &[isize] {
-        self.target_coords_cache.get_vec(index)
+        self.target_coords_cache.vector(index)
     }
 }
 
@@ -451,7 +466,9 @@ fn validate_layout(shape: &[usize]) -> Result<RowMajorLayout, PairGenerationErro
                 .position(|extent| *extent == 0)
                 .expect("invalid nonempty tensor shape has a zero axis"),
         },
-        TensorError::ShapeProductOverflow { .. } => PairGenerationError::SiteCountOverflow,
+        TensorError::ShapeProductOverflow { .. } | TensorError::IndexSpaceOverflow { .. } => {
+            PairGenerationError::SiteCountOverflow
+        }
         _ => unreachable!("layout construction reports only shape errors"),
     })
 }
@@ -487,53 +504,14 @@ fn refresh_kernel_sources(
         )
         .expect("validated indexed source-site filler");
     let rank = layout.shape().len();
+    let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
     sources
         .as_tensor_mut()
         .data_mut()
         .par_chunks_exact_mut(rank)
         .zip(sites.data().par_iter())
+        .with_min_len(min_pairs_per_job)
         .for_each(|(row, site)| layout.coordinate_into(*site, row));
-}
-
-fn assemble_independent_uniform(
-    layout: &RowMajorLayout,
-    source_sites: &[usize],
-    target_sites: &[usize],
-    sources: &mut VectorList<isize>,
-    displacements: &mut VectorList<isize>,
-    targets: &mut VectorList<isize>,
-) {
-    let rank = layout.shape().len();
-    sources
-        .as_tensor_mut()
-        .data_mut()
-        .par_chunks_exact_mut(rank)
-        .zip(
-            targets
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
-        .zip(
-            displacements
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
-        .zip(source_sites.par_iter().zip(target_sites.par_iter()))
-        .for_each(
-            |(((source, target), displacement), (&source_site, &target_site))| {
-                layout.coordinate_into(source_site, source);
-                layout.coordinate_into(target_site, target);
-                for ((component, &target), &source) in displacement
-                    .iter_mut()
-                    .zip(target.iter())
-                    .zip(source.iter())
-                {
-                    *component = target - source;
-                }
-            },
-        );
 }
 
 fn assemble_nearest_neighbor(
@@ -543,6 +521,7 @@ fn assemble_nearest_neighbor(
     targets: &mut VectorList<isize>,
 ) {
     let rank = sources.dim();
+    let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
     sources
         .as_tensor()
         .data()
@@ -560,6 +539,7 @@ fn assemble_nearest_neighbor(
                 .data_mut()
                 .par_chunks_exact_mut(rank),
         )
+        .with_min_len(min_pairs_per_job)
         .for_each(|(((source, direction), displacement), target)| {
             for (((displacement, target), &source), &direction) in displacement
                 .iter_mut()
@@ -582,6 +562,7 @@ fn assemble_radial(
     targets: &mut VectorList<isize>,
 ) {
     let rank = sources.dim();
+    let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
     sources
         .as_tensor()
         .data()
@@ -600,6 +581,7 @@ fn assemble_radial(
                 .data_mut()
                 .par_chunks_exact_mut(rank),
         )
+        .with_min_len(min_pairs_per_job)
         .for_each(|((((source, direction), unit), displacement), target)| {
             let length = kernel.sample_unit(*unit);
             for (((displacement, target), &source), &direction) in displacement
@@ -613,97 +595,4 @@ fn assemble_radial(
                 *target = source + component;
             }
         });
-}
-
-/// Compatibility wrapper for the original kernel-only constructor.
-///
-/// New code should use [`PairGenerator`] with [`PairGeneratorConfig`].
-#[deprecated(note = "use PairGenerator with PairGeneratorConfig")]
-#[derive(Clone, Debug)]
-pub struct RandPairGenerator {
-    inner: PairGenerator,
-}
-
-#[allow(deprecated)]
-impl RandPairGenerator {
-    pub fn new(
-        shape: &[usize],
-        kernel_type: KernelType,
-        num_pairs: usize,
-        source_mode: SourceMode,
-        rng: RngConfig,
-    ) -> Result<Self, PairGenerationError> {
-        Ok(Self {
-            inner: PairGenerator::new(
-                shape,
-                PairGeneratorConfig::kernel(kernel_type, num_pairs, source_mode, rng),
-            )?,
-        })
-    }
-
-    pub fn refresh_at(&mut self, sweep: u64) {
-        self.inner.refresh_at(sweep);
-    }
-
-    pub fn shape(&self) -> &[usize] {
-        self.inner.shape()
-    }
-
-    pub fn rank(&self) -> usize {
-        self.inner.rank()
-    }
-
-    pub fn num_pairs(&self) -> usize {
-        self.inner.num_pairs()
-    }
-
-    pub fn kernel_type(&self) -> KernelType {
-        match self.inner.method() {
-            PairingMethod::Kernel { kernel, .. } => kernel,
-            PairingMethod::IndependentUniform => {
-                unreachable!("compatibility wrapper is kernel-only")
-            }
-        }
-    }
-
-    pub fn source_mode(&self) -> SourceMode {
-        match self.inner.method() {
-            PairingMethod::Kernel { sources, .. } => sources,
-            PairingMethod::IndependentUniform => {
-                unreachable!("compatibility wrapper is kernel-only")
-            }
-        }
-    }
-
-    pub fn rng_config(&self) -> RngConfig {
-        self.inner.rng_config()
-    }
-
-    pub fn generated_sweep(&self) -> Option<u64> {
-        self.inner.generated_sweep()
-    }
-
-    pub fn sources(&self) -> &VectorList<isize> {
-        self.inner.sources()
-    }
-
-    pub fn displacements(&self) -> &VectorList<isize> {
-        self.inner.displacements()
-    }
-
-    pub fn targets(&self) -> &VectorList<isize> {
-        self.inner.targets()
-    }
-
-    pub fn source(&self, index: isize) -> &[isize] {
-        self.inner.source(index)
-    }
-
-    pub fn displacement(&self, index: isize) -> &[isize] {
-        self.inner.displacement(index)
-    }
-
-    pub fn target(&self, index: isize) -> &[isize] {
-        self.inner.target(index)
-    }
 }

@@ -1,24 +1,24 @@
-use physics_in_parallel::math::tensor::VectorList;
-use physics_in_parallel::math::tensor::{TensorTrait, dense, sparse};
-use physics_in_parallel::space::discrete::square_lattice::{
-    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod,
+use physics_in_parallel::prelude::advanced::Sparse;
+use physics_in_parallel::prelude::basic::{
+    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeInitMethod, Tensor,
+    VectorList,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut dense_t = dense::Tensor::<f64>::empty(&[2, 2]);
+    let mut dense_t = Tensor::<f64>::empty(&[2, 2]);
     dense_t.set(&[0, 0], 1.0);
     dense_t.set(&[1, 1], 4.0);
 
-    let mut sparse_t = sparse::Tensor::<f64>::empty(&[2, 3]);
+    let mut sparse_t = Tensor::<f64, Sparse>::empty(&[2, 3]);
     sparse_t.set(&[0, 1], 2.0);
     sparse_t.set(&[1, 2], 5.0);
 
     let mut vectors = VectorList::<f64>::empty(3, 2);
-    vectors.set_vec(0, &[1.0, 2.0, 3.0]);
-    vectors.set_vec(1, &[4.0, 5.0, 6.0]);
+    vectors.set_vector(0, &[1.0, 2.0, 3.0]);
+    vectors.set_vector(1, &[4.0, 5.0, 6.0]);
 
     let lattice = SquareLattice::<usize>::new(
-        SquareLatticeConfig::new(&[4; 2], BoundaryCondition::Periodic, None),
+        SquareLatticeConfig::try_new(&[4; 2], BoundaryCondition::Periodic, None)?,
         SquareLatticeInitMethod::Uniform { val: 1 },
     )?;
 

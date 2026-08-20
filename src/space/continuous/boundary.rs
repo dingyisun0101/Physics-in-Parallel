@@ -21,6 +21,7 @@ chunks, while particle-specific rules such as alive masks and rigid masks live
 in `models::particles::boundary`.
 */
 
+use crate::parallel::parallel_chunk_len;
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,8 +66,10 @@ pub trait ContinuousBoundary: Sync {
 
     fn apply_positions(&self, positions: &mut [f64]) -> Result<(), BoundaryError> {
         validate_flat_vector_list("positions", self.dim(), positions.len())?;
+        let min_vectors_per_job = parallel_chunk_len(positions.len() / self.dim()).unwrap_or(1);
         positions
             .par_chunks_mut(self.dim())
+            .with_min_len(min_vectors_per_job)
             .try_for_each(|r| self.apply_position(r))
     }
 
@@ -84,9 +87,11 @@ pub trait ContinuousBoundary: Sync {
             });
         }
 
+        let min_vectors_per_job = parallel_chunk_len(positions.len() / self.dim()).unwrap_or(1);
         positions
             .par_chunks_mut(self.dim())
             .zip(velocities.par_chunks_mut(self.dim()))
+            .with_min_len(min_vectors_per_job)
             .try_for_each(|(r, v)| self.apply_position_velocity(r, v))
     }
 

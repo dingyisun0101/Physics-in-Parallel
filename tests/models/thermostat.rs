@@ -1,12 +1,6 @@
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::models::particles::attrs::{
-    ATTR_ALIVE, ATTR_M_INV, ATTR_V, ParticleSelection, set_alive, set_rigid,
-};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::thermostat::{
-    LangevinThermostat, Thermostat, ThermostatError,
-};
-use physics_in_parallel::rng::RngConfig;
+use physics_in_parallel::prelude::advanced::PhysObjAdvanced;
+use physics_in_parallel::prelude::basic::{RngConfig, VectorList};
+use physics_in_parallel::prelude::models::*;
 
 fn rng(seed: u64) -> RngConfig {
     RngConfig::new(Some(seed), None)
@@ -17,14 +11,14 @@ fn langevin_deterministic_for_same_seed_and_state() {
     let mut a = create_template(2, 2).unwrap();
     let mut b = a.clone();
 
-    a.core
-        .set_vector_of::<f64>(ATTR_V, 0, &[1.0, -1.0])
+    a.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0, -1.0])
         .unwrap();
-    a.core.set_vector_of::<f64>(ATTR_V, 1, &[0.5, 2.0]).unwrap();
-    b.core
-        .set_vector_of::<f64>(ATTR_V, 0, &[1.0, -1.0])
+    a.set_attribute_vector::<f64>(ATTR_V, 1, &[0.5, 2.0])
         .unwrap();
-    b.core.set_vector_of::<f64>(ATTR_V, 1, &[0.5, 2.0]).unwrap();
+    b.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0, -1.0])
+        .unwrap();
+    b.set_attribute_vector::<f64>(ATTR_V, 1, &[0.5, 2.0])
+        .unwrap();
 
     let mut ta = LangevinThermostat::new(1.0, 0.7, rng(42), ParticleSelection::AliveOnly).unwrap();
     let mut tb = LangevinThermostat::new(1.0, 0.7, rng(42), ParticleSelection::AliveOnly).unwrap();
@@ -36,8 +30,8 @@ fn langevin_deterministic_for_same_seed_and_state() {
 
     for i in 0..2 {
         assert_eq!(
-            a.core.vector_of::<f64>(ATTR_V, i).unwrap(),
-            b.core.vector_of::<f64>(ATTR_V, i).unwrap()
+            a.attribute_vector::<f64>(ATTR_V, i).unwrap(),
+            b.attribute_vector::<f64>(ATTR_V, i).unwrap()
         );
     }
 }
@@ -45,12 +39,12 @@ fn langevin_deterministic_for_same_seed_and_state() {
 #[test]
 fn langevin_zero_gamma_keeps_velocity_unchanged() {
     let mut obj = create_template(1, 1).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[3.5]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[3.5]).unwrap();
 
     let mut t = LangevinThermostat::new(2.0, 0.0, rng(9), ParticleSelection::AliveOnly).unwrap();
     t.apply(&mut obj, 0.1).unwrap();
 
-    assert!((obj.core.vector_of::<f64>(ATTR_V, 0).unwrap()[0] - 3.5).abs() < 1e-12);
+    assert!((obj.attribute_vector::<f64>(ATTR_V, 0).unwrap()[0] - 3.5).abs() < 1e-12);
 }
 
 #[test]
@@ -88,9 +82,9 @@ fn langevin_respects_alive_selection_and_rigid_mask() {
     let mut alive_only = create_template(1, 3).unwrap();
     let mut all = create_template(1, 3).unwrap();
     for obj in [&mut alive_only, &mut all] {
-        obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
-        obj.core.set_vector_of::<f64>(ATTR_V, 1, &[2.0]).unwrap();
-        obj.core.set_vector_of::<f64>(ATTR_V, 2, &[3.0]).unwrap();
+        obj.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+        obj.set_attribute_vector::<f64>(ATTR_V, 1, &[2.0]).unwrap();
+        obj.set_attribute_vector::<f64>(ATTR_V, 2, &[3.0]).unwrap();
         set_alive(obj, 1, false).unwrap();
         set_rigid(obj, 2, true).unwrap();
     }
@@ -102,19 +96,27 @@ fn langevin_respects_alive_selection_and_rigid_mask() {
     let mut t_all = LangevinThermostat::new(1.0, 0.5, rng(7), ParticleSelection::All).unwrap();
     t_all.apply(&mut all, 0.2).unwrap();
 
-    assert_ne!(alive_only.core.vector_of::<f64>(ATTR_V, 0).unwrap()[0], 1.0);
-    assert_eq!(alive_only.core.vector_of::<f64>(ATTR_V, 1).unwrap()[0], 2.0);
-    assert_eq!(alive_only.core.vector_of::<f64>(ATTR_V, 2).unwrap()[0], 3.0);
+    assert_ne!(
+        alive_only.attribute_vector::<f64>(ATTR_V, 0).unwrap()[0],
+        1.0
+    );
+    assert_eq!(
+        alive_only.attribute_vector::<f64>(ATTR_V, 1).unwrap()[0],
+        2.0
+    );
+    assert_eq!(
+        alive_only.attribute_vector::<f64>(ATTR_V, 2).unwrap()[0],
+        3.0
+    );
 
-    assert_ne!(all.core.vector_of::<f64>(ATTR_V, 1).unwrap()[0], 2.0);
-    assert_eq!(all.core.vector_of::<f64>(ATTR_V, 2).unwrap()[0], 3.0);
+    assert_ne!(all.attribute_vector::<f64>(ATTR_V, 1).unwrap()[0], 2.0);
+    assert_eq!(all.attribute_vector::<f64>(ATTR_V, 2).unwrap()[0], 3.0);
 }
 
 #[test]
 fn langevin_reports_invalid_inverse_mass_only_for_included_particles() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 0, &[0.0])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 0, &[0.0])
         .unwrap();
 
     let mut t = LangevinThermostat::new(1.0, 0.5, rng(1), ParticleSelection::AliveOnly).unwrap();
@@ -133,9 +135,9 @@ fn langevin_reports_invalid_inverse_mass_only_for_included_particles() {
 #[test]
 fn langevin_reports_shape_errors() {
     let mut bad_m_inv = create_template(1, 2).unwrap();
-    bad_m_inv.core.remove(ATTR_M_INV).unwrap();
+    bad_m_inv.attributes_mut().remove(ATTR_M_INV).unwrap();
     bad_m_inv
-        .core
+        .attributes_mut()
         .insert(ATTR_M_INV, VectorList::<f64>::empty(2, 2))
         .unwrap();
     let mut t = LangevinThermostat::new(1.0, 0.5, rng(1), ParticleSelection::AliveOnly).unwrap();
@@ -149,9 +151,9 @@ fn langevin_reports_shape_errors() {
     );
 
     let mut bad_alive = create_template(1, 2).unwrap();
-    bad_alive.core.remove(ATTR_ALIVE).unwrap();
+    bad_alive.attributes_mut().remove(ATTR_ALIVE).unwrap();
     bad_alive
-        .core
+        .attributes_mut()
         .insert(ATTR_ALIVE, VectorList::<u8>::empty(2, 2))
         .unwrap();
     assert_eq!(

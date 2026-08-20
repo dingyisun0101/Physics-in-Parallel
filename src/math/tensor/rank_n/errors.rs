@@ -17,6 +17,8 @@ pub enum TensorError {
     InvalidShape { shape: Vec<usize> },
     /// Shape product overflowed `usize`.
     ShapeProductOverflow { shape: Vec<usize> },
+    /// An axis or the total linear domain cannot be represented by `isize`.
+    IndexSpaceOverflow { shape: Vec<usize> },
     /// Two tensors were expected to have the same shape.
     ShapeMismatch { lhs: Vec<usize>, rhs: Vec<usize> },
     /// An index has the wrong rank for the tensor shape.
@@ -53,6 +55,10 @@ impl fmt::Display for TensorError {
             Self::ShapeProductOverflow { shape } => {
                 write!(f, "tensor shape product overflowed usize; got {shape:?}")
             }
+            Self::IndexSpaceOverflow { shape } => write!(
+                f,
+                "tensor shape exceeds the signed public index space; got {shape:?}"
+            ),
             Self::ShapeMismatch { lhs, rhs } => {
                 write!(f, "tensor shape mismatch: lhs={lhs:?}, rhs={rhs:?}")
             }
@@ -96,12 +102,27 @@ pub fn validate_shape(shape: &[usize]) -> TensorResult<()> {
 pub fn checked_num_elements(shape: &[usize]) -> TensorResult<usize> {
     validate_shape(shape)?;
 
-    shape.iter().try_fold(1usize, |acc, &dim| {
+    if shape
+        .iter()
+        .any(|&dimension| dimension > isize::MAX as usize)
+    {
+        return Err(TensorError::IndexSpaceOverflow {
+            shape: shape.to_vec(),
+        });
+    }
+
+    let size = shape.iter().try_fold(1usize, |acc, &dim| {
         acc.checked_mul(dim)
             .ok_or_else(|| TensorError::ShapeProductOverflow {
                 shape: shape.to_vec(),
             })
-    })
+    })?;
+    if size > isize::MAX as usize {
+        return Err(TensorError::IndexSpaceOverflow {
+            shape: shape.to_vec(),
+        });
+    }
+    Ok(size)
 }
 
 /// Validate that two tensors have the same shape.
@@ -123,19 +144,6 @@ pub fn ensure_index_rank(shape: &[usize], index_rank: usize) -> TensorResult<()>
         return Err(TensorError::RankMismatch {
             shape: shape.to_vec(),
             index_rank,
-        });
-    }
-    Ok(())
-}
-
-/// Validate an operation-specific expected rank.
-#[inline]
-pub fn ensure_rank(operation: &'static str, actual: usize, expected: usize) -> TensorResult<()> {
-    if actual != expected {
-        return Err(TensorError::ExpectedRank {
-            operation,
-            expected,
-            actual,
         });
     }
     Ok(())

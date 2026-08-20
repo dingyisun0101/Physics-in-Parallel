@@ -40,31 +40,31 @@ pub const ATTR_ALIVE: &str = "alive";
 pub const ATTR_RIGID: &str = "rigid";
 
 /// Stored value for a dead/inactive particle.
-pub const ALIVE_FALSE: u8 = 0;
+pub(crate) const ALIVE_FALSE: u8 = 0;
 /// Stored value for an alive/active particle.
-pub const ALIVE_TRUE: u8 = 1;
+pub(crate) const ALIVE_TRUE: u8 = 1;
 /// Stored value for a non-rigid/free particle.
-pub const RIGID_FALSE: u8 = 0;
+pub(crate) const RIGID_FALSE: u8 = 0;
 /// Stored value for a rigid/fixed particle.
-pub const RIGID_TRUE: u8 = 1;
+pub(crate) const RIGID_TRUE: u8 = 1;
 
 /// Converts a Rust boolean into the canonical stored alive-mask value.
-pub fn alive_value(alive: bool) -> u8 {
+pub(crate) fn alive_value(alive: bool) -> u8 {
     if alive { ALIVE_TRUE } else { ALIVE_FALSE }
 }
 
 /// Interprets a canonical alive-mask value.
-pub fn is_alive_value(value: u8) -> bool {
+pub(crate) fn is_alive_value(value: u8) -> bool {
     value != ALIVE_FALSE
 }
 
 /// Converts a Rust boolean into the canonical stored rigid-mask value.
-pub fn rigid_value(rigid: bool) -> u8 {
+pub(crate) fn rigid_value(rigid: bool) -> u8 {
     if rigid { RIGID_TRUE } else { RIGID_FALSE }
 }
 
 /// Interprets a canonical rigid-mask value.
-pub fn is_rigid_value(value: u8) -> bool {
+pub(crate) fn is_rigid_value(value: u8) -> bool {
     value != RIGID_FALSE
 }
 

@@ -1,5 +1,5 @@
-use physics_in_parallel::math::Complex;
-use physics_in_parallel::math::tensor::{Dense, Sparse, Tensor};
+use physics_in_parallel::prelude::advanced::{Dense, Sparse};
+use physics_in_parallel::prelude::basic::{Complex, Tensor};
 
 #[test]
 fn dense_tensor_streaming_json_roundtrip_preserves_flat_schema() {

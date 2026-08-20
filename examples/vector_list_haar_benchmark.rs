@@ -1,10 +1,8 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use physics_in_parallel::math::tensor::rank_2::vector_list::{
-    HaarVectors, VectorList, VectorListRand,
-};
-use physics_in_parallel::rng::RngConfig;
+use physics_in_parallel::prelude::advanced::{HaarVectors, VectorListRand};
+use physics_in_parallel::prelude::basic::{RngConfig, VectorList};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_distr::{Distribution, Normal};
@@ -16,23 +14,23 @@ const SEED: u64 = 0xBADC_0FFE_EE11_2233;
 
 fn main() {
     let dim = parse_arg(1).unwrap_or(DEFAULT_DIM);
-    let num_vecs = parse_arg(2).unwrap_or(DEFAULT_NUM_VECS);
+    let num_vectors = parse_arg(2).unwrap_or(DEFAULT_NUM_VECS);
     let repeats = parse_arg(3).unwrap_or(DEFAULT_REPEATS);
 
     println!("vector-list Haar generation benchmark");
     println!("dim: {dim}");
-    println!("vectors: {num_vecs}");
-    println!("scalar entries: {}", dim * num_vecs);
+    println!("vectors: {num_vectors}");
+    println!("scalar entries: {}", dim * num_vectors);
     println!(
         "storage: {}",
-        bytes_human(dim * num_vecs * size_of::<f64>())
+        bytes_human(dim * num_vectors * size_of::<f64>())
     );
     println!("repeats: {repeats}");
     println!("rayon threads available: {}", rayon::current_num_threads());
     println!();
 
-    let vector_list = benchmark_vector_list_haar(dim, num_vecs, repeats);
-    let sequential = benchmark_sequential_haar(dim, num_vecs, repeats);
+    let vector_list = benchmark_vector_list_haar(dim, num_vectors, repeats);
+    let sequential = benchmark_sequential_haar(dim, num_vectors, repeats);
 
     println!(
         "{:<16} {:>14} {:>14} {:>14}",
@@ -59,7 +57,7 @@ fn main() {
     report_sum("Sequential", &sequential.sum);
     println!();
     println!(
-        "For independent Haar unit vectors, each component has mean zero. The component sums should therefore be small compared with the vector count, with random fluctuation on the order of sqrt(num_vecs / dim)."
+        "For independent Haar unit vectors, each component has mean zero. The component sums should therefore be small compared with the vector count, with random fluctuation on the order of sqrt(num_vectors / dim)."
     );
 }
 
@@ -70,8 +68,8 @@ struct Timing {
     sum: Vec<f64>,
 }
 
-fn benchmark_vector_list_haar(dim: usize, num_vecs: usize, repeats: usize) -> Timing {
-    let mut generator = HaarVectors::new(dim, num_vecs, RngConfig::new(None, None))
+fn benchmark_vector_list_haar(dim: usize, num_vectors: usize, repeats: usize) -> Timing {
+    let mut generator = HaarVectors::new(dim, num_vectors, RngConfig::new(None, None))
         .expect("valid RNG configuration");
     generator.refresh();
 
@@ -90,8 +88,8 @@ fn benchmark_vector_list_haar(dim: usize, num_vecs: usize, repeats: usize) -> Ti
     }
 }
 
-fn benchmark_sequential_haar(dim: usize, num_vecs: usize, repeats: usize) -> Timing {
-    let mut vectors = vec![0.0; dim * num_vecs];
+fn benchmark_sequential_haar(dim: usize, num_vectors: usize, repeats: usize) -> Timing {
+    let mut vectors = vec![0.0; dim * num_vectors];
     let mut rng = SmallRng::seed_from_u64(SEED);
     let normal = Normal::new(0.0, 1.0).expect("valid standard normal distribution");
 
@@ -134,8 +132,8 @@ where
 
 fn vector_sum(vectors: &VectorList<f64>) -> Vec<f64> {
     let mut sum = vec![0.0; vectors.dim()];
-    for i in 0..vectors.num_vecs() {
-        for (axis, x) in vectors.get_vec(i as isize).iter().copied().enumerate() {
+    for i in 0..vectors.num_vectors() {
+        for (axis, x) in vectors.vector(i as isize).iter().copied().enumerate() {
             sum[axis] += x;
         }
     }

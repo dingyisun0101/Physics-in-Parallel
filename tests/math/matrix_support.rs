@@ -1,8 +1,8 @@
 use std::panic;
 use std::sync::Mutex;
 
-use physics_in_parallel::math::scalar::Scalar;
-use physics_in_parallel::math::tensor::{Matrix, MatrixBackend};
+use physics_in_parallel::prelude::advanced::MatrixBackend;
+use physics_in_parallel::prelude::basic::{Matrix, Scalar};
 
 static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
 

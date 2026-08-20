@@ -406,7 +406,7 @@ impl AttrsCore {
                 n,
             });
         }
-        Ok(col.get_vector(obj as isize))
+        Ok(col.vector(obj as isize))
     }
 
     pub fn vector_of_mut<T>(&mut self, label: &str, obj: usize) -> Result<&mut [T], AttrsError>
@@ -422,7 +422,7 @@ impl AttrsCore {
                 n,
             });
         }
-        Ok(col.get_vector_mut(obj as isize))
+        Ok(col.vector_mut(obj as isize))
     }
 
     pub fn set_vector_of<T>(
@@ -449,7 +449,7 @@ impl AttrsCore {
                 got: value.len(),
             });
         }
-        col.set_vector_from_slice(obj as isize, value);
+        col.set_vector(obj as isize, value);
         Ok(())
     }
 
@@ -698,13 +698,17 @@ fn decode_attribute(core: &mut AttrsCore, attribute: EncodedAttribute) -> Result
 
 #[derive(Debug, Clone)]
 pub struct PhysObj {
-    pub meta: AttrsMeta,
-    pub core: AttrsCore,
+    /// Advanced generic metadata storage. Model users normally call the
+    /// descriptive accessors on `PhysObj`.
+    pub(crate) meta: AttrsMeta,
+    /// Advanced heterogeneous attribute storage. Model users normally call
+    /// the typed attribute accessors on `PhysObj`.
+    pub(crate) core: AttrsCore,
 }
 
 impl PhysObj {
     #[inline]
-    pub fn new(meta: AttrsMeta, core: AttrsCore) -> Self {
+    pub(crate) fn new(meta: AttrsMeta, core: AttrsCore) -> Self {
         Self { meta, core }
     }
 
@@ -714,6 +718,85 @@ impl PhysObj {
             meta: AttrsMeta::empty(),
             core: AttrsCore::empty(),
         }
+    }
+
+    /// Returns the model object's stable metadata identifier.
+    #[inline]
+    pub const fn id(&self) -> AttrId {
+        self.meta.id
+    }
+
+    /// Returns the model object's human-facing label.
+    #[inline]
+    pub fn label(&self) -> &str {
+        &self.meta.label
+    }
+
+    /// Returns the model object's optional descriptive comment.
+    #[inline]
+    pub fn comment(&self) -> &str {
+        &self.meta.comment
+    }
+
+    /// Returns the common object count when attributes have been allocated.
+    #[inline]
+    pub fn num_objects(&self) -> Option<usize> {
+        self.core.n_objects()
+    }
+
+    /// Reports whether one named attribute exists.
+    #[inline]
+    pub fn has_attribute(&self, label: &str) -> bool {
+        self.core.contains(label)
+    }
+
+    /// Borrows one typed attribute column by canonical label.
+    #[inline]
+    pub fn attribute<T: Scalar + 'static>(
+        &self,
+        label: &str,
+    ) -> Result<&VectorList<T>, AttrsError> {
+        self.core.get(label)
+    }
+
+    /// Mutably borrows one typed attribute column by canonical label.
+    #[inline]
+    pub fn attribute_mut<T: Scalar + 'static>(
+        &mut self,
+        label: &str,
+    ) -> Result<&mut VectorList<T>, AttrsError> {
+        self.core.get_mut(label)
+    }
+
+    /// Borrows one object's vector from a named typed attribute.
+    #[inline]
+    pub fn attribute_vector<T: Scalar + 'static>(
+        &self,
+        label: &str,
+        object: usize,
+    ) -> Result<&[T], AttrsError> {
+        self.core.vector_of(label, object)
+    }
+
+    /// Mutably borrows one object's vector from a named typed attribute.
+    #[inline]
+    pub fn attribute_vector_mut<T: Scalar + 'static>(
+        &mut self,
+        label: &str,
+        object: usize,
+    ) -> Result<&mut [T], AttrsError> {
+        self.core.vector_of_mut(label, object)
+    }
+
+    /// Replaces one object's vector in a named typed attribute.
+    #[inline]
+    pub fn set_attribute_vector<T: Scalar + 'static>(
+        &mut self,
+        label: &str,
+        object: usize,
+        values: &[T],
+    ) -> Result<(), AttrsError> {
+        self.core.set_vector_of(label, object, values)
     }
 
     #[inline]

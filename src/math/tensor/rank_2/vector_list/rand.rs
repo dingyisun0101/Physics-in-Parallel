@@ -17,13 +17,14 @@ Design:
         using `TensorRandFiller`, then decodes those codes in parallel. The
         stored rows are one-hot nearest-neighbor directions.
 */
+use crate::parallel::parallel_chunk_len;
 use ndarray::Array2;
 use rayon::prelude::*;
 use serde_json::Value;
 
-use crate::math::tensor::{
-    RandType, TensorRandError, TensorRandFiller, TensorTrait, dense::Tensor,
-};
+use crate::math::tensor::rank_n::dense::Tensor;
+use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
+use crate::math::{RandType, TensorRandError, TensorRandFiller};
 use crate::rng::RngConfig;
 
 use super::VectorList;
@@ -191,7 +192,7 @@ impl HaarVectors {
         }
         match &mut self.workspace {
             HaarWorkspace::Sign { codes } => {
-                self.filler.try_refresh(codes)?;
+                self.filler.try_refresh_dense(codes)?;
                 write_signs(codes.data(), self.vl.as_tensor_mut().data_mut());
             }
             HaarWorkspace::Plane { units } => {
@@ -249,9 +250,11 @@ impl HaarVectors {
 }
 
 fn write_signs(codes: &[usize], output: &mut [f64]) {
+    let min_vectors_per_job = parallel_chunk_len(output.len()).unwrap_or(1);
     output
         .par_iter_mut()
         .zip(codes.par_iter())
+        .with_min_len(min_vectors_per_job)
         .for_each(|(value, code)| *value = if *code == 0 { -1.0 } else { 1.0 });
 }
 
@@ -259,6 +262,7 @@ fn write_plane(units: &[f64], output: &mut [f64]) {
     output
         .par_chunks_exact_mut(2)
         .zip(units.par_iter())
+        .with_min_len(parallel_chunk_len(units.len()).unwrap_or(1))
         .for_each(|(row, unit)| {
             let (sin, cos) = (std::f64::consts::TAU * unit).sin_cos();
             row[0] = cos;
@@ -267,9 +271,11 @@ fn write_plane(units: &[f64], output: &mut [f64]) {
 }
 
 fn write_sphere(units: &[f64], output: &mut [f64]) {
+    let min_vectors_per_job = parallel_chunk_len(output.len() / 3).unwrap_or(1);
     output
         .par_chunks_exact_mut(3)
         .zip(units.par_chunks_exact(2))
+        .with_min_len(min_vectors_per_job)
         .for_each(|(row, random)| {
             let z = 2.0 * random[0] - 1.0;
             let radius = (1.0 - z * z).sqrt();
@@ -326,7 +332,9 @@ impl VectorListRand for NNVectors {
     #[inline]
     /// Refresh rank-N integer codes and decode them into vector-list rows.
     fn refresh(&mut self) {
-        self.code_filler.refresh(&mut self.code_buf);
+        self.code_filler
+            .try_refresh_dense(&mut self.code_buf)
+            .expect("validated nearest-neighbor random fill");
         decode_nearest_neighbor_codes(
             self.code_buf.data(),
             self.dim,
@@ -352,6 +360,7 @@ fn decode_nearest_neighbor_codes(codes: &[usize], dim: usize, output: &mut [isiz
     output
         .par_chunks_exact_mut(dim)
         .zip(codes.par_iter())
+        .with_min_len(parallel_chunk_len(codes.len()).unwrap_or(1))
         .for_each(|(row, code)| decode_nearest_neighbor_code(*code, row));
 }
 

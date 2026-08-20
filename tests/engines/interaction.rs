@@ -1,4 +1,4 @@
-use physics_in_parallel::engines::soa::{
+use physics_in_parallel::prelude::advanced::{
     Interaction, InteractionError, InteractionOrder, InteractionTopology,
 };
 

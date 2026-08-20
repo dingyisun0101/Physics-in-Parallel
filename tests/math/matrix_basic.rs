@@ -1,4 +1,5 @@
-use physics_in_parallel::math::tensor::{DenseMatrix, MatrixError, SparseMatrix};
+use physics_in_parallel::prelude::advanced::SparseMatrix;
+use physics_in_parallel::prelude::basic::{DenseMatrix, MatrixError};
 
 use crate::matrix_support::print_matrix;
 
@@ -43,6 +44,10 @@ fn fallible_dense_construction_reports_shape_and_storage_errors() {
             expected: 4,
             actual: 3,
         })
+    ));
+    assert!(matches!(
+        DenseMatrix::<f64>::try_from_vec(isize::MAX as usize, 2, Vec::new()),
+        Err(MatrixError::IndexSpaceOverflow { .. })
     ));
 }
 

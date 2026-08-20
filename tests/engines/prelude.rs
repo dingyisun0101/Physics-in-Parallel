@@ -1,7 +1,8 @@
-use physics_in_parallel::engines::prelude::*;
+use physics_in_parallel::prelude::advanced::*;
+use physics_in_parallel::prelude::models::PhysObj;
 
 #[test]
-fn engines_prelude_exports_core_soa_types() {
+fn advanced_prelude_exports_core_soa_types() {
     let mut topo = InteractionTopology::new(3);
     let id = topo.add(&[0, 2]).unwrap();
     assert_eq!(topo.nodes_of(id).unwrap().nodes.as_ref(), [0, 2].as_slice());
@@ -12,9 +13,6 @@ fn engines_prelude_exports_core_soa_types() {
 
     let mut core = AttrsCore::empty();
     core.allocate::<f64>("r", 2, 1).unwrap();
-    let obj = PhysObj {
-        meta: AttrsMeta::empty(),
-        core,
-    };
-    assert_eq!(obj.core.dim_of("r").unwrap(), 2);
+    let obj = PhysObj::from_raw_parts(AttrsMeta::empty(), core);
+    assert_eq!(obj.attributes().dim_of("r").unwrap(), 2);
 }

@@ -1,5 +1,5 @@
 use ndarray::arr2;
-use physics_in_parallel::math::tensor::VectorList;
+use physics_in_parallel::prelude::basic::VectorList;
 
 fn main() {
     // [n, dim] = [2, 3]

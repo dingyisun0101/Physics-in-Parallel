@@ -1,4 +1,4 @@
-use physics_in_parallel::engines::observe::{MeanReducer, Reducer};
+use physics_in_parallel::prelude::advanced::{MeanReducer, Reducer};
 
 #[test]
 fn mean_reducer_handles_empty_and_nonempty_inputs() {

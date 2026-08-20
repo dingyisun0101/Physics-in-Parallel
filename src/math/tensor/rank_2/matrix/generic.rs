@@ -12,10 +12,11 @@ use core::marker::PhantomData;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
 use crate::math::tensor::rank_n::{Dense, Sparse, Tensor};
+use crate::parallel::parallel_chunk_len;
 use num_traits::Zero;
 use rayon::prelude::*;
 
-use super::matrix_backend_trait::MatrixBackend;
+use super::matrix_backend_trait::{MatrixBackend, wrap_axis_index};
 
 #[inline]
 fn max_or_propagate_unordered<R>(left: R, right: R) -> R
@@ -62,10 +63,14 @@ pub enum MatrixError {
     InvalidShape { rows: usize, cols: usize },
     /// The logical element count cannot be represented by `usize`.
     ShapeProductOverflow { rows: usize, cols: usize },
+    /// Matrix axes or logical size cannot be represented by signed accessors.
+    IndexSpaceOverflow { rows: usize, cols: usize },
     /// Row-major storage did not contain exactly `rows * cols` elements.
     DataLengthMismatch { expected: usize, actual: usize },
     /// The input vector length did not match the matrix column count.
     InputLength { expected: usize, actual: usize },
+    /// A batched input did not contain a whole number of column-sized vectors.
+    BatchInputLength { columns: usize, actual: usize },
     /// The output vector length did not match the matrix row count.
     OutputLength { expected: usize, actual: usize },
 }
@@ -82,6 +87,10 @@ impl fmt::Display for MatrixError {
                     "matrix shape {rows}x{cols} overflows its element count"
                 )
             }
+            Self::IndexSpaceOverflow { rows, cols } => write!(
+                formatter,
+                "matrix shape {rows}x{cols} exceeds the signed index space"
+            ),
             Self::DataLengthMismatch { expected, actual } => write!(
                 formatter,
                 "matrix data length mismatch: expected {expected}, got {actual}"
@@ -89,6 +98,10 @@ impl fmt::Display for MatrixError {
             Self::InputLength { expected, actual } => write!(
                 formatter,
                 "matrix input length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::BatchInputLength { columns, actual } => write!(
+                formatter,
+                "batched matrix input length {actual} is not divisible by the column count {columns}"
             ),
             Self::OutputLength { expected, actual } => write!(
                 formatter,
@@ -115,6 +128,11 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     #[inline]
     pub(crate) fn contiguous_data(&self) -> Option<&[T]> {
         self.backend.contiguous_data()
+    }
+
+    #[inline]
+    pub(crate) fn contiguous_data_mut(&mut self) -> Option<&mut [T]> {
+        self.backend.contiguous_data_mut()
     }
 
     /// Borrows the backend for format-specific crate-internal IO.
@@ -160,12 +178,14 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         if let Some(values) = self.backend.contiguous_data() {
             return values
                 .par_iter()
+                .with_min_len(parallel_chunk_len(values.len()).unwrap_or(1))
                 .map(|value| value.abs_real())
                 .reduce(T::Real::zero, max_or_propagate_unordered);
         }
         if let Some(entries) = self.backend.sparse_entries() {
             return entries
                 .into_par_iter()
+                .with_min_len(parallel_chunk_len(self.size()).unwrap_or(1))
                 .map(|(_, value)| value.abs_real())
                 .reduce(T::Real::zero, max_or_propagate_unordered);
         }
@@ -173,6 +193,7 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         let cols = self.cols();
         (0..self.size())
             .into_par_iter()
+            .with_min_len(parallel_chunk_len(self.size()).unwrap_or(1))
             .map(|index| {
                 self.get((index / cols) as isize, (index % cols) as isize)
                     .abs_real()
@@ -196,6 +217,13 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     #[inline]
     pub fn get(&self, row: isize, col: isize) -> T {
         self.backend.get(row, col)
+    }
+
+    /// Read through a signed row-major index with periodic wrapping.
+    #[inline]
+    pub fn get_flat(&self, flat: isize) -> T {
+        let flat = wrap_axis_index(flat, self.size());
+        self.get((flat / self.cols()) as isize, (flat % self.cols()) as isize)
     }
 
     /// Computes `output = self * input` without allocating.
@@ -238,10 +266,90 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         Ok(())
     }
 
+    /// Applies this matrix to a contiguous batch of vectors without allocating.
+    ///
+    /// `input` is interpreted as consecutive vectors of length `cols()`. The
+    /// batch size is inferred, and `output` must contain the same number of
+    /// consecutive vectors of length `rows()`.
+    pub fn mul_vectors_into(&self, input: &[T], output: &mut [T]) -> Result<(), MatrixError> {
+        if !input.len().is_multiple_of(self.cols()) {
+            return Err(MatrixError::BatchInputLength {
+                columns: self.cols(),
+                actual: input.len(),
+            });
+        }
+        let batch = input.len() / self.cols();
+        let expected_output =
+            batch
+                .checked_mul(self.rows())
+                .ok_or(MatrixError::ShapeProductOverflow {
+                    rows: batch,
+                    cols: self.rows(),
+                })?;
+        if output.len() != expected_output {
+            return Err(MatrixError::OutputLength {
+                expected: expected_output,
+                actual: output.len(),
+            });
+        }
+        if batch == 0 {
+            return Ok(());
+        }
+
+        let rows = self.rows();
+        let cols = self.cols();
+        let min_vectors_per_job = parallel_chunk_len(batch).unwrap_or(1);
+        if let Some(data) = self.contiguous_data() {
+            output
+                .par_chunks_mut(rows)
+                .zip(input.par_chunks(cols))
+                .with_min_len(min_vectors_per_job)
+                .for_each(|(output_vector, input_vector)| {
+                    for (matrix_row, output_value) in
+                        data.chunks_exact(cols).zip(output_vector.iter_mut())
+                    {
+                        *output_value = matrix_row
+                            .iter()
+                            .copied()
+                            .zip(input_vector.iter().copied())
+                            .map(|(coefficient, value)| coefficient * value)
+                            .sum();
+                    }
+                });
+        } else {
+            output
+                .par_chunks_mut(rows)
+                .zip(input.par_chunks(cols))
+                .with_min_len(min_vectors_per_job)
+                .for_each(|(output_vector, input_vector)| {
+                    for (row, output_value) in output_vector.iter_mut().enumerate() {
+                        *output_value = input_vector
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(column, value)| self.get(row as isize, column as isize) * value)
+                            .sum();
+                    }
+                });
+        }
+        Ok(())
+    }
+
     /// Write the scalar at `(row, col)`.
     #[inline]
     pub fn set(&mut self, row: isize, col: isize, value: T) {
         self.backend.set(row, col, value);
+    }
+
+    /// Write through a signed row-major index with periodic wrapping.
+    #[inline]
+    pub fn set_flat(&mut self, flat: isize, value: T) {
+        let flat = wrap_axis_index(flat, self.size());
+        self.set(
+            (flat / self.cols()) as isize,
+            (flat % self.cols()) as isize,
+            value,
+        );
     }
 
     /// Fill every logical entry according to backend semantics.
@@ -279,9 +387,7 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     {
         let rows = tensor.shape()[0];
         let cols = tensor.shape()[1];
-        DenseMatrix::from_fn(rows, cols, |row, col| {
-            tensor.get(&[row as isize, col as isize])
-        })
+        DenseMatrix::from_vec(rows, cols, tensor.data().to_vec())
     }
 
     fn matrix_from_dense_rank_n_preserving(tensor: &Tensor<T, Dense>) -> Self
@@ -292,6 +398,7 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         let cols = tensor.shape()[1];
         let entries: Vec<(usize, usize, T)> = (0..rows * cols)
             .into_par_iter()
+            .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
             .map(|k| {
                 let row = k / cols;
                 let col = k % cols;
@@ -320,8 +427,22 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
 
         let rows = self.rows();
         let cols = self.cols();
+        let mut out = Self::empty(rows, cols);
+        if let Some(values) = out.contiguous_data_mut() {
+            let min_elements_per_job = parallel_chunk_len(values.len()).unwrap_or(1);
+            values
+                .par_iter_mut()
+                .with_min_len(min_elements_per_job)
+                .enumerate()
+                .for_each(|(flat, value)| {
+                    *value = f(self.get_flat(flat as isize), rhs.get_flat(flat as isize));
+                });
+            return out;
+        }
+
         let entries: Vec<(usize, usize, T)> = (0..rows * cols)
             .into_par_iter()
+            .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
             .map(|k| {
                 let row = k / cols;
                 let col = k % cols;
@@ -332,8 +453,6 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
                 (row, col, value)
             })
             .collect();
-
-        let mut out = Self::empty(rows, cols);
         for (row, col, value) in entries {
             out.set(row as isize, col as isize, value);
         }
@@ -396,16 +515,28 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     {
         let rows = self.rows();
         let cols = self.cols();
+        let mut out = Self::empty(rows, cols);
+        if let Some(values) = out.contiguous_data_mut() {
+            let min_elements_per_job = parallel_chunk_len(values.len()).unwrap_or(1);
+            values
+                .par_iter_mut()
+                .with_min_len(min_elements_per_job)
+                .enumerate()
+                .for_each(|(flat, value)| {
+                    *value = self.get_flat(flat as isize) * scalar;
+                });
+            return out;
+        }
+
         let entries: Vec<(usize, usize, T)> = (0..rows * cols)
             .into_par_iter()
+            .with_min_len(parallel_chunk_len(rows * cols).unwrap_or(1))
             .map(|k| {
                 let row = k / cols;
                 let col = k % cols;
                 (row, col, self.get(row as isize, col as isize) * scalar)
             })
             .collect();
-
-        let mut out = Self::empty(rows, cols);
         for (row, col, value) in entries {
             out.set(row as isize, col as isize, value);
         }
@@ -572,6 +703,12 @@ impl<T: Scalar> Matrix<T, RankNDense<T>> {
         let expected = rows
             .checked_mul(cols)
             .ok_or(MatrixError::ShapeProductOverflow { rows, cols })?;
+        if rows > isize::MAX as usize
+            || cols > isize::MAX as usize
+            || expected > isize::MAX as usize
+        {
+            return Err(MatrixError::IndexSpaceOverflow { rows, cols });
+        }
         if data.len() != expected {
             return Err(MatrixError::DataLengthMismatch {
                 expected,
@@ -706,6 +843,11 @@ impl<T: Scalar> MatrixBackend<T> for RankNDense<T> {
     #[inline]
     fn contiguous_data(&self) -> Option<&[T]> {
         Some(self.tensor.data())
+    }
+
+    #[inline]
+    fn contiguous_data_mut(&mut self) -> Option<&mut [T]> {
+        Some(self.tensor.storage_mut().data_mut())
     }
 }
 

@@ -1,12 +1,9 @@
-/*!
-Crate-wide prelude.
+//! Explicit API-tier preludes.
+//!
+//! Ordinary foundations, ready-to-use physical models, and lower-level
+//! extension facilities are imported independently so the selected contract
+//! remains visible at every call site.
 
-Import with:
-`use physics_in_parallel::prelude::*;`
-*/
-
-pub use crate::engines::prelude::*;
-pub use crate::math::prelude::*;
-pub use crate::models::prelude::*;
-pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
-pub use crate::space::prelude::*;
+pub mod advanced;
+pub mod basic;
+pub mod models;

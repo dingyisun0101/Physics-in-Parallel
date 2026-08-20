@@ -1,14 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::models::laws::SpringLawError;
-use physics_in_parallel::models::particles::attrs::{
-    ATTR_A, ATTR_M_INV, ATTR_R, ParticleSelection, set_alive, set_rigid,
-};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::interactions::spring_network::{
-    SpringNetwork, SpringNetworkError,
-};
+use physics_in_parallel::prelude::advanced::PhysObjAdvanced;
+use physics_in_parallel::prelude::basic::VectorList;
+use physics_in_parallel::prelude::models::*;
 
 #[test]
 fn empty_add_get_remove_roundtrip() {
@@ -53,7 +47,7 @@ fn add_twice_same_pair_overwrites_payload() {
 #[test]
 fn capacity_constructor_and_batch_payload_insert_work() {
     let mut network = SpringNetwork::with_capacity(4, 3);
-    let spring = physics_in_parallel::models::laws::Spring::new(5.0, 1.2, None).unwrap();
+    let spring = Spring::new(5.0, 1.2, None).unwrap();
 
     network
         .add_springs_payload(&[(0, 1), (2, 3), (1, 3)], spring)
@@ -122,20 +116,16 @@ fn invalid_spring_parameters_are_rejected() {
 fn hooke_acceleration_two_particle_sign_and_additive_semantics() {
     let mut objects = create_template(1, 2).unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 0, &[0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 0, &[0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 1, &[2.0])
+        .set_attribute_vector::<f64>(ATTR_R, 1, &[2.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_A, 0, &[0.5])
+        .set_attribute_vector::<f64>(ATTR_A, 0, &[0.5])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_A, 1, &[1.0])
+        .set_attribute_vector::<f64>(ATTR_A, 1, &[1.0])
         .unwrap();
 
     let mut network = SpringNetwork::empty();
@@ -144,7 +134,7 @@ fn hooke_acceleration_two_particle_sign_and_additive_semantics() {
         .apply_hooke_acceleration(&mut objects, ParticleSelection::All)
         .unwrap();
 
-    let a = objects.core.get::<f64>(ATTR_A).unwrap();
+    let a = objects.attribute::<f64>(ATTR_A).unwrap();
     assert_eq!(a.get(0, 0), 4.5);
     assert_eq!(a.get(1, 0), -3.0);
 }
@@ -154,20 +144,16 @@ fn hooke_acceleration_respects_rigid_dead_cutoff_and_equal_position_cases() {
     let mut objects = create_template(1, 4).unwrap();
 
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 0, &[0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 0, &[0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 1, &[2.0])
+        .set_attribute_vector::<f64>(ATTR_R, 1, &[2.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 2, &[4.0])
+        .set_attribute_vector::<f64>(ATTR_R, 2, &[4.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 3, &[4.0])
+        .set_attribute_vector::<f64>(ATTR_R, 3, &[4.0])
         .unwrap();
 
     set_rigid(&mut objects, 0, true).unwrap();
@@ -191,7 +177,7 @@ fn hooke_acceleration_respects_rigid_dead_cutoff_and_equal_position_cases() {
         .apply_hooke_acceleration(&mut objects, ParticleSelection::AliveOnly)
         .unwrap();
 
-    let a = objects.core.get::<f64>(ATTR_A).unwrap();
+    let a = objects.attribute::<f64>(ATTR_A).unwrap();
     assert_eq!(a.get(0, 0), 0.0, "rigid endpoint should not be updated");
     assert_eq!(a.get(1, 0), -4.0);
     assert_eq!(a.get(2, 0), 0.0, "dead/cutoff/equal-position cases skipped");
@@ -202,8 +188,7 @@ fn hooke_acceleration_respects_rigid_dead_cutoff_and_equal_position_cases() {
 fn hooke_acceleration_reports_invalid_shapes_and_inverse_mass() {
     let mut bad_mass = create_template(1, 2).unwrap();
     bad_mass
-        .core
-        .set_vector_of::<f64>(ATTR_M_INV, 1, &[-1.0])
+        .set_attribute_vector::<f64>(ATTR_M_INV, 1, &[-1.0])
         .unwrap();
     let mut network = SpringNetwork::empty();
     network.add_spring((0, 1), 1.0, 1.0, None).unwrap();
@@ -218,9 +203,9 @@ fn hooke_acceleration_reports_invalid_shapes_and_inverse_mass() {
     );
 
     let mut bad_accel = create_template(1, 2).unwrap();
-    bad_accel.core.remove(ATTR_A).unwrap();
+    bad_accel.attributes_mut().remove(ATTR_A).unwrap();
     bad_accel
-        .core
+        .attributes_mut()
         .insert(ATTR_A, VectorList::<f64>::empty(2, 2))
         .unwrap();
     assert_eq!(

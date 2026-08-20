@@ -1,32 +1,21 @@
-use physics_in_parallel::math::tensor::rank_2::vector_list::VectorList;
-use physics_in_parallel::models::particles::attrs::{
-    ATTR_M_INV, ATTR_V, ParticleSelection, set_alive,
-};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::observe::{
-    KineticEnergyObserver, ObserveError, Observer, TemperatureObserver,
-};
+use physics_in_parallel::prelude::advanced::PhysObjAdvanced;
+use physics_in_parallel::prelude::basic::*;
+use physics_in_parallel::prelude::models::*;
 
 #[test]
 fn kinetic_energy_uses_inverse_mass_and_alive_mask() {
     let mut obj = create_template(2, 3).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 0, &[3.0, 4.0])
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[3.0, 4.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 1, &[1.0, 0.0])
+    obj.set_attribute_vector::<f64>(ATTR_V, 1, &[1.0, 0.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 2, &[2.0, 0.0])
+    obj.set_attribute_vector::<f64>(ATTR_V, 2, &[2.0, 0.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 0, &[0.5])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 0, &[0.5])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 1, &[1.0])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 1, &[1.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 2, &[2.0])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 2, &[2.0])
         .unwrap();
     set_alive(&mut obj, 1, false).unwrap();
 
@@ -42,11 +31,9 @@ fn kinetic_energy_uses_inverse_mass_and_alive_mask() {
 #[test]
 fn temperature_uses_active_particle_degrees_of_freedom() {
     let mut obj = create_template(2, 2).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 0, &[1.0, 0.0])
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0, 0.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 1, &[0.0, 2.0])
+    obj.set_attribute_vector::<f64>(ATTR_V, 1, &[0.0, 2.0])
         .unwrap();
     set_alive(&mut obj, 1, false).unwrap();
 
@@ -72,8 +59,7 @@ fn temperature_returns_zero_when_no_particles_are_active() {
 #[test]
 fn observer_reports_invalid_numeric_state() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 0, &[0.0])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 0, &[0.0])
         .unwrap();
 
     assert_eq!(
@@ -84,11 +70,9 @@ fn observer_reports_invalid_numeric_state() {
         }
     );
 
-    obj.core
-        .set_vector_of::<f64>(ATTR_M_INV, 0, &[1.0])
+    obj.set_attribute_vector::<f64>(ATTR_M_INV, 0, &[1.0])
         .unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 1, &[f64::INFINITY])
+    obj.set_attribute_vector::<f64>(ATTR_V, 1, &[f64::INFINITY])
         .unwrap();
 
     assert_eq!(
@@ -103,9 +87,8 @@ fn observer_reports_invalid_numeric_state() {
 #[test]
 fn alive_only_ignores_invalid_velocity_on_dead_particle_but_all_reports_it() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core.set_vector_of::<f64>(ATTR_V, 0, &[1.0]).unwrap();
-    obj.core
-        .set_vector_of::<f64>(ATTR_V, 1, &[f64::INFINITY])
+    obj.set_attribute_vector::<f64>(ATTR_V, 0, &[1.0]).unwrap();
+    obj.set_attribute_vector::<f64>(ATTR_V, 1, &[f64::INFINITY])
         .unwrap();
     set_alive(&mut obj, 1, false).unwrap();
 
@@ -126,8 +109,8 @@ fn alive_only_ignores_invalid_velocity_on_dead_particle_but_all_reports_it() {
 #[test]
 fn observer_reports_shape_errors() {
     let mut obj = create_template(1, 2).unwrap();
-    obj.core.remove(ATTR_M_INV).unwrap();
-    obj.core
+    obj.attributes_mut().remove(ATTR_M_INV).unwrap();
+    obj.attributes_mut()
         .insert(ATTR_M_INV, VectorList::<f64>::empty(2, 2))
         .unwrap();
 

@@ -1,4 +1,4 @@
-use physics_in_parallel::math::tensor::{
+use physics_in_parallel::prelude::advanced::{
     AntiSymmetricMatrix, DiagonalMatrix, LowerTriangularMatrix, StrictLowerTriangularMatrix,
     StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix,
 };

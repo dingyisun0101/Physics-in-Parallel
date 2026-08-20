@@ -2,15 +2,14 @@
 Core math foundations.
 */
 
-pub mod io;
-pub mod prelude;
+pub(crate) mod io;
 pub mod scalar;
 pub mod tensor;
 
-// Canonical top-level exports.
-pub use io::ndarray::NdarrayConvert;
-pub use scalar::{Complex, Scalar, ScalarCastError, ScalarSerde};
+// Minimal foundational facade. Backend and interchange types live in
+// `crate::advanced`.
+pub use scalar::{Complex, Scalar, ScalarCastError};
 pub use tensor::{
-    Backend, Dense, RandType, Sparse, Tensor, TensorError, TensorRandError, TensorRandFiller,
-    TensorResult, TensorTrait,
+    DenseMatrix, Matrix, MatrixError, RandType, Tensor, TensorError, TensorRandError,
+    TensorRandFiller, VectorList,
 };

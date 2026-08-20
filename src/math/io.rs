@@ -9,9 +9,9 @@
 //! validates scientific payload representations but does not manage recording
 //! cadence, chunks, queues, checkpoints, or output-directory organization.
 
-pub mod json;
-pub mod matrix;
-pub mod ndarray;
-pub mod string;
-pub mod tensor;
-pub mod vector_list;
+pub(crate) mod json;
+pub(crate) mod matrix;
+pub(crate) mod ndarray;
+pub(crate) mod string;
+pub(crate) mod tensor;
+pub(crate) mod vector_list;

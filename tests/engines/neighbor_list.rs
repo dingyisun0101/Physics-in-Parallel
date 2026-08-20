@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use physics_in_parallel::engines::soa::{NeighborList, NeighborListError};
+use physics_in_parallel::prelude::advanced::{NeighborList, NeighborListError};
 
 fn pair_set(pairs: Vec<(usize, usize)>) -> BTreeSet<(usize, usize)> {
     pairs.into_iter().collect()

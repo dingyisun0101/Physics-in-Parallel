@@ -1,8 +1,9 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use physics_in_parallel::math::tensor::{RandType, TensorRandFiller, TensorTrait, dense};
-use physics_in_parallel::rng::{RngConfig, RngMethod};
+use physics_in_parallel::prelude::basic::{
+    RandType, RngConfig, RngMethod, Tensor, TensorRandFiller,
+};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_chacha::{ChaCha8Rng, ChaCha12Rng, ChaCha20Rng};
@@ -65,7 +66,7 @@ fn benchmark_tensor_fill(
     kind: RandType,
     rng_kind: RngMethod,
 ) -> Timing {
-    let mut tensor = dense::Tensor::<f64>::empty(&[len]);
+    let mut tensor = Tensor::<f64>::empty(&[len]);
     let mut filler = TensorRandFiller::new(kind, RngConfig::new(Some(SEED), Some(rng_kind)));
 
     filler.refresh(&mut tensor);
@@ -81,7 +82,7 @@ fn benchmark_tensor_fill(
     Timing {
         best: *timings.iter().min().expect("at least one repeat"),
         average: average(&timings),
-        checksum: black_box(tensor.get_sum()),
+        checksum: black_box(tensor.sum()),
     }
 }
 

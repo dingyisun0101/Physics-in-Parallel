@@ -75,18 +75,29 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     where
         T: Copy;
 
+    /// Get by periodically normalized row-major flat index.
+    fn get_flat(&self, index: isize) -> T
+    where
+        T: Copy;
+
     /// Mutable reference at `idx`.
     ///
     /// Sparse backends may materialize an implicit zero to satisfy this method.
     fn get_mut(&mut self, idx: &[isize]) -> &mut T;
+
+    /// Mutably borrow by periodically normalized row-major flat index.
+    fn get_flat_mut(&mut self, index: isize) -> &mut T;
 
     /// Set the value at `idx`.
     ///
     /// Sparse backends should remove explicit storage when `val == T::zero()`.
     fn set(&mut self, idx: &[isize], val: T);
 
+    /// Set by periodically normalized row-major flat index.
+    fn set_flat(&mut self, index: isize, val: T);
+
     /// Backend-native sum reduction.
-    fn get_sum(&self) -> T;
+    fn sum(&self) -> T;
 
     /// Backend-native parallel fill.
     fn par_fill(&mut self, value: T)
@@ -129,12 +140,6 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     #[inline]
     fn size(&self) -> usize {
         ops::size(self.shape())
-    }
-
-    /// Alias for `get_sum`.
-    #[inline]
-    fn sum(&self) -> T {
-        self.get_sum()
     }
 
     /// Return a mapped tensor with the same backend.

@@ -9,6 +9,7 @@ sample index, so output does not depend on Rayon worker scheduling.
 use std::error::Error;
 use std::fmt;
 
+use crate::parallel::parallel_chunk_len;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -103,22 +104,6 @@ impl Clone for Box<dyn Kernel> {
     fn clone(&self) -> Self {
         self.boxed_clone()
     }
-}
-
-/// Creates a validated kernel without panicking on user configuration.
-pub fn try_create_kernel(kernel_type: KernelType) -> Result<Box<dyn Kernel>, KernelError> {
-    match kernel_type {
-        KernelType::PowerLaw { l, c, mu } => Ok(Box::new(PowerLawKernel::try_new(l, c, mu)?)),
-        KernelType::UniformDistance { l, c } => Ok(Box::new(UniformDistanceKernel::try_new(l, c)?)),
-        KernelType::NearestNeighbor { d } => Ok(Box::new(NearestNeighborKernel::try_new(d)?)),
-    }
-}
-
-/// Creates a kernel, panicking only as a compatibility convenience.
-///
-/// New callers should prefer [`try_create_kernel`].
-pub fn create_kernel(kernel_type: KernelType) -> Box<dyn Kernel> {
-    try_create_kernel(kernel_type).expect("invalid square-lattice kernel configuration")
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +329,7 @@ fn sample_batch_resolved<K: ResolvedKernel + Sync>(
     let mut output = vec![0.0; n];
     output
         .par_iter_mut()
+        .with_min_len(parallel_chunk_len(n).unwrap_or(1))
         .enumerate()
         .for_each(|(index, value)| {
             *value = kernel.sample_resolved(rng, sweep, index as u64);
@@ -399,7 +385,3 @@ pub(crate) fn try_create_builtin_kernel(
         )),
     }
 }
-
-/// Compatibility alias for the former ambiguous kernel name.
-#[deprecated(note = "use UniformDistanceKernel")]
-pub type UniformKernel = UniformDistanceKernel;

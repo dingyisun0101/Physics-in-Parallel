@@ -1,3 +1,3 @@
 //! IO and external-format interop for space types.
 
-pub mod square_lattice;
+pub(crate) mod square_lattice;

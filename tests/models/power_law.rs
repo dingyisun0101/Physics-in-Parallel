@@ -1,9 +1,4 @@
-use physics_in_parallel::models::laws::{PowerLawDecay, PowerLawError};
-use physics_in_parallel::models::particles::attrs::{ATTR_A, ATTR_R, ParticleSelection};
-use physics_in_parallel::models::particles::create_state::create_template;
-use physics_in_parallel::models::particles::interactions::power_law::{
-    PowerLawNetwork, PowerLawNetworkError,
-};
+use physics_in_parallel::prelude::models::*;
 
 #[test]
 fn empty_add_get_remove_roundtrip() {
@@ -126,12 +121,10 @@ fn all_to_all_payload_adds_every_unordered_pair() {
 fn power_law_acceleration_two_particle_sign_and_batch_insert() {
     let mut objects = create_template(1, 2).unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 0, &[0.0])
+        .set_attribute_vector::<f64>(ATTR_R, 0, &[0.0])
         .unwrap();
     objects
-        .core
-        .set_vector_of::<f64>(ATTR_R, 1, &[2.0])
+        .set_attribute_vector::<f64>(ATTR_R, 1, &[2.0])
         .unwrap();
 
     let mut network = PowerLawNetwork::with_capacity(2, 1);
@@ -143,11 +136,11 @@ fn power_law_acceleration_two_particle_sign_and_batch_insert() {
         .unwrap();
 
     assert_eq!(
-        objects.core.vector_of::<f64>(ATTR_A, 0).unwrap(),
+        objects.attribute_vector::<f64>(ATTR_A, 0).unwrap(),
         [-2.0].as_slice()
     );
     assert_eq!(
-        objects.core.vector_of::<f64>(ATTR_A, 1).unwrap(),
+        objects.attribute_vector::<f64>(ATTR_A, 1).unwrap(),
         [2.0].as_slice()
     );
 }

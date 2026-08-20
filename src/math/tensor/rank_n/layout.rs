@@ -15,6 +15,13 @@ pub fn flat_index_wrapped(shape: &[usize], coordinate: &[isize]) -> TensorResult
     Ok(flat)
 }
 
+/// Periodically normalizes a signed row-major position over a linear domain.
+#[inline]
+pub fn normalize_flat_index(index: isize, size: usize) -> usize {
+    debug_assert!(size > 0 && size <= isize::MAX as usize);
+    index.rem_euclid(size as isize) as usize
+}
+
 /// Validated row-major shape metadata shared by tensor-facing algorithms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RowMajorLayout {
@@ -73,6 +80,12 @@ impl RowMajorLayout {
     pub fn index_wrapped(&self, coordinate: &[isize]) -> usize {
         self.flat_index_wrapped(coordinate)
             .expect("tensor index rank mismatch")
+    }
+
+    /// Periodically normalizes a signed index over the complete linear domain.
+    #[inline]
+    pub fn flat_index(&self, index: isize) -> usize {
+        normalize_flat_index(index, self.size)
     }
 
     /// Converts one valid flat index into an owned signed coordinate.

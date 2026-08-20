@@ -16,7 +16,7 @@ state.
 Metrics are displayed in a comparative chart, including numerical validation between implementations.
 */
 
-use physics_in_parallel::prelude::*;
+use physics_in_parallel::prelude::models::*;
 use rayon::prelude::*;
 use std::time::Instant;
 
@@ -163,9 +163,9 @@ fn run_pip_version(n: usize, law: PowerLawDecay, dt: f64, steps: usize) -> PipBe
     let mut interactions = PowerLawNetwork::all_to_all_empty(n);
 
     {
-        let r = objects.core.get_mut::<f64>(ATTR_R).unwrap();
+        let r = objects.attribute_mut::<f64>(ATTR_R).unwrap();
         for i in 0..n {
-            r.set_vec(i as isize, &[i as f64 * 0.001, 0.0, 0.0]);
+            r.set_vector(i as isize, &[i as f64 * 0.001, 0.0, 0.0]);
         }
     }
 
@@ -175,7 +175,7 @@ fn run_pip_version(n: usize, law: PowerLawDecay, dt: f64, steps: usize) -> PipBe
     let start_evol = Instant::now();
     let mut integrator = SemiImplicitEuler;
     for _ in 0..steps {
-        objects.core.get_mut::<f64>(ATTR_A).unwrap().fill(0.0);
+        objects.attribute_mut::<f64>(ATTR_A).unwrap().fill(0.0);
         interactions
             .apply_power_law_acceleration(&mut objects, ParticleSelection::All)
             .unwrap();
@@ -199,9 +199,9 @@ fn run_comparison(n: usize, steps: usize) {
     let pip = run_pip_version(n, law, dt, steps);
 
     let mut max_diff: f64 = 0.0;
-    let pip_r = pip.objects.core.get::<f64>(ATTR_R).unwrap();
+    let pip_r = pip.objects.attribute::<f64>(ATTR_R).unwrap();
     for (i, particle) in naive.particles.iter().enumerate().take(n) {
-        let p_r = pip_r.get_vec(i as isize);
+        let p_r = pip_r.vector(i as isize);
         for (axis, &pip_value) in p_r.iter().enumerate().take(3) {
             max_diff = max_diff.max((particle.r[axis] - pip_value).abs());
         }

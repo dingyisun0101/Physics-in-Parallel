@@ -12,16 +12,16 @@ simulation:
 - `engines` provides model-agnostic runtime storage and interaction backends.
 - `models` provides concrete physical model pieces that use the lower layers.
 
-The crate-wide prelude re-exports the common user-facing API from all ready
-layers:
+The crate-wide prelude separates foundational, model-level, and advanced APIs:
 
-`use physics_in_parallel::prelude::*;`
+`use physics_in_parallel::prelude::basic::*;`
 */
 
-pub mod engines;
-pub mod io;
-pub mod math;
-pub mod models;
+pub(crate) mod advanced;
+pub(crate) mod engines;
+pub(crate) mod math;
+pub(crate) mod models;
+pub(crate) mod parallel;
 pub mod prelude;
-pub mod rng;
-pub mod space;
+pub(crate) mod rng;
+pub(crate) mod space;

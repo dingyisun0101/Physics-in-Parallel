@@ -1,12 +1,12 @@
-pub mod dense;
-pub mod dense_rand;
-pub mod errors;
-pub mod generic;
-pub mod layout;
-pub mod ops;
-pub mod sparse;
-pub mod tensor_trait;
+pub(crate) mod dense;
+pub(crate) mod dense_rand;
+pub(crate) mod errors;
+pub(crate) mod generic;
+pub(crate) mod layout;
+pub(crate) mod ops;
+pub(crate) mod sparse;
+pub(crate) mod tensor_trait;
 
 pub use errors::{TensorError, TensorResult};
 pub use generic::{Backend, Dense, Sparse, Tensor};
-pub use layout::{RowMajorLayout, flat_index_wrapped};
+pub use layout::RowMajorLayout;

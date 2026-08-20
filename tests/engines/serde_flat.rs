@@ -1,4 +1,5 @@
-use physics_in_parallel::engines::soa::{AttrsCore, AttrsMeta, PhysObj};
+use physics_in_parallel::prelude::advanced::{AttrsCore, AttrsMeta, PhysObjAdvanced};
+use physics_in_parallel::prelude::models::PhysObj;
 
 #[test]
 fn attrs_core_serializes_vector_payloads_in_flat_schema() {
@@ -37,14 +38,14 @@ fn phys_obj_serialization_embeds_flat_vector_list_payloads() {
     let mut core = AttrsCore::empty();
     core.allocate::<f64>("r", 2, 2).expect("allocate r");
 
-    let obj = PhysObj {
-        meta: AttrsMeta {
+    let obj = PhysObj::from_raw_parts(
+        AttrsMeta {
             id: 42,
             label: "serde-flat".to_string(),
             comment: "schema check".to_string(),
         },
         core,
-    };
+    );
 
     let json = obj.serialize().expect("serialize phys obj");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse phys obj json");
@@ -72,19 +73,22 @@ fn phys_obj_roundtrip_restores_mixed_types_and_stable_attribute_ids() {
     assert_eq!(core.id_of("species").unwrap(), 1);
     assert_eq!(core.id_of("velocity").unwrap(), 2);
 
-    let original = PhysObj::new(AttrsMeta::new(9, "particles", "mixed"), core);
+    let original = PhysObj::from_raw_parts(AttrsMeta::new(9, "particles", "mixed"), core);
     let bytes = serde_json::to_vec(&original).unwrap();
     let decoded: PhysObj = serde_json::from_slice(&bytes).unwrap();
 
-    assert_eq!(decoded.meta, original.meta);
-    assert_eq!(decoded.core.id_of("species").unwrap(), 1);
-    assert_eq!(decoded.core.id_of("velocity").unwrap(), 2);
+    assert_eq!(decoded.metadata(), original.metadata());
+    assert_eq!(decoded.attributes().id_of("species").unwrap(), 1);
+    assert_eq!(decoded.attributes().id_of("velocity").unwrap(), 2);
     assert_eq!(
-        decoded.core.vector_of::<i64>("species", 0).unwrap(),
+        decoded.attributes().vector_of::<i64>("species", 0).unwrap(),
         [7_i64]
     );
     assert_eq!(
-        decoded.core.vector_of::<f32>("velocity", 1).unwrap(),
+        decoded
+            .attributes()
+            .vector_of::<f32>("velocity", 1)
+            .unwrap(),
         [0.0, 0.0]
     );
 }

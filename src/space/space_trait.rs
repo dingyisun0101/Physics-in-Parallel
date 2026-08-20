@@ -25,7 +25,7 @@ Data contract:
 
 use std::path::PathBuf;
 
-use crate::math::prelude::ScalarSerde;
+use crate::math::scalar::ScalarSerde;
 
 pub trait Space<T: ScalarSerde> {
     /// Borrow the compact backing data for inspection or serialization.
