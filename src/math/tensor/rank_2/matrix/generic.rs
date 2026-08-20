@@ -6,14 +6,28 @@ may be ordinary rank-N dense/sparse tensor storage or a structured matrix
 backend that stores only canonical entries and derives the rest from symmetry.
 */
 
+use core::cmp::Ordering;
 use core::fmt;
 use core::marker::PhantomData;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
 use crate::math::tensor::rank_n::{Dense, Sparse, Tensor};
+use num_traits::Zero;
 use rayon::prelude::*;
 
 use super::matrix_backend_trait::MatrixBackend;
+
+#[inline]
+fn max_or_propagate_unordered<R>(left: R, right: R) -> R
+where
+    R: Scalar<Real = R> + PartialOrd,
+{
+    match left.partial_cmp(&right) {
+        Some(Ordering::Less) => right,
+        Some(_) => left,
+        None => left + right,
+    }
+}
 
 /// Rank-N dense tensor storage used as a matrix backend.
 #[derive(Debug, Clone)]
@@ -131,6 +145,39 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     #[inline]
     pub fn cols(&self) -> usize {
         self.backend.cols()
+    }
+
+    /// Largest scalar magnitude across all logical matrix entries.
+    ///
+    /// Dense and sparse backends reduce their native storage in parallel.
+    /// Structured backends reduce the complete logical matrix so implicit
+    /// entries introduced by symmetry are included. An unordered magnitude
+    /// (for example, a floating-point NaN) propagates to the result.
+    pub fn max_abs_real(&self) -> T::Real
+    where
+        T::Real: PartialOrd,
+    {
+        if let Some(values) = self.backend.contiguous_data() {
+            return values
+                .par_iter()
+                .map(|value| value.abs_real())
+                .reduce(T::Real::zero, max_or_propagate_unordered);
+        }
+        if let Some(entries) = self.backend.sparse_entries() {
+            return entries
+                .into_par_iter()
+                .map(|(_, value)| value.abs_real())
+                .reduce(T::Real::zero, max_or_propagate_unordered);
+        }
+
+        let cols = self.cols();
+        (0..self.size())
+            .into_par_iter()
+            .map(|index| {
+                self.get((index / cols) as isize, (index % cols) as isize)
+                    .abs_real()
+            })
+            .reduce(T::Real::zero, max_or_propagate_unordered)
     }
 
     /// Logical matrix shape as `[rows, cols]`.

@@ -31,6 +31,24 @@ fn type_preserving_dense_matrix_ops_match_manual_results() {
     let scaled = a.scalar_mul(3);
     assert_eq!(scaled.get(0, 1), 6);
     assert_eq!(scaled.get(1, 0), 9);
+
+    assert_eq!(a.max_abs_real(), 4);
+}
+
+#[test]
+fn maximum_absolute_entry_uses_complete_matrix_semantics() {
+    let dense = DenseMatrix::<f64>::from_vec(2, 2, vec![-1.0, 7.5, -3.0, 2.0]);
+    assert_eq!(dense.max_abs_real(), 7.5);
+
+    let sparse = SparseMatrix::<f64>::from_triplets(3, 3, vec![(0, 2, -9.0), (2, 1, 4.0)]);
+    assert_eq!(sparse.max_abs_real(), 9.0);
+
+    let mut symmetric = SymmetricMatrix::<f64>::empty(3, 3);
+    symmetric.set(0, 2, -11.0);
+    assert_eq!(symmetric.max_abs_real(), 11.0);
+
+    let with_nan = DenseMatrix::<f64>::from_vec(1, 2, vec![1.0, f64::NAN]);
+    assert!(with_nan.max_abs_real().is_nan());
 }
 
 #[test]
