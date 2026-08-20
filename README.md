@@ -362,6 +362,7 @@ matrix.size()
 matrix.get(i, j)
 matrix.set(i, j, value)
 matrix.fill(value)
+matrix.abs() // dense matrices
 matrix.max_abs_real()
 matrix.print()
 matrix.add(&rhs)

@@ -32,6 +32,13 @@ fn type_preserving_dense_matrix_ops_match_manual_results() {
     assert_eq!(scaled.get(0, 1), 6);
     assert_eq!(scaled.get(1, 0), 9);
 
+    let signed = DenseMatrix::<i64>::from_vec(2, 2, vec![-1, 2, -3, 4]);
+    let absolute = signed.abs();
+    assert_eq!(absolute.get(0, 0), 1);
+    assert_eq!(absolute.get(0, 1), 2);
+    assert_eq!(absolute.get(1, 0), 3);
+    assert_eq!(absolute.get(1, 1), 4);
+
     assert_eq!(a.max_abs_real(), 4);
 }
 
