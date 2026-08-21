@@ -2,13 +2,14 @@
 
 pub use crate::advanced::{
     AntiSymmetricMatrix, AttrId, AttrsCore, AttrsMeta, Backend, Dense, DiagonalMatrix,
-    DynVectorList, FlatPayload, FromJsonPayload, HaarVectors, Interaction, InteractionError,
-    InteractionId, InteractionNodes, InteractionOrder, InteractionTopology, JSON_SCHEMA_VERSION,
-    Kernel, LowerTriangularMatrix, MatrixBackend, MeanReducer, NNVectors, NUM_RNGS, NdarrayConvert,
-    NearestNeighborKernel, NeighborList, NeighborListError, ObjId, PhysObjAdvanced, PowerLawKernel,
-    RankNDense, RankNSparse, Reducer, RowMajorLayout, ScalarSerde, Space, Sparse, SparseMatrix,
-    SparsePayload, SparsePayloadParts, SquareLatticeAdvanced, StrictLowerTriangularMatrix,
-    StrictUpperTriangularMatrix, SymmetricMatrix, TensorRandElement, TensorResult,
-    TensorStringConvert, TensorTrait, ToJsonPayload, UniformDistanceKernel, UpperTriangularMatrix,
-    VectorListRand, save_square_lattice,
+    DynVectorList, DynamicWeightedIndex, DynamicWeightedIndexError, FlatPayload, FromJsonPayload,
+    HaarVectors, Interaction, InteractionError, InteractionId, InteractionNodes, InteractionOrder,
+    InteractionTopology, JSON_SCHEMA_VERSION, Kernel, LowerTriangularMatrix, MatrixBackend,
+    MeanReducer, NNVectors, NUM_RNGS, NdarrayConvert, NearestNeighborKernel, NeighborList,
+    NeighborListError, ObjId, PhysObjAdvanced, PowerLawKernel, RankNDense, RankNSparse, Reducer,
+    RowMajorLayout, ScalarSerde, Space, Sparse, SparseMatrix, SparsePayload, SparsePayloadParts,
+    SquareLatticeAdvanced, StrictLowerTriangularMatrix, StrictUpperTriangularMatrix,
+    SymmetricMatrix, TensorRandElement, TensorResult, TensorStringConvert, TensorTrait,
+    ToJsonPayload, UniformDistanceKernel, UpperTriangularMatrix, VectorListRand,
+    save_square_lattice,
 };

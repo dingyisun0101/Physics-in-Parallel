@@ -24,4 +24,5 @@ pub(crate) mod models;
 pub(crate) mod parallel;
 pub mod prelude;
 pub(crate) mod rng;
+pub(crate) mod sampling;
 pub(crate) mod space;

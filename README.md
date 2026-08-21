@@ -1,7 +1,7 @@
 # Physics in Parallel
 
-> **Alpha and breaking API notice:** PiP is under active design. Version 3.4.0
-> introduces a new API contract; every version before 3.4.0 is considered broken
+> **Alpha and breaking API notice:** PiP is under active design. Version 3.6.0
+> is the current API contract; every version before 3.6.0 is considered broken
 > and unsupported. Versions still increase normally, but any alpha release may
 > contain breaking changes. Pin the exact version used by a scientific project.
 
@@ -69,6 +69,9 @@ The core container conventions are consistent:
 - `SquareLattice` exposes coordinate and flat forms of `get`, `get_mut`, and
   `set`, plus `shape`, `rank`, `num_sites`, and `fill`, without requiring the
   advanced `Space` trait. Every accessor applies its configured boundary.
+  `SquareLatticeInitMethod::ShuffledValues` accepts one complete flat row-major
+  value list and applies a reproducible unbiased permutation before constructing
+  the shaped lattice. The shuffle machinery remains internal to PiP.
 
 Dense `Tensor`, `Matrix`, and `VectorList` provide constructors, shape/access
 methods, elementwise arithmetic, `scalar_mul`, casts, and Serde. `Tensor`

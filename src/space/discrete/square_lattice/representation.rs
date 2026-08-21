@@ -33,6 +33,7 @@ use crate::math::scalar::{Scalar, ScalarSerde};
 use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout};
 use crate::math::{Tensor, TensorError};
 use crate::parallel::parallel_chunk_len;
+use crate::sampling::shuffle_slice_indexed;
 use crate::space::space_trait::Space;
 
 use super::random::IndexedRng;
@@ -421,6 +422,11 @@ pub enum SquareLatticeInitMethod<T: Scalar> {
     Values {
         values: Vec<T>,
     },
+    /// Use explicit row-major values after one unbiased seeded permutation.
+    ShuffledValues {
+        values: Vec<T>,
+        rng: RngConfig,
+    },
     SeededCenter {
         val: T,
     },
@@ -497,6 +503,20 @@ impl<T: Scalar> SquareLattice<T> {
                         actual: values.len(),
                     });
                 }
+                lattice.cells =
+                    Tensor::<T, DenseBackend>::from_vec(&lattice.cfg.tensor_shape(), values);
+            }
+            SquareLatticeInitMethod::ShuffledValues { mut values, rng } => {
+                if values.len() != lattice.cfg.num_sites() {
+                    return Err(SquareLatticeConfigError::ValueCount {
+                        expected: lattice.cfg.num_sites(),
+                        actual: values.len(),
+                    });
+                }
+                lattice.initialization_rng = Some(
+                    shuffle_slice_indexed(&mut values, rng)
+                        .map_err(SquareLatticeConfigError::RngConfig)?,
+                );
                 lattice.cells =
                     Tensor::<T, DenseBackend>::from_vec(&lattice.cfg.tensor_shape(), values);
             }

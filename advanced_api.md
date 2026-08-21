@@ -21,6 +21,8 @@ The advanced prelude exports exactly these symbols:
 - Dynamic and generated vector batches: `DynVectorList`, `VectorListRand`,
   `HaarVectors`, `NNVectors`.
 - Random-fill extension points: `TensorRandElement`, `NUM_RNGS`.
+- Dynamic discrete sampling: `DynamicWeightedIndex`,
+  `DynamicWeightedIndexError`.
 - Scalar and interchange support: `ScalarSerde`, `NdarrayConvert`,
   `TensorStringConvert`, `FlatPayload`, `SparsePayload`, `SparsePayloadParts`,
   `ToJsonPayload`, `FromJsonPayload`, `JSON_SCHEMA_VERSION`.
@@ -61,6 +63,13 @@ changing execution parallelism does not change seeded results.
 `VectorListRand`, `HaarVectors`, and `NNVectors` expose reusable generators for
 custom algorithms. Basic consumers should use `TensorRandFiller` or the
 high-level sampling and pairing APIs.
+
+`DynamicWeightedIndex` is an RNG-independent mutable weighted order index. It
+maps an integer drawn from `0..total()` to an item, supports exact item
+exclusion, and updates one weight in logarithmic time. Integer weights and
+checked totals make its selection contract exact. Callers compose it with
+`IndexedRng` or another PiP random source; the index never owns or advances an
+RNG.
 
 ### Generic object engine
 

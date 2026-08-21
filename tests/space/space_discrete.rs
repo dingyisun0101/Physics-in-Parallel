@@ -84,6 +84,27 @@ fn lattice_weighted_initialization_and_explicit_values_are_reproducible() {
     )
     .unwrap();
     assert_eq!(explicit.data(), values);
+
+    let shuffled = || {
+        SquareLattice::new(
+            SquareLatticeConfig::periodic(&[8, 8]),
+            SquareLatticeInitMethod::ShuffledValues {
+                values: (0..64).map(|index| index % 5).collect(),
+                rng: rng(91),
+            },
+        )
+        .unwrap()
+    };
+    let first = shuffled();
+    let second = shuffled();
+    assert_eq!(first.shape(), [8, 8]);
+    assert_eq!(first.data(), second.data());
+    assert_eq!(first.initialization_rng_config().unwrap().seed(), Some(91));
+    let mut values = first.data().to_vec();
+    let mut expected = (0..64).map(|index| index % 5).collect::<Vec<_>>();
+    values.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(values, expected);
 }
 
 #[test]

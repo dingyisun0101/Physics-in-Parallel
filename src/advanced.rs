@@ -29,6 +29,7 @@ pub use crate::math::tensor::rank_2::vector_list::{
 pub use crate::math::tensor::rank_n::dense_rand::{NUM_RNGS, TensorRandElement};
 pub use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
 pub use crate::math::tensor::rank_n::{Backend, Dense, RowMajorLayout, Sparse, TensorResult};
+pub use crate::sampling::{DynamicWeightedIndex, DynamicWeightedIndexError};
 pub use crate::space::discrete::square_lattice::kernel::{
     Kernel, NearestNeighborKernel, PowerLawKernel, UniformDistanceKernel,
 };
