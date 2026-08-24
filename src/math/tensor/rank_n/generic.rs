@@ -13,18 +13,21 @@ on PiP scalar values rather than backend-specific primitive assumptions.
 
 use core::marker::PhantomData;
 
+use rayon::prelude::*;
+
 use crate::math::scalar::{Scalar, ScalarCastError};
+use crate::threading::{parallel_chunk_len, should_parallelize_elements};
 
 use super::{
     dense::Tensor as DenseStorage, sparse::Tensor as SparseStorage, tensor_trait::TensorTrait,
 };
 
 /// Dense backend marker for `Tensor<T, B>`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct Dense;
 
 /// Sparse backend marker for `Tensor<T, B>`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct Sparse;
 
 /// Backend type mapping for generic `Tensor`.
@@ -41,7 +44,7 @@ impl<T: Scalar> Backend<T> for Sparse {
 }
 
 /// Generic tensor facade.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<T: Scalar, B: Backend<T> = Dense> {
     inner: B::Storage,
     _backend: PhantomData<B>,
@@ -376,16 +379,134 @@ where
 }
 
 impl<T: Scalar> Tensor<T, Dense> {
-    /// Borrows the dense row-major backing buffer for internal zero-copy
-    /// adapters such as matrix serialization.
+    /// Borrows the complete dense row-major backing buffer without copying.
     #[inline]
-    pub(crate) fn data(&self) -> &[T] {
+    pub fn as_slice(&self) -> &[T] {
         self.inner.data()
     }
 
+    /// Mutably borrows the complete dense row-major backing buffer without copying.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.inner.data_mut()
+    }
+
+    #[inline]
+    pub(crate) fn data(&self) -> &[T] {
+        self.as_slice()
+    }
+
+    /// Constructs a dense tensor after validating shape and row-major data length.
+    pub fn try_from_vec(shape: &[usize], data: Vec<T>) -> super::TensorResult<Self> {
+        let expected = super::errors::checked_num_elements(shape)?;
+        if data.len() != expected {
+            return Err(super::TensorError::DataLengthMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        Ok(Self::from_storage(DenseStorage::<T>::from_parts_unchecked(
+            shape.to_vec(),
+            data,
+        )))
+    }
+
+    /// Constructs a dense tensor, panicking when shape and data disagree.
     #[inline]
     pub fn from_vec(shape: &[usize], data: Vec<T>) -> Self {
-        Self::from_storage(DenseStorage::<T>::from_vec(shape, data))
+        Self::try_from_vec(shape, data).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Copies values from another identically shaped dense tensor.
+    pub fn copy_from(&mut self, source: &Self) -> super::TensorResult<()>
+    where
+        T: Copy,
+    {
+        if self.shape() != source.shape() {
+            return Err(super::TensorError::ShapeMismatch {
+                lhs: self.shape().to_vec(),
+                rhs: source.shape().to_vec(),
+            });
+        }
+        self.as_mut_slice().copy_from_slice(source.as_slice());
+        Ok(())
+    }
+
+    /// Writes an allocation-free elementwise zip of two tensors into `self`.
+    pub fn zip_from<F>(&mut self, lhs: &Self, rhs: &Self, function: F) -> super::TensorResult<()>
+    where
+        T: Copy + Send + Sync,
+        F: Fn(T, T) -> T + Send + Sync,
+    {
+        if self.shape() != lhs.shape() {
+            return Err(super::TensorError::ShapeMismatch {
+                lhs: self.shape().to_vec(),
+                rhs: lhs.shape().to_vec(),
+            });
+        }
+        if self.shape() != rhs.shape() {
+            return Err(super::TensorError::ShapeMismatch {
+                lhs: self.shape().to_vec(),
+                rhs: rhs.shape().to_vec(),
+            });
+        }
+        let lhs = lhs.as_slice();
+        let rhs = rhs.as_slice();
+        let output = self.as_mut_slice();
+        if !should_parallelize_elements(output.len()) {
+            output
+                .iter_mut()
+                .zip(lhs)
+                .zip(rhs)
+                .for_each(|((target, left), right)| *target = function(*left, *right));
+            return Ok(());
+        }
+        let minimum = parallel_chunk_len(output.len()).unwrap_or(1);
+        output
+            .par_iter_mut()
+            .zip(lhs.par_iter())
+            .zip(rhs.par_iter())
+            .with_min_len(minimum)
+            .for_each(|((target, left), right)| *target = function(*left, *right));
+        Ok(())
+    }
+
+    /// Visits fixed-width row-major chunks serially or through bounded Rayon work.
+    pub fn for_each_chunk_mut<F>(&mut self, width: usize, function: F)
+    where
+        T: Send,
+        F: Fn(usize, &mut [T]) + Send + Sync,
+    {
+        assert!(width > 0, "tensor chunk width must be positive");
+        assert!(
+            self.size().is_multiple_of(width),
+            "tensor size must be divisible by chunk width"
+        );
+        let values = self.as_mut_slice();
+        let chunks = values.len() / width;
+        if chunks < 2 || !should_parallelize_elements(values.len()) {
+            values
+                .chunks_exact_mut(width)
+                .enumerate()
+                .for_each(|(index, chunk)| function(index, chunk));
+            return;
+        }
+        values
+            .par_chunks_exact_mut(width)
+            .with_min_len(parallel_chunk_len(chunks).unwrap_or(1))
+            .enumerate()
+            .for_each(|(index, chunk)| function(index, chunk));
+    }
+
+    /// Sums values in stable row-major order without a parallel reduction tree.
+    pub fn sum_serial(&self) -> T
+    where
+        T: Copy,
+    {
+        self.as_slice()
+            .iter()
+            .copied()
+            .fold(T::zero(), |sum, value| sum + value)
     }
 
     pub fn from_fn<F>(shape: &[usize], mut f: F) -> Self
@@ -438,6 +559,8 @@ impl<T: Scalar> Tensor<T, Dense> {
         Self::from_storage(DenseStorage::<T>::from_sparse(&s.inner))
     }
 }
+
+impl<T> Eq for Tensor<T, Dense> where T: Scalar + Eq {}
 
 impl<T: Scalar> Tensor<T, Sparse> {
     #[inline]

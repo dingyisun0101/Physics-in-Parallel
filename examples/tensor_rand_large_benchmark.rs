@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use physics_in_parallel::prelude::basic::{
-    RandType, RngConfig, RngMethod, Tensor, TensorRandFiller,
+    DEFAULT_RANDOM_MAX_THREADS, RandType, RngConfig, RngMethod, Tensor, TensorRandFiller,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -19,7 +19,8 @@ const DEFAULT_RNG_KINDS: &[RngMethod] =
 fn main() {
     let len = parse_arg(1).unwrap_or(DEFAULT_LEN);
     let repeats = parse_arg(2).unwrap_or(DEFAULT_REPEATS);
-    let rng_kinds = parse_rng_kinds(3).unwrap_or_else(|| DEFAULT_RNG_KINDS.to_vec());
+    let max_threads = parse_arg(3).unwrap_or(DEFAULT_RANDOM_MAX_THREADS);
+    let rng_kinds = parse_rng_kinds(4).unwrap_or_else(|| DEFAULT_RNG_KINDS.to_vec());
     let kind = RandType::Uniform {
         low: -1.0,
         high: 1.0,
@@ -30,6 +31,7 @@ fn main() {
     println!("bytes per array: {}", bytes_human(len * size_of::<f64>()));
     println!("repeats: {repeats}");
     println!("rayon threads available: {}", rayon::current_num_threads());
+    println!("random max threads: {max_threads}");
     println!(
         "rng kinds: {}",
         rng_kinds
@@ -47,7 +49,7 @@ fn main() {
     println!("{}", "-".repeat(100));
 
     for rng_kind in rng_kinds {
-        let tensor = benchmark_tensor_fill(len, repeats, kind, rng_kind);
+        let tensor = benchmark_tensor_fill(len, repeats, max_threads, kind, rng_kind);
         let sequential = benchmark_sequential_vec_fill(len, repeats, rng_kind);
         report(rng_kind, &tensor, &sequential);
     }
@@ -63,11 +65,14 @@ struct Timing {
 fn benchmark_tensor_fill(
     len: usize,
     repeats: usize,
+    max_threads: usize,
     kind: RandType,
     rng_kind: RngMethod,
 ) -> Timing {
     let mut tensor = Tensor::<f64>::empty(&[len]);
-    let mut filler = TensorRandFiller::new(kind, RngConfig::new(Some(SEED), Some(rng_kind)));
+    let mut filler = TensorRandFiller::new(kind, RngConfig::new(Some(SEED), Some(rng_kind)))
+        .with_max_threads(max_threads)
+        .expect("random max threads must be positive");
 
     filler.refresh(&mut tensor);
 

@@ -24,7 +24,7 @@ use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
 use crate::math::tensor::rank_n::layout::RowMajorLayout;
 use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
 use crate::math::{RandType, TensorError, TensorRandError, TensorRandFiller};
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 
 use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
 use super::random::{

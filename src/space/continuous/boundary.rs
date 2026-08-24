@@ -21,7 +21,7 @@ chunks, while particle-specific rules such as alive masks and rigid masks live
 in `models::particles::boundary`.
 */
 
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]

@@ -21,6 +21,8 @@ pub enum TensorError {
     IndexSpaceOverflow { shape: Vec<usize> },
     /// Two tensors were expected to have the same shape.
     ShapeMismatch { lhs: Vec<usize>, rhs: Vec<usize> },
+    /// Dense row-major data did not match the shape's logical element count.
+    DataLengthMismatch { expected: usize, actual: usize },
     /// An index has the wrong rank for the tensor shape.
     RankMismatch {
         shape: Vec<usize>,
@@ -62,6 +64,10 @@ impl fmt::Display for TensorError {
             Self::ShapeMismatch { lhs, rhs } => {
                 write!(f, "tensor shape mismatch: lhs={lhs:?}, rhs={rhs:?}")
             }
+            Self::DataLengthMismatch { expected, actual } => write!(
+                f,
+                "tensor data length mismatch: expected {expected}, got {actual}"
+            ),
             Self::RankMismatch { shape, index_rank } => {
                 write!(
                     f,

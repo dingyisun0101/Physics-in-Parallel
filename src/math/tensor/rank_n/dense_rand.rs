@@ -22,8 +22,8 @@ Indexed fillers additionally expose exact uniform `usize` index sampling over
 `new` and `try_new` construct stateful fillers. `try_new_indexed` constructs an
 explicit-step filler. `RngConfig` selects deterministic seeding and the RNG
 family; omitted values use documented defaults. [`NUM_RNGS`] fixes deterministic
-random lanes; the process-wide PiP partition setting independently caps Rayon
-jobs.
+random lanes. Each filler independently limits how many Rayon workers one fill
+may occupy through [`TensorRandFiller::max_threads`].
 */
 
 use std::{error::Error, fmt};
@@ -38,8 +38,8 @@ use rayon::prelude::*;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
 use crate::math::tensor::rank_n::generic::{Dense, Tensor};
-use crate::parallel::{lanes_per_job, parallel_chunk_len};
 use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
+use crate::threading::{parallel_chunk_len_with_max, random_lanes_per_job};
 
 //===================================================================
 // ---------------------------- Config ------------------------------
@@ -47,9 +47,12 @@ use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 
 /// Fixed deterministic RNG lane count used by stateful tensor fillers.
 ///
-/// Execution parallelism is controlled independently, so changing PiP's
-/// partition limit does not change the stateful random mapping.
+/// Execution parallelism is controlled independently, so changing a filler's
+/// worker limit does not change the stateful random mapping.
 pub const NUM_RNGS: usize = 32;
+
+/// Default maximum workers that one tensor random filler may occupy.
+pub const DEFAULT_RANDOM_MAX_THREADS: usize = 8;
 
 //===================================================================
 // -------------------------- Basic Types ---------------------------
@@ -98,6 +101,7 @@ pub enum TensorRandError {
         high: i64,
     },
     InvalidIndexUpperBound,
+    InvalidMaxThreads,
     IntegerBoundsOutOfRange {
         scalar: &'static str,
         low: i64,
@@ -139,6 +143,12 @@ impl fmt::Display for TensorRandError {
             Self::InvalidIndexUpperBound => {
                 write!(formatter, "uniform index upper bound must be positive")
             }
+            Self::InvalidMaxThreads => {
+                write!(
+                    formatter,
+                    "tensor random-filler max_threads must be positive"
+                )
+            }
             Self::IntegerBoundsOutOfRange { scalar, low, high } => write!(
                 formatter,
                 "integer uniform bounds [{low}, {high}] are outside scalar {scalar}"
@@ -169,6 +179,7 @@ pub struct TensorRandFiller {
     kind: RandType,
     rng: RngConfig,
     num_rngs: usize,
+    max_threads: usize,
     rngs: Vec<TensorRng>,
     indexed: Option<IndexedRng>,
 }
@@ -177,7 +188,8 @@ impl TensorRandFiller {
     /// Constructs a filler from one unified random configuration.
     ///
     /// Missing values use host entropy, [`RngMethod::SmallRng`], and
-    /// [`NUM_RNGS`]. Indexed methods are rejected.
+    /// [`NUM_RNGS`], and [`DEFAULT_RANDOM_MAX_THREADS`]. Indexed methods are
+    /// rejected.
     #[inline]
     pub fn new(kind: RandType, rng: RngConfig) -> Self {
         Self::try_new(kind, rng).expect("invalid tensor random filler configuration")
@@ -217,7 +229,7 @@ impl TensorRandFiller {
     /// Constructs a schedule-independent filler for explicit scientific steps.
     ///
     /// PiP keeps [`NUM_RNGS`] deterministic lanes while independently capping
-    /// the number of Rayon jobs through its process-wide partition setting.
+    /// the number of Rayon jobs through this filler's `max_threads` value.
     pub fn try_new_indexed(kind: RandType, rng: RngConfig) -> Result<Self, TensorRandError> {
         let rng = rng
             .resolve_for(
@@ -230,6 +242,7 @@ impl TensorRandFiller {
             kind,
             rng,
             num_rngs: NUM_RNGS,
+            max_threads: DEFAULT_RANDOM_MAX_THREADS,
             rngs: Vec::new(),
             indexed: Some(IndexedRng::from_resolved(rng)),
         })
@@ -250,6 +263,7 @@ impl TensorRandFiller {
             kind,
             rng,
             num_rngs,
+            max_threads: DEFAULT_RANDOM_MAX_THREADS,
             rngs,
             indexed: None,
         }
@@ -281,7 +295,7 @@ impl TensorRandFiller {
 
     #[inline]
     fn indexed_chunk_len(&self, n: usize) -> Option<usize> {
-        parallel_chunk_len(n)
+        parallel_chunk_len_with_max(n, Some(self.max_threads))
     }
 
     /// Refresh tensor values in-place.
@@ -334,7 +348,7 @@ impl TensorRandFiller {
 
     /// Fills a slice reproducibly for an explicit step and random domain.
     ///
-    /// Results do not depend on Rayon scheduling or execution partition count.
+    /// Results do not depend on Rayon scheduling or this filler's worker limit.
     pub fn try_fill_slice_at<T: TensorRandElement>(
         &self,
         values: &mut [T],
@@ -433,7 +447,7 @@ impl TensorRandFiller {
             return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
         };
         let rows = first.len() / components;
-        let min_rows_per_job = parallel_chunk_len(rows).unwrap_or(1);
+        let min_rows_per_job = self.indexed_chunk_len(rows).unwrap_or(1);
         first
             .par_chunks_mut(components)
             .zip(second.par_chunks_mut(components))
@@ -465,6 +479,30 @@ impl TensorRandFiller {
     #[inline]
     pub fn rng_config(&self) -> RngConfig {
         self.rng
+    }
+
+    /// Returns the maximum number of workers that one fill may occupy.
+    ///
+    /// The current Rayon pool may provide fewer workers. This runtime limit
+    /// does not change deterministic RNG lanes or generated values.
+    #[inline]
+    pub const fn max_threads(&self) -> usize {
+        self.max_threads
+    }
+
+    /// Sets the maximum number of workers that one fill may occupy.
+    pub fn set_max_threads(&mut self, max_threads: usize) -> Result<(), TensorRandError> {
+        if max_threads == 0 {
+            return Err(TensorRandError::InvalidMaxThreads);
+        }
+        self.max_threads = max_threads;
+        Ok(())
+    }
+
+    /// Returns this filler with a new per-fill worker maximum.
+    pub fn with_max_threads(mut self, max_threads: usize) -> Result<Self, TensorRandError> {
+        self.set_max_threads(max_threads)?;
+        Ok(self)
     }
 }
 
@@ -692,7 +730,7 @@ impl TensorRandElement for f64 {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
-        let lanes_per_job = lanes_per_job(slices);
+        let lanes_per_job = random_lanes_per_job(slices, filler.max_threads);
 
         match filler.kind {
             RandType::Uniform { low, high } => {
@@ -765,7 +803,7 @@ impl TensorRandElement for i64 {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
-        let lanes_per_job = lanes_per_job(slices);
+        let lanes_per_job = random_lanes_per_job(slices, filler.max_threads);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {
@@ -819,7 +857,7 @@ impl TensorRandElement for usize {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
-        let lanes_per_job = lanes_per_job(slices);
+        let lanes_per_job = random_lanes_per_job(slices, filler.max_threads);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {
@@ -872,7 +910,7 @@ impl TensorRandElement for isize {
             return Ok(());
         };
         let rngs = &mut filler.rngs[..slices];
-        let lanes_per_job = lanes_per_job(slices);
+        let lanes_per_job = random_lanes_per_job(slices, filler.max_threads);
 
         match filler.kind {
             RandType::UniformInt { low, high } => {

@@ -1,13 +1,9 @@
-use ndarray::{Array2, array};
-
 use physics_in_parallel::prelude::advanced::{Dense, Sparse};
 use physics_in_parallel::prelude::basic::{Complex, ScalarCastError, Tensor};
 
-fn assert_tensor_eq_array2(tensor: &Tensor<f64, Dense>, expected: &Array2<f64>) {
-    assert_eq!(tensor.shape(), expected.shape());
-    for ((i, j), value) in expected.indexed_iter() {
-        assert_eq!(tensor.get(&[i as isize, j as isize]), *value);
-    }
+fn assert_tensor_values(tensor: &Tensor<f64, Dense>, shape: &[usize], expected: &[f64]) {
+    assert_eq!(tensor.shape(), shape);
+    assert_eq!(tensor.as_slice(), expected);
 }
 
 fn dense_2x3() -> Tensor<f64, Dense> {
@@ -23,16 +19,16 @@ fn dense_2x3() -> Tensor<f64, Dense> {
 #[test]
 fn dense_tensor_basic_metadata_access_and_wrapping() {
     let t = dense_2x3();
-    let expected = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let expected = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
 
     assert_eq!(t.shape(), &[2, 3]);
     assert_eq!(t.rank(), 2);
     assert_eq!(t.size(), 6);
-    assert_eq!(t.sum(), expected.sum());
-    assert_tensor_eq_array2(&t, &expected);
+    assert_eq!(t.sum(), expected.iter().sum::<f64>());
+    assert_tensor_values(&t, &[2, 3], &expected);
 
-    assert_eq!(t.get(&[-1, -1]), expected[[1, 2]]);
-    assert_eq!(t.get(&[2, 3]), expected[[0, 0]]);
+    assert_eq!(t.get(&[-1, -1]), expected[5]);
+    assert_eq!(t.get(&[2, 3]), expected[0]);
 }
 
 #[test]
@@ -56,22 +52,21 @@ fn dense_tensor_type_conversion_uses_scalar_cast_contract() {
 }
 
 #[test]
-fn dense_tensor_elementwise_ops_match_ndarray() {
+fn dense_tensor_elementwise_ops_match_manual_values() {
     let a = dense_2x3();
-    let expected_a = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-    let expected_b = array![[2.0, 4.0, 6.0], [8.0, 10.0, 12.0]];
+    let expected_b = [2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
 
     let scaled = a.scalar_mul(2.0);
-    assert_tensor_eq_array2(&scaled, &expected_b);
+    assert_tensor_values(&scaled, &[2, 3], &expected_b);
 
     let shifted = a.map(|x| x + 1.0);
-    assert_tensor_eq_array2(&shifted, &(expected_a.clone() + 1.0));
+    assert_tensor_values(&shifted, &[2, 3], &[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
 
     let elem_mul = a.elem_mul(&scaled);
-    assert_tensor_eq_array2(&elem_mul, &(expected_a.clone() * expected_b.clone()));
+    assert_tensor_values(&elem_mul, &[2, 3], &[2.0, 8.0, 18.0, 32.0, 50.0, 72.0]);
 
     let elem_div = scaled.elem_div(&a);
-    assert_tensor_eq_array2(&elem_div, &(expected_b / expected_a));
+    assert_tensor_values(&elem_div, &[2, 3], &[2.0; 6]);
 }
 
 #[test]

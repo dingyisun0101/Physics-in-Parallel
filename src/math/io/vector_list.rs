@@ -1,6 +1,5 @@
 //! IO and external-format interop for vector-list containers.
 
-use ndarray::Array2;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -8,7 +7,6 @@ use serde_json::Value;
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
 };
-use crate::math::io::ndarray::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::vector_list::VectorList;
 
@@ -91,39 +89,5 @@ where
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         self.to_json_string()
-    }
-}
-
-impl<T: Scalar + Copy> VectorList<T> {
-    pub fn from_ndarray(array: &Array2<T>) -> Self {
-        let shape = array.shape();
-        assert_eq!(shape.len(), 2, "VectorList::from_ndarray expects rank 2");
-        assert!(
-            shape[0] > 0 && shape[1] > 0,
-            "VectorList::from_ndarray: shape must be nonzero"
-        );
-        Self::from_vec(shape[1], shape[0], array.iter().copied().collect())
-    }
-
-    pub fn to_ndarray(&self) -> Array2<T> {
-        Array2::from_shape_vec(
-            (self.num_vectors(), self.dim()),
-            self.as_tensor().data().to_vec(),
-        )
-        .expect("VectorList::to_ndarray: shape/data length mismatch")
-    }
-}
-
-impl<T: Scalar + Copy> NdarrayConvert for VectorList<T> {
-    type NdArray = Array2<T>;
-
-    #[inline]
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        VectorList::<T>::from_ndarray(array)
-    }
-
-    #[inline]
-    fn to_ndarray(&self) -> Self::NdArray {
-        VectorList::<T>::to_ndarray(self)
     }
 }

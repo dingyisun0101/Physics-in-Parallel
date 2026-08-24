@@ -1,7 +1,6 @@
-use ndarray::array;
 use serde_json::json;
 
-use physics_in_parallel::prelude::advanced::{NdarrayConvert, SparseMatrix};
+use physics_in_parallel::prelude::advanced::SparseMatrix;
 use physics_in_parallel::prelude::basic::{DenseMatrix, Matrix};
 
 #[test]
@@ -82,19 +81,4 @@ fn matrix_deserialization_rejects_non_rank_two_shape() {
         err.to_string()
             .contains("matrix shape rank mismatch: expected 2, got 1")
     );
-}
-
-#[test]
-fn dense_matrix_converts_to_and_from_ndarray() {
-    let array = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-
-    let matrix = Matrix::<f64>::from_ndarray(&array);
-    assert_eq!(matrix.shape(), [2, 3]);
-    assert_eq!(matrix.get(1, 2), 6.0);
-
-    let round_trip = matrix.to_ndarray();
-    assert_eq!(round_trip, array);
-
-    let via_trait = <DenseMatrix<f64> as NdarrayConvert>::from_ndarray(&array);
-    assert_eq!(via_trait.to_ndarray(), array);
 }

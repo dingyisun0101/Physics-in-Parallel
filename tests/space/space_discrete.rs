@@ -3,8 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ndarray::{ArrayD, IxDyn};
-
 use physics_in_parallel::prelude::advanced::{
     Kernel, NearestNeighborKernel, PowerLawKernel, Space, SquareLatticeAdvanced,
     UniformDistanceKernel, save_square_lattice,
@@ -181,13 +179,17 @@ fn lattice_space_trait_boundary_and_rescale_surface() {
 }
 
 #[test]
-fn lattice_ndarray_and_save_surface() {
-    let arr = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1usize, 2, 3, 4])
-        .expect("ndarray shape should match data length");
-
-    let lattice = SquareLattice::<usize>::from_ndarray(&arr, BoundaryCondition::Periodic);
+fn lattice_values_and_save_surface() {
+    let mut lattice = SquareLattice::<usize>::new(
+        SquareLatticeConfig::periodic(&[2, 2]),
+        SquareLatticeInitMethod::Uniform { val: 0 },
+    )
+    .unwrap();
+    for (index, value) in [1, 2, 3, 4].into_iter().enumerate() {
+        lattice.set_flat(index as isize, value);
+    }
     assert_eq!(lattice.config().shape(), [2, 2]);
-    assert_eq!(lattice.to_ndarray(), arr);
+    assert_eq!(lattice.data(), &[1, 2, 3, 4]);
 
     let out_1 = unique_tmp_json("save_square_lattice_fn");
     save_square_lattice(&lattice, &vec![2; lattice.config().rank()], &out_1)

@@ -8,8 +8,8 @@ A **hash-backed sparse N-D tensor** where only nonzeros are stored.
 - **Elementwise ops:** operate on the **union** of nonzero indices; results that
   become zero are dropped (sparseness preserved).
 - **Parallelism:** `rayon` is used for binary ops and many transforms after
-  materializing indexed work so PiP's process-wide partition limit applies.
-- **Computation-only scope:** JSON, ndarray, and string interop live under
+  materializing indexed work; adaptive chunks use the current Rayon pool.
+- **Computation-only scope:** JSON and string interop live under
   `math::io`.
 
 This module mirrors the dense tensor API where it makes sense, and defers to
@@ -32,7 +32,7 @@ use ahash::AHashMap;
 use rayon::prelude::*;
 use std::ops::{Add, BitAnd, Div, Mul, Sub};
 
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 
 use super::dense::{Tensor as TensorDense, checked_num_elements};
 use super::layout::{RowMajorLayout, flat_index_wrapped, normalize_flat_index};

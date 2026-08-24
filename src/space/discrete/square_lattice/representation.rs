@@ -32,9 +32,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::math::scalar::{Scalar, ScalarSerde};
 use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout};
 use crate::math::{Tensor, TensorError};
-use crate::parallel::parallel_chunk_len;
 use crate::sampling::shuffle_slice_indexed;
 use crate::space::space_trait::Space;
+use crate::threading::parallel_chunk_len;
 
 use super::random::IndexedRng;
 use crate::rng::{RngConfig, RngConfigError};

@@ -9,7 +9,7 @@ sample index, so output does not depend on Rayon worker scheduling.
 use std::error::Error;
 use std::fmt;
 
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 

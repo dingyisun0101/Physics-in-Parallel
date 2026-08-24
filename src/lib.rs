@@ -21,8 +21,9 @@ pub(crate) mod advanced;
 pub(crate) mod engines;
 pub(crate) mod math;
 pub(crate) mod models;
-pub(crate) mod parallel;
 pub mod prelude;
 pub(crate) mod rng;
 pub(crate) mod sampling;
 pub(crate) mod space;
+#[path = "parallel.rs"]
+pub mod threading;

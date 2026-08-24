@@ -1,79 +1,44 @@
-use ndarray::{Array1, Array2, array};
-
 use physics_in_parallel::prelude::advanced::Dense;
 use physics_in_parallel::prelude::basic::{Complex, Tensor};
 
-fn dense_from_array2(array: &Array2<f64>) -> Tensor<f64, Dense> {
-    let shape = array.shape();
-    let mut tensor = Tensor::<f64, Dense>::empty(shape);
-    for ((i, j), value) in array.indexed_iter() {
-        tensor.set(&[i as isize, j as isize], *value);
-    }
-    tensor
-}
-
-fn dense_from_array1(array: &Array1<f64>) -> Tensor<f64, Dense> {
-    let mut tensor = Tensor::<f64, Dense>::empty(&[array.len()]);
-    for (i, value) in array.indexed_iter() {
-        tensor.set(&[i as isize], *value);
-    }
-    tensor
-}
-
-fn assert_tensor_eq_array2(tensor: &Tensor<f64, Dense>, expected: &Array2<f64>) {
-    assert_eq!(tensor.shape(), expected.shape());
-    for ((i, j), value) in expected.indexed_iter() {
-        assert_eq!(tensor.get(&[i as isize, j as isize]), *value);
-    }
-}
-
-fn assert_tensor_eq_array1(tensor: &Tensor<f64, Dense>, expected: &Array1<f64>) {
-    assert_eq!(tensor.shape(), expected.shape());
-    for (i, value) in expected.indexed_iter() {
-        assert_eq!(tensor.get(&[i as isize]), *value);
-    }
+fn assert_tensor(tensor: &Tensor<f64, Dense>, shape: &[usize], expected: &[f64]) {
+    assert_eq!(tensor.shape(), shape);
+    assert_eq!(tensor.as_slice(), expected);
 }
 
 #[test]
-fn transpose_and_matmul_match_ndarray() {
-    let a_ref = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-    let b_ref = array![[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]];
-    let a = dense_from_array2(&a_ref);
-    let b = dense_from_array2(&b_ref);
+fn transpose_and_matmul_match_manual_results() {
+    let a = Tensor::from_vec(&[2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let b = Tensor::from_vec(&[3, 2], vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
 
     let transpose = a.transpose();
-    assert_tensor_eq_array2(&transpose, &a_ref.t().to_owned());
+    assert_tensor(&transpose, &[3, 2], &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
 
     let product = a.matmul(&b);
-    assert_tensor_eq_array2(&product, &a_ref.dot(&b_ref));
+    assert_tensor(&product, &[2, 2], &[58.0, 64.0, 139.0, 154.0]);
 }
 
 #[test]
-fn dot_cross_wedge_and_norm_match_ndarray_reference_calculations() {
-    let a_ref = array![1.0, 2.0, 3.0];
-    let b_ref = array![4.0, 5.0, 6.0];
-    let a = dense_from_array1(&a_ref);
-    let b = dense_from_array1(&b_ref);
+fn dot_cross_wedge_and_norm_match_manual_calculations() {
+    let a = Tensor::from_vec(&[3], vec![1.0, 2.0, 3.0]);
+    let b = Tensor::from_vec(&[3], vec![4.0, 5.0, 6.0]);
 
-    assert_eq!(a.dot(&b), a_ref.dot(&b_ref));
-    assert_eq!(a.hermitian_dot(&b), a_ref.dot(&b_ref));
-    assert_eq!(a.norm_sqr_real(), a_ref.dot(&a_ref));
-    assert_eq!(a.norm(), a_ref.dot(&a_ref).sqrt());
+    assert_eq!(a.dot(&b), 32.0);
+    assert_eq!(a.hermitian_dot(&b), 32.0);
+    assert_eq!(a.norm_sqr_real(), 14.0);
+    assert_eq!(a.norm(), 14.0_f64.sqrt());
 
-    let cross_ref = array![
-        a_ref[1] * b_ref[2] - a_ref[2] * b_ref[1],
-        a_ref[2] * b_ref[0] - a_ref[0] * b_ref[2],
-        a_ref[0] * b_ref[1] - a_ref[1] * b_ref[0],
-    ];
-    assert_tensor_eq_array1(&a.cross(&b), &cross_ref);
+    assert_tensor(&a.cross(&b), &[3], &[-3.0, 6.0, -3.0]);
 
-    let wedge_ref =
-        Array2::from_shape_fn((3, 3), |(i, j)| a_ref[i] * b_ref[j] - a_ref[j] * b_ref[i]);
-    assert_tensor_eq_array2(&a.wedge(&b), &wedge_ref);
+    assert_tensor(
+        &a.wedge(&b),
+        &[3, 3],
+        &[0.0, -3.0, -6.0, 3.0, 0.0, -3.0, 6.0, 3.0, 0.0],
+    );
 }
 
 #[test]
-fn hermitian_transpose_and_dot_match_ndarray_style_reference() {
+fn hermitian_transpose_and_dot_match_manual_reference() {
     let mut a = Tensor::<Complex<f64>, Dense>::empty(&[2, 2]);
     let a_ref = [
         [Complex::new(1.0, 1.0), Complex::new(2.0, -3.0)],

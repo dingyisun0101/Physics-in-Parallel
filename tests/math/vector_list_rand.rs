@@ -1,6 +1,14 @@
-use ndarray::arr2;
 use physics_in_parallel::prelude::advanced::{HaarVectors, NNVectors, VectorListRand};
 use physics_in_parallel::prelude::basic::RngConfig;
+
+fn snapshot<T>(rows: &physics_in_parallel::prelude::basic::VectorList<T>) -> Vec<T>
+where
+    T: Copy + physics_in_parallel::prelude::basic::Scalar,
+{
+    (0..rows.num_vectors())
+        .flat_map(|index| rows.vector(index as isize).iter().copied())
+        .collect()
+}
 
 #[test]
 fn haar_vectors_refresh_generates_unit_vectors_in_parallel_storage() {
@@ -42,13 +50,13 @@ fn indexed_haar_vectors_specialize_low_dimensions_and_replay_steps() {
     for dim in 1..=4 {
         let mut generator = HaarVectors::try_new_indexed(dim, 256, RngConfig::default()).unwrap();
         generator.try_refresh_at(7, 0x4841_4152).unwrap();
-        let first = generator.to_ndarray();
+        let first = snapshot(&generator.vl);
         generator.try_refresh_at(8, 0x4841_4152).unwrap();
-        assert_ne!(generator.to_ndarray(), first);
+        assert_ne!(snapshot(&generator.vl), first);
         generator.try_refresh_at(7, 0x4841_4152).unwrap();
-        assert_eq!(generator.to_ndarray(), first);
+        assert_eq!(snapshot(&generator.vl), first);
 
-        for row in first.rows() {
+        for row in first.chunks_exact(dim) {
             let norm = row.iter().map(|value| value * value).sum::<f64>().sqrt();
             assert!((norm - 1.0).abs() < 1e-10);
             if dim == 1 {
@@ -62,13 +70,13 @@ fn indexed_haar_vectors_specialize_low_dimensions_and_replay_steps() {
 fn indexed_nearest_neighbor_vectors_are_exact_and_replay_steps() {
     let mut generator = NNVectors::try_new_indexed(5, 512, RngConfig::default()).unwrap();
     generator.try_refresh_at(11, 0x4e4e).unwrap();
-    let first = generator.to_ndarray();
+    let first = snapshot(&generator.vl);
     generator.try_refresh_at(12, 0x4e4e).unwrap();
-    assert_ne!(generator.to_ndarray(), first);
+    assert_ne!(snapshot(&generator.vl), first);
     generator.try_refresh_at(11, 0x4e4e).unwrap();
-    assert_eq!(generator.to_ndarray(), first);
+    assert_eq!(snapshot(&generator.vl), first);
 
-    for row in first.rows() {
+    for row in first.chunks_exact(5) {
         assert_eq!(row.iter().filter(|&&value| value != 0).count(), 1);
         assert!(row.iter().all(|value| (-1..=1).contains(value)));
     }
@@ -91,19 +99,4 @@ fn nearest_neighbor_vectors_refresh_generates_one_hot_signed_rows() {
     for i in 0..4 {
         println!("{:?}", generator.vl.vector(i));
     }
-}
-
-#[test]
-fn vector_list_random_wrappers_preserve_ndarray_interop() {
-    let haar_array = arr2(&[[1.0, 0.0], [0.0, 1.0]]);
-    let haar = HaarVectors::from_ndarray(&haar_array, RngConfig::default()).unwrap();
-    assert_eq!(haar.dim, 2);
-    assert_eq!(haar.n, 2);
-    assert_eq!(haar.to_ndarray(), haar_array);
-
-    let nn_array = arr2(&[[1isize, 0isize], [0isize, -1isize]]);
-    let nn = NNVectors::from_ndarray(&nn_array, RngConfig::default()).unwrap();
-    assert_eq!(nn.dim, 2);
-    assert_eq!(nn.n, 2);
-    assert_eq!(nn.to_ndarray(), nn_array);
 }

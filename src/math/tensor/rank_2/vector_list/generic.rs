@@ -43,7 +43,7 @@ use serde_json::Value;
 use crate::math::tensor::rank_n::dense::Tensor as DenseStorage;
 use crate::math::tensor::rank_n::{Dense, Tensor};
 use crate::math::{Scalar, ScalarCastError};
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 
 #[derive(Debug, Clone)]
 pub struct VectorList<T: Scalar> {

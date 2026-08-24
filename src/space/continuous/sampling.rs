@@ -17,8 +17,8 @@ use rayon::prelude::*;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
 use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
-use crate::parallel::parallel_chunk_len;
 use crate::rng::RngConfig;
+use crate::threading::parallel_chunk_len;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VectorSamplingMethod<'a> {

@@ -17,8 +17,7 @@ Design:
         using `TensorRandFiller`, then decodes those codes in parallel. The
         stored rows are one-hot nearest-neighbor directions.
 */
-use crate::parallel::parallel_chunk_len;
-use ndarray::Array2;
+use crate::threading::parallel_chunk_len;
 use rayon::prelude::*;
 use serde_json::Value;
 
@@ -217,25 +216,6 @@ impl HaarVectors {
         self.filler.rng_config()
     }
 
-    /// Build a Haar generator around existing `[n, dim]` vector-list data.
-    ///
-    /// The random filler is initialized with the standard-normal distribution
-    /// used by `refresh`, so callers can import data and later resume random
-    /// Haar generation with the same object.
-    #[inline]
-    pub fn from_ndarray(array: &Array2<f64>, rng: RngConfig) -> Result<Self, TensorRandError> {
-        let mut generator =
-            Self::try_with_mode(array.ncols(), array.nrows(), rng, FillMode::Stateful)?;
-        generator.vl = VectorList::from_ndarray(array);
-        Ok(generator)
-    }
-
-    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
-    #[inline]
-    pub fn to_ndarray(&self) -> Array2<f64> {
-        self.vl.to_ndarray()
-    }
-
     #[inline]
     /// Convert this Haar vector batch into a structured JSON value.
     pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
@@ -407,40 +387,6 @@ impl NNVectors {
     /// Returns the fully resolved random configuration used by this generator.
     pub fn rng_config(&self) -> RngConfig {
         self.code_filler.rng_config()
-    }
-
-    /// Build a nearest-neighbor generator around existing `[n, dim]` rows.
-    ///
-    /// The integer-code filler is initialized with the same direction-code
-    /// range used by `refresh`, so imported data can later be replaced by new
-    /// random nearest-neighbor directions.
-    #[inline]
-    pub fn from_ndarray(array: &Array2<isize>, rng: RngConfig) -> Result<Self, TensorRandError> {
-        let vl = VectorList::<isize>::from_ndarray(array);
-        let dim = vl.dim();
-        let n = vl.num_vectors();
-        let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
-        let code_filler = TensorRandFiller::try_new(
-            RandType::UniformInt {
-                low: 0,
-                high: (2 * dim) as i64 - 1,
-            },
-            rng,
-        )?;
-        Ok(Self {
-            vl,
-            dim,
-            n,
-            code_buf,
-            code_filler,
-            mode: FillMode::Stateful,
-        })
-    }
-
-    /// Export inner vector-list storage to ndarray with shape `[n, dim]`.
-    #[inline]
-    pub fn to_ndarray(&self) -> Array2<isize> {
-        self.vl.to_ndarray()
     }
 
     #[inline]

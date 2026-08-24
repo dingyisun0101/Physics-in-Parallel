@@ -1,17 +1,17 @@
 use physics_in_parallel::prelude::advanced::{Dense, RowMajorLayout, Sparse};
-use physics_in_parallel::prelude::basic::{
-    DEFAULT_PARALLEL_PARTITIONS, ParallelismError, Tensor, parallel_partitions,
-    set_parallel_partitions,
-};
+use physics_in_parallel::prelude::basic::{ComputePool, ComputePoolError, Tensor, with_threads};
 
 #[test]
-fn process_parallel_partition_policy_has_a_safe_default() {
-    assert_eq!(DEFAULT_PARALLEL_PARTITIONS, 8);
-    assert_eq!(
-        set_parallel_partitions(0),
-        Err(ParallelismError::ZeroPartitions)
-    );
-    assert_eq!(parallel_partitions(), DEFAULT_PARALLEL_PARTITIONS);
+fn explicit_compute_pools_are_fixed_size_and_opt_in() {
+    assert!(matches!(
+        ComputePool::new(0),
+        Err(ComputePoolError::ZeroThreads)
+    ));
+
+    let pool = ComputePool::new(2).unwrap();
+    assert_eq!(pool.threads(), 2);
+    assert_eq!(pool.install(rayon::current_num_threads), 2);
+    assert_eq!(with_threads(3, rayon::current_num_threads).unwrap(), 3);
 }
 
 #[test]
@@ -83,6 +83,53 @@ fn dense_mutable_reference_updates_target_slot() {
 
     t.set(&[2, 2], -5);
     assert_eq!(t.get(&[0, 0]), -5);
+}
+
+#[test]
+fn dense_contiguous_ownership_and_allocation_reuse_are_explicit() {
+    let mut target = Tensor::<i64>::try_from_vec(&[2, 3], vec![0; 6]).unwrap();
+    let left = Tensor::<i64>::try_from_vec(&[2, 3], vec![1, 2, 3, 4, 5, 6]).unwrap();
+    let right = Tensor::<i64>::try_from_vec(&[2, 3], vec![6, 5, 4, 3, 2, 1]).unwrap();
+
+    target.zip_from(&left, &right, |a, b| a + b).unwrap();
+    assert_eq!(target.as_slice(), &[7; 6]);
+    target.as_mut_slice()[0] = 9;
+    assert_eq!(target.get_flat(0), 9);
+
+    target.copy_from(&left).unwrap();
+    assert_eq!(target, left);
+    assert_eq!(target.sum_serial(), 21);
+}
+
+#[test]
+fn dense_fallible_construction_and_copy_report_layout_errors() {
+    assert!(matches!(
+        Tensor::<f64>::try_from_vec(&[2, 2], vec![1.0, 2.0, 3.0]),
+        Err(
+            physics_in_parallel::prelude::basic::TensorError::DataLengthMismatch {
+                expected: 4,
+                actual: 3
+            }
+        )
+    ));
+
+    let mut target = Tensor::<f64>::zeros(&[2, 2]);
+    let source = Tensor::<f64>::zeros(&[4]);
+    assert!(matches!(
+        target.copy_from(&source),
+        Err(physics_in_parallel::prelude::basic::TensorError::ShapeMismatch { .. })
+    ));
+}
+
+#[test]
+fn dense_adaptive_chunk_traversal_visits_each_chunk_once() {
+    let mut values = Tensor::<usize>::zeros(&[5_000, 4]);
+    values.for_each_chunk_mut(4, |row, chunk| {
+        for (column, value) in chunk.iter_mut().enumerate() {
+            *value = row * 4 + column;
+        }
+    });
+    assert_eq!(values.as_slice(), (0..20_000).collect::<Vec<_>>());
 }
 
 #[test]

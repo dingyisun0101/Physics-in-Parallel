@@ -1,11 +1,8 @@
 //! Foundational user API for mathematics, randomness, spaces, and pairing.
 
 pub use crate::math::{
-    Complex, DenseMatrix, Matrix, MatrixError, RandType, Scalar, ScalarCastError, Tensor,
-    TensorError, TensorRandError, TensorRandFiller, VectorList,
-};
-pub use crate::parallel::{
-    DEFAULT_PARALLEL_PARTITIONS, ParallelismError, parallel_partitions, set_parallel_partitions,
+    Complex, DEFAULT_RANDOM_MAX_THREADS, DenseMatrix, Matrix, MatrixError, RandType, Scalar,
+    ScalarCastError, Tensor, TensorError, TensorRandError, TensorRandFiller, VectorList,
 };
 pub use crate::rng::{IndexedRng, RngConfig, RngConfigError, RngMethod};
 pub use crate::space::{
@@ -14,3 +11,4 @@ pub use crate::space::{
     ReflectBox, SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
     SquareLatticeInitMethod, VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
+pub use crate::threading::{ComputePool, ComputePoolError, with_threads};

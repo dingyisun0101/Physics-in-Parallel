@@ -1,4 +1,3 @@
-use ndarray::arr2;
 use physics_in_parallel::prelude::advanced::DynVectorList;
 use physics_in_parallel::prelude::basic::{Scalar, VectorList};
 
@@ -55,12 +54,10 @@ fn vector_list_axis_fill_from_fn_and_slice_updates_are_consistent() {
 }
 
 #[test]
-fn vector_list_ndarray_json_and_dynamic_trait_paths_preserve_values() {
-    let array = arr2(&[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]);
-    let vectors = VectorList::<f64>::from_ndarray(&array);
+fn vector_list_json_and_dynamic_trait_paths_preserve_values() {
+    let vectors = VectorList::<f64>::from_vec(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
 
     assert_eq!(vectors.shape(), [3, 2]);
-    assert_eq!(vectors.to_ndarray(), array);
 
     let json = vectors.serialize().expect("vector list should serialize");
     let decoded: VectorList<f64> =

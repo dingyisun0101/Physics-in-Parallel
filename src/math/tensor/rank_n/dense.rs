@@ -7,7 +7,7 @@ Goals:
 - **Ergonomics**: safe multidimensional accessors through the tensor facade.
 - **Parallelism**: `rayon`-powered in-place maps/zips and elementwise arithmetic.
 - **Type-agnostic**: generic over the crate-wide `Scalar` trait (real or complex).
-- **Computation-only scope**: JSON, ndarray, and string interop live under `math::io`.
+- **Computation-only scope**: JSON and string interop live under `math::io`.
 
 # Highlights
 
@@ -40,7 +40,7 @@ Goals:
 use std::fmt::Display;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
-use crate::parallel::parallel_chunk_len;
+use crate::threading::{parallel_chunk_len, should_parallelize_elements};
 use rayon::prelude::*;
 
 use super::errors;
@@ -61,7 +61,7 @@ use crate::math::scalar::{Scalar, ScalarCastError};
 ///
 /// # Invariants
 /// - `data.len() == shape.iter().product()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<T: Scalar> {
     /// The extents along each axis. Example: `[rows, cols]` for 2D.
     pub(crate) shape: Vec<usize>,
@@ -276,6 +276,10 @@ where
     where
         T: Copy + Send + Sync,
     {
+        if !should_parallelize_elements(self.data.len()) {
+            self.data.fill(value);
+            return;
+        }
         let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
         self.data
             .par_iter_mut()
@@ -290,6 +294,10 @@ where
         T: Copy + Send + Sync,
         F: Fn(T) -> T + Sync + Send,
     {
+        if !should_parallelize_elements(self.data.len()) {
+            self.data.iter_mut().for_each(|value| *value = f(*value));
+            return;
+        }
         let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
         self.data
             .par_iter_mut()
@@ -309,6 +317,13 @@ where
         F: Fn(T, T) -> T + Sync + Send,
     {
         assert_eq!(self.shape(), other.shape(), "Tensor shape mismatch");
+        if !should_parallelize_elements(self.data.len()) {
+            self.data
+                .iter_mut()
+                .enumerate()
+                .for_each(|(index, value)| *value = f(*value, other.get_flat(index as isize)));
+            return;
+        }
         let min_elements_per_job = parallel_chunk_len(self.data.len()).unwrap_or(1);
         self.data
             .par_iter_mut()

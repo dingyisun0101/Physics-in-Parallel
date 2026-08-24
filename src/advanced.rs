@@ -15,7 +15,6 @@ pub use crate::math::io::json::{
     FlatPayload, FromJsonPayload, JSON_SCHEMA_VERSION, SparsePayload, SparsePayloadParts,
     ToJsonPayload,
 };
-pub use crate::math::io::ndarray::NdarrayConvert;
 pub use crate::math::io::string::TensorStringConvert;
 pub use crate::math::scalar::ScalarSerde;
 pub use crate::math::tensor::rank_2::matrix::{
@@ -26,7 +25,9 @@ pub use crate::math::tensor::rank_2::matrix::{
 pub use crate::math::tensor::rank_2::vector_list::{
     DynVectorList, HaarVectors, NNVectors, VectorListRand,
 };
-pub use crate::math::tensor::rank_n::dense_rand::{NUM_RNGS, TensorRandElement};
+pub use crate::math::tensor::rank_n::dense_rand::{
+    DEFAULT_RANDOM_MAX_THREADS, NUM_RNGS, TensorRandElement,
+};
 pub use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
 pub use crate::math::tensor::rank_n::{Backend, Dense, RowMajorLayout, Sparse, TensorResult};
 pub use crate::sampling::{DynamicWeightedIndex, DynamicWeightedIndexError};

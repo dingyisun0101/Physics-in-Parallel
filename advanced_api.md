@@ -23,8 +23,8 @@ The advanced prelude exports exactly these symbols:
 - Random-fill extension points: `TensorRandElement`, `NUM_RNGS`.
 - Dynamic discrete sampling: `DynamicWeightedIndex`,
   `DynamicWeightedIndexError`.
-- Scalar and interchange support: `ScalarSerde`, `NdarrayConvert`,
-  `TensorStringConvert`, `FlatPayload`, `SparsePayload`, `SparsePayloadParts`,
+- Scalar and interchange support: `ScalarSerde`, `TensorStringConvert`,
+  `FlatPayload`, `SparsePayload`, `SparsePayloadParts`,
   `ToJsonPayload`, `FromJsonPayload`, `JSON_SCHEMA_VERSION`.
 - Generic system storage: `AttrId`, `AttrsMeta`, `AttrsCore`,
   `PhysObjAdvanced`.
@@ -57,8 +57,8 @@ that cannot preserve such a structure return a dense result explicitly.
 It is exposed only so generic advanced code can state the same bound as
 `TensorRandFiller`; downstream crates cannot implement it. `NUM_RNGS` is the
 fixed deterministic lane count for stateful random streams. It is deliberately
-independent of the basic API's process-wide execution partition limit, so
-changing execution parallelism does not change seeded results.
+independent of Rayon worker scheduling and worker count, so changing execution
+parallelism does not change seeded results.
 
 `VectorListRand`, `HaarVectors`, and `NNVectors` expose reusable generators for
 custom algorithms. Basic consumers should use `TensorRandFiller` or the

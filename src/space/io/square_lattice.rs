@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use ndarray::{ArrayD, IxDyn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -106,24 +105,6 @@ where
 
         let cfg = SquareLatticeConfig::new(&payload.shape, boundary, None);
         Ok(SquareLattice::from_parts(cfg, payload.data))
-    }
-}
-
-impl<T: Scalar + Clone> SquareLattice<T> {
-    pub fn from_ndarray(array: &ArrayD<T>, boundary: BoundaryCondition) -> Self {
-        let owned = array.to_owned();
-        let shape = owned.shape().to_vec();
-        assert!(
-            !shape.is_empty(),
-            "SquareLattice::from_ndarray: shape must be non-empty"
-        );
-        let (data, _) = owned.into_raw_vec_and_offset();
-        SquareLattice::from_parts(SquareLatticeConfig::new(&shape, boundary, None), data)
-    }
-
-    pub fn to_ndarray(&self) -> ArrayD<T> {
-        ArrayD::from_shape_vec(IxDyn(&self.tensor_shape()), self.data().to_vec())
-            .expect("SquareLattice::to_ndarray: shape/data length mismatch")
     }
 }
 

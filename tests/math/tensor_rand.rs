@@ -1,6 +1,6 @@
 use physics_in_parallel::prelude::basic::{
-    RandType, RngConfig, RngConfigError, RngMethod, Scalar, Tensor, TensorRandError,
-    TensorRandFiller,
+    DEFAULT_RANDOM_MAX_THREADS, RandType, RngConfig, RngConfigError, RngMethod, Scalar, Tensor,
+    TensorRandError, TensorRandFiller,
 };
 
 fn rng(seed: u64, method: Option<RngMethod>) -> RngConfig {
@@ -51,6 +51,38 @@ fn contiguous_slice_fill_matches_tensor_refresh() {
     slice_filler.try_fill_slice(&mut slice).unwrap();
 
     assert_eq!(values(&tensor), slice);
+}
+
+#[test]
+fn filler_worker_limit_is_instance_local_and_result_independent() {
+    let kind = RandType::Normal {
+        mean: 0.0,
+        std: 1.0,
+    };
+    let mut serial = TensorRandFiller::new(kind, rng(12345, None))
+        .with_max_threads(1)
+        .unwrap();
+    let mut parallel = TensorRandFiller::new(kind, rng(12345, None))
+        .with_max_threads(4)
+        .unwrap();
+    let mut serial_values = vec![0.0; 32_768];
+    let mut parallel_values = vec![0.0; 32_768];
+
+    assert_eq!(
+        TensorRandFiller::new(kind, rng(7, None)).max_threads(),
+        DEFAULT_RANDOM_MAX_THREADS
+    );
+    assert_eq!(serial.max_threads(), 1);
+    assert_eq!(parallel.max_threads(), 4);
+    serial.try_fill_slice(&mut serial_values).unwrap();
+    parallel.try_fill_slice(&mut parallel_values).unwrap();
+    assert_eq!(serial_values, parallel_values);
+
+    assert_eq!(
+        parallel.set_max_threads(0),
+        Err(TensorRandError::InvalidMaxThreads)
+    );
+    assert_eq!(parallel.max_threads(), 4);
 }
 
 #[test]

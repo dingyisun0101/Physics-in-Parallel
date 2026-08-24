@@ -1,7 +1,7 @@
 # Physics in Parallel
 
-> **Alpha and breaking API notice:** PiP is under active design. Version 3.6.0
-> is the current API contract; every version before 3.6.0 is considered broken
+> **Alpha and breaking API notice:** PiP is under active design. Version 3.7.0
+> is the current API contract; every version before 3.7.0 is considered broken
 > and unsupported. Versions still increase normally, but any alpha release may
 > contain breaking changes. Pin the exact version used by a scientific project.
 
@@ -41,12 +41,13 @@ performance or cannot express the operation.
 `physics_in_parallel::prelude::basic` exports exactly these symbols:
 
 - Randomness: `RngConfig`, `RngMethod`, `RngConfigError`, `IndexedRng`.
-- Internal execution policy: `set_parallel_partitions`, `parallel_partitions`,
-  `DEFAULT_PARALLEL_PARTITIONS`, `ParallelismError`.
+- Explicit execution convenience: `ComputePool`, `ComputePoolError`,
+  `with_threads`.
 - Scalars: `Scalar`, `Complex`, `ScalarCastError`.
 - Dense mathematics: `Tensor`, `TensorError`, `Matrix`, `DenseMatrix`,
   `MatrixError`, `VectorList`.
-- Random filling: `RandType`, `TensorRandFiller`, `TensorRandError`.
+- Random filling: `RandType`, `TensorRandFiller`, `TensorRandError`,
+  `DEFAULT_RANDOM_MAX_THREADS`.
 - Continuous space: `BoundaryError`, `ContinuousBoundary`, `ClampBox`,
   `PeriodicBox`, `ReflectBox`, `VectorSamplingMethod`, `VectorSamplingError`,
   `sample_vectors`.
@@ -57,8 +58,12 @@ performance or cannot express the operation.
 
 The core container conventions are consistent:
 
-- `Tensor` uses a row-major shape and signed coordinates. Coordinate and flat
-  accessors both wrap periodically, including negative and oversized indices.
+- `Tensor` uses owned contiguous row-major storage and a dynamic shape.
+  `as_slice` and `as_mut_slice` provide zero-copy dense access;
+  `try_from_vec` validates incoming ownership transfers; `copy_from`,
+  `zip_from`, and `for_each_chunk_mut` support allocation-free simulation
+  kernels. Coordinate and flat accessors both wrap periodically, including
+  negative and oversized indices.
 - `Matrix` uses signed `(row, column)` and flat access with periodic wrapping.
   Arithmetic keeps the backend when that is mathematically valid. Scalar
   multiplication is named `scalar_mul`; `mul_vectors_into` applies one matrix
@@ -88,24 +93,52 @@ reference.
 APIs. A missing seed uses host entropy; a missing method uses the component's
 documented default. Long-lived generators expose their resolved configuration.
 Indexed filling and pair generation are deterministic independently of Rayon
-scheduling and PiP's execution partition setting.
+scheduling and worker count. `TensorRandFiller::max_threads` is an
+instance-local runtime limit: it bounds how many workers one fill may occupy
+without changing deterministic RNG lanes or generated values.
 
 ### Internal parallelism
 
-PiP uses the current Rayon pool; it never creates or owns another thread pool.
-Its low-level operations create at most eight partitions by default so a task
-can coexist with higher-level parallel tasks. A program may set a different
-process-wide limit once, before the first PiP parallel operation:
+PiP uses the current Rayon pool and does not normally create or own another
+thread pool. Kernel work planning adapts to the workload and the number of
+workers available in that pool. There is no process-wide PiP thread or
+partition setting.
+
+Callers that need a reusable fixed-size execution environment may opt in:
 
 ```rust
 use physics_in_parallel::prelude::basic::*;
 
-set_parallel_partitions(4).expect("configure PiP before its first parallel operation");
+let pool = ComputePool::new(4)?;
+let _result = pool.install(|| expensive_calculation());
+# Ok::<(), Box<dyn std::error::Error>>(())
+# fn expensive_calculation() {}
 ```
 
-The limit controls PiP work partitioning, not Rayon worker count. Higher-level
-workflow concurrency remains the responsibility of the caller. The value is
-frozen after first use; later attempts return `ParallelismError`.
+`with_threads` is the one-operation shortcut; construct `ComputePool` directly
+when executing repeatedly so worker creation is amortized. Both are explicit
+conveniences. Existing Rayon pools, environment configuration, and
+higher-level workflow concurrency remain owned by the caller.
+
+Elementwise and batched matrix operations select serial execution below a
+conservative work threshold and bounded Rayon execution above it. This avoids
+paying task-scheduling costs for small tensors while retaining multicore
+throughput for spatial fields. `Tensor::sum_serial` is the stable row-major
+reduction for calculations whose floating-point order is scientifically
+observable; `Tensor::sum` is the parallel throughput-oriented reduction.
+
+### Workflow and serialization
+
+PiP containers implement Serde directly. A `Tensor<f64>` or
+`Option<Tensor<f64>>` can therefore be inserted into a heterogeneous workflow
+state and passed directly to a generic writer without an adapter or conversion
+allocation. Dense tensors serialize as a versioned flat payload containing
+`kind`, `version`, `scalar`, `shape`, and row-major `data`; deserialization
+validates all five fields before constructing storage.
+
+PiP is the canonical Rust numerical representation and has no Rust `ndarray`
+dependency. Python readers may reconstruct the versioned payload as NumPy
+arrays at the external analysis boundary.
 
 ### Pair generation
 

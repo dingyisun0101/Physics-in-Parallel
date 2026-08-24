@@ -4,7 +4,7 @@
 //! but these helpers define the common mathematical behavior.
 
 use crate::math::scalar::Scalar;
-use crate::parallel::parallel_chunk_len;
+use crate::threading::parallel_chunk_len;
 use num_traits::Zero;
 use rayon::prelude::*;
 

@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
 use crate::math::tensor::rank_n::{Dense, Sparse, Tensor};
-use crate::parallel::parallel_chunk_len;
+use crate::threading::{parallel_chunk_len, should_parallelize_operations};
 use num_traits::Zero;
 use rayon::prelude::*;
 
@@ -298,6 +298,39 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
 
         let rows = self.rows();
         let cols = self.cols();
+        let operations = batch.saturating_mul(rows).saturating_mul(cols);
+        if batch < 2 || !should_parallelize_operations(operations) {
+            if let Some(data) = self.contiguous_data() {
+                for (output_vector, input_vector) in
+                    output.chunks_exact_mut(rows).zip(input.chunks_exact(cols))
+                {
+                    for (matrix_row, output_value) in
+                        data.chunks_exact(cols).zip(output_vector.iter_mut())
+                    {
+                        *output_value = matrix_row
+                            .iter()
+                            .copied()
+                            .zip(input_vector.iter().copied())
+                            .map(|(coefficient, value)| coefficient * value)
+                            .sum();
+                    }
+                }
+            } else {
+                for (output_vector, input_vector) in
+                    output.chunks_exact_mut(rows).zip(input.chunks_exact(cols))
+                {
+                    for (row, output_value) in output_vector.iter_mut().enumerate() {
+                        *output_value = input_vector
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(column, value)| self.get(row as isize, column as isize) * value)
+                            .sum();
+                    }
+                }
+            }
+            return Ok(());
+        }
         let min_vectors_per_job = parallel_chunk_len(batch).unwrap_or(1);
         if let Some(data) = self.contiguous_data() {
             output

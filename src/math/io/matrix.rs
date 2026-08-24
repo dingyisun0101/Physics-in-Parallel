@@ -1,6 +1,5 @@
 //! IO and external-format interop for matrix containers.
 
-use ndarray::Array2;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -8,7 +7,6 @@ use serde_json::Value;
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
 };
-use crate::math::io::ndarray::NdarrayConvert;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::matrix::{Matrix, MatrixBackend, RankNDense, RankNSparse};
 
@@ -204,71 +202,5 @@ where
     #[inline]
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
-    }
-}
-
-impl<T, B> Matrix<T, B>
-where
-    T: Scalar + Copy,
-    B: MatrixBackend<T>,
-{
-    pub fn to_ndarray(&self) -> Array2<T> {
-        let rows = self.rows();
-        let cols = self.cols();
-        let mut data = Vec::with_capacity(rows * cols);
-        for row in 0..rows {
-            for col in 0..cols {
-                data.push(self.get(row as isize, col as isize));
-            }
-        }
-        Array2::from_shape_vec((rows, cols), data)
-            .expect("Matrix::to_ndarray: shape/data length mismatch")
-    }
-}
-
-impl<T: Scalar> Matrix<T, RankNDense<T>> {
-    pub fn from_ndarray(array: &Array2<T>) -> Self {
-        let shape = array.shape();
-        assert_eq!(shape.len(), 2, "Matrix::from_ndarray expects rank 2");
-        assert!(
-            shape[0] > 0 && shape[1] > 0,
-            "Matrix::from_ndarray: shape must be nonzero"
-        );
-        Self::from_vec(shape[0], shape[1], array.iter().copied().collect())
-    }
-}
-
-impl<T: Scalar> Matrix<T, RankNSparse<T>> {
-    pub fn from_ndarray(array: &Array2<T>) -> Self {
-        let dense = Matrix::<T, RankNDense<T>>::from_ndarray(array);
-        dense.to_sparse()
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Matrix<T, RankNDense<T>> {
-    type NdArray = Array2<T>;
-
-    #[inline]
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Matrix::<T, RankNDense<T>>::from_ndarray(array)
-    }
-
-    #[inline]
-    fn to_ndarray(&self) -> Self::NdArray {
-        Matrix::<T, RankNDense<T>>::to_ndarray(self)
-    }
-}
-
-impl<T: Scalar> NdarrayConvert for Matrix<T, RankNSparse<T>> {
-    type NdArray = Array2<T>;
-
-    #[inline]
-    fn from_ndarray(array: &Self::NdArray) -> Self {
-        Matrix::<T, RankNSparse<T>>::from_ndarray(array)
-    }
-
-    #[inline]
-    fn to_ndarray(&self) -> Self::NdArray {
-        Matrix::<T, RankNSparse<T>>::to_ndarray(self)
     }
 }

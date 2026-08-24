@@ -136,15 +136,15 @@ What it does:
 How to run:
 
 ```bash
-cargo run --release --example tensor_rand_large_benchmark -- <len> <repeats> <streams> <rng_methods>
+cargo run --release --example tensor_rand_large_benchmark -- <len> <repeats> <max_threads> <rng_methods>
 ```
 
 Defaults:
 
 ```text
-len       = 120000000
-repeats   = 3
-streams     = rayon current thread count
+len         = 120000000
+repeats     = 3
+max_threads = 8
 rng_methods = pcg64,pcg64mcg,smallrng
 ```
 
@@ -179,7 +179,7 @@ What it does:
 How to run:
 
 ```bash
-cargo run --release --example vector_list_haar_benchmark -- <dim> <num_vecs> <repeats> <streams>
+cargo run --release --example vector_list_haar_benchmark -- <dim> <num_vecs> <repeats>
 ```
 
 Defaults:
@@ -188,7 +188,6 @@ Defaults:
 dim      = 3
 num_vecs = 5000000
 repeats  = 3
-streams  = rayon current thread count
 ```
 
 Example:
@@ -207,28 +206,6 @@ How to interpret results:
   sanity checks.
 
 ## API Demonstrations
-
-### `vector_list_ndarray`
-
-What it is:
-A small interoperability demonstration between `ndarray` and PiP's
-`VectorList`.
-
-What it does:
-- creates a 2-by-3 `ndarray`;
-- converts it into `VectorList<f64>`;
-- converts it back into `ndarray`;
-- asserts that the roundtrip preserves shape and values.
-
-How to run:
-
-```bash
-cargo run --example vector_list_ndarray
-```
-
-How to interpret results:
-The program prints the `VectorList` shape and the roundtripped array. If it
-finishes without panicking, conversion preserved the data.
 
 ### `serde_flat_json`
 
