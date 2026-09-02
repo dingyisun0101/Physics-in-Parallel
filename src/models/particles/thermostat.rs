@@ -24,7 +24,7 @@ use rayon::prelude::*;
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
 use crate::models::particles::state::{ParticleStateError, gather_inverse_mass, gather_masks};
-use crate::rng::{RngConfig, RngConfigError};
+use crate::rng::{ResolvedRng, RngError};
 use crate::space::discrete::square_lattice::random::IndexedRng;
 
 const DOMAIN_LANGEVIN_NORMAL: u64 = 0xc7c7_d252_9b53_6071;
@@ -55,7 +55,7 @@ pub enum ThermostatError {
         expected: usize,
         got: usize,
     },
-    RngConfig(RngConfigError),
+    Rng(RngError),
 }
 
 impl From<AttrsError> for ThermostatError {
@@ -121,7 +121,7 @@ impl fmt::Display for ThermostatError {
                 f,
                 "thermostat attribute `{label}` has {got} particles; expected {expected}"
             ),
-            Self::RngConfig(error) => write!(f, "thermostat RNG configuration error: {error}"),
+            Self::Rng(error) => write!(f, "thermostat RNG error: {error}"),
         }
     }
 }
@@ -130,7 +130,7 @@ impl std::error::Error for ThermostatError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Attrs(error) => Some(error),
-            Self::RngConfig(error) => Some(error),
+            Self::Rng(error) => Some(error),
             _ => None,
         }
     }
@@ -161,12 +161,12 @@ impl LangevinThermostat {
     pub fn new(
         tau_target: f64,
         gamma: f64,
-        rng: RngConfig,
+        rng: ResolvedRng,
         selection: ParticleSelection,
     ) -> Result<Self, ThermostatError> {
         validate_nonnegative("tau_target", tau_target)?;
         validate_nonnegative("gamma", gamma)?;
-        let rng = IndexedRng::new(rng).map_err(ThermostatError::RngConfig)?;
+        let rng = IndexedRng::new(rng).map_err(ThermostatError::Rng)?;
 
         Ok(Self {
             tau_target,
@@ -181,17 +181,17 @@ impl LangevinThermostat {
     ///
     /// Unlike [`Self::new`], this constructor never fills missing RNG values
     /// from defaults or host entropy. `rng` must contain both a seed and the
-    /// indexed SplitMix64 method previously returned by [`Self::rng_config`].
+    /// indexed SplitMix64 method previously returned by [`Self::resolved_rng`].
     pub fn from_state(
         tau_target: f64,
         gamma: f64,
-        rng: RngConfig,
+        rng: ResolvedRng,
         step_counter: u64,
         selection: ParticleSelection,
     ) -> Result<Self, ThermostatError> {
         validate_nonnegative("tau_target", tau_target)?;
         validate_nonnegative("gamma", gamma)?;
-        let rng = IndexedRng::try_from_resolved(rng).map_err(ThermostatError::RngConfig)?;
+        let rng = IndexedRng::new(rng).map_err(ThermostatError::Rng)?;
 
         Ok(Self {
             tau_target,
@@ -213,8 +213,8 @@ impl LangevinThermostat {
     }
 
     #[inline]
-    pub fn rng_config(&self) -> RngConfig {
-        self.rng.rng_config()
+    pub fn resolved_rng(&self) -> ResolvedRng {
+        self.rng.resolved_rng()
     }
 
     #[inline]

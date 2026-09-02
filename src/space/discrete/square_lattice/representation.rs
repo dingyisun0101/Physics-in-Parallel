@@ -37,7 +37,7 @@ use crate::space::space_trait::Space;
 use crate::threading::parallel_chunk_len;
 
 use super::random::IndexedRng;
-use crate::rng::{RngConfig, RngConfigError};
+use crate::rng::{ResolvedRng, RngError};
 
 const DOMAIN_LATTICE_INITIALIZATION: u64 = 0xc762_ba71_b5a7_8f31;
 
@@ -342,7 +342,7 @@ pub enum SquareLatticeConfigError {
     /// Explicit lattice values did not match the site count.
     ValueCount { expected: usize, actual: usize },
     /// Unified RNG configuration was incompatible with indexed initialization.
-    RngConfig(RngConfigError),
+    Rng(RngError),
 }
 
 impl fmt::Display for SquareLatticeConfigError {
@@ -391,7 +391,7 @@ impl fmt::Display for SquareLatticeConfigError {
                 formatter,
                 "lattice initialization requires {expected} values, got {actual}"
             ),
-            Self::RngConfig(error) => error.fmt(formatter),
+            Self::Rng(error) => error.fmt(formatter),
         }
     }
 }
@@ -399,7 +399,7 @@ impl fmt::Display for SquareLatticeConfigError {
 impl Error for SquareLatticeConfigError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::RngConfig(error) => Some(error),
+            Self::Rng(error) => Some(error),
             _ => None,
         }
     }
@@ -416,7 +416,7 @@ pub enum SquareLatticeInitMethod<T: Scalar> {
     RandomChoices {
         choices: Vec<T>,
         weights: Option<Vec<f64>>,
-        rng: RngConfig,
+        rng: ResolvedRng,
     },
     /// Use explicit row-major values.
     Values {
@@ -425,7 +425,7 @@ pub enum SquareLatticeInitMethod<T: Scalar> {
     /// Use explicit row-major values after one unbiased seeded permutation.
     ShuffledValues {
         values: Vec<T>,
-        rng: RngConfig,
+        rng: ResolvedRng,
     },
     SeededCenter {
         val: T,
@@ -436,7 +436,7 @@ pub enum SquareLatticeInitMethod<T: Scalar> {
 pub struct SquareLattice<T: Scalar> {
     cfg: SquareLatticeConfig,
     cells: Tensor<T, DenseBackend>,
-    initialization_rng: Option<RngConfig>,
+    initialization_rng: Option<ResolvedRng>,
 }
 
 impl<T: Scalar> SquareLattice<T> {
@@ -461,8 +461,8 @@ impl<T: Scalar> SquareLattice<T> {
                 if choices.is_empty() {
                     return Err(SquareLatticeConfigError::EmptyChoices);
                 }
-                let key = IndexedRng::new(rng).map_err(SquareLatticeConfigError::RngConfig)?;
-                lattice.initialization_rng = Some(key.rng_config());
+                let key = IndexedRng::new(rng).map_err(SquareLatticeConfigError::Rng)?;
+                lattice.initialization_rng = Some(key.resolved_rng());
                 let cumulative = cumulative_weights(&choices, weights.as_deref())?;
                 let min_sites_per_job = parallel_chunk_len(lattice.num_sites()).unwrap_or(1);
                 lattice
@@ -515,7 +515,7 @@ impl<T: Scalar> SquareLattice<T> {
                 }
                 lattice.initialization_rng = Some(
                     shuffle_slice_indexed(&mut values, rng)
-                        .map_err(SquareLatticeConfigError::RngConfig)?,
+                        .map_err(SquareLatticeConfigError::Rng)?,
                 );
                 lattice.cells =
                     Tensor::<T, DenseBackend>::from_vec(&lattice.cfg.tensor_shape(), values);
@@ -607,7 +607,7 @@ impl<T: Scalar> SquareLattice<T> {
 
     /// Returns resolved RNG provenance when this lattice used random initialization.
     #[inline]
-    pub const fn initialization_rng_config(&self) -> Option<RngConfig> {
+    pub const fn initialization_resolved_rng(&self) -> Option<ResolvedRng> {
         self.initialization_rng
     }
 

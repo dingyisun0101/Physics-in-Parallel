@@ -25,9 +25,7 @@ pub use crate::math::tensor::rank_2::matrix::{
 pub use crate::math::tensor::rank_2::vector_list::{
     DynVectorList, HaarVectors, NNVectors, VectorListRand,
 };
-pub use crate::math::tensor::rank_n::dense_rand::{
-    DEFAULT_RANDOM_MAX_THREADS, NUM_RNGS, TensorRandElement,
-};
+pub use crate::math::tensor::rank_n::dense_rand::{NUM_RNGS, TensorRandElement};
 pub use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
 pub use crate::math::tensor::rank_n::{Backend, Dense, RowMajorLayout, Sparse, TensorResult};
 pub use crate::sampling::{DynamicWeightedIndex, DynamicWeightedIndexError};

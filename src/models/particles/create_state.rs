@@ -21,7 +21,7 @@ use core::fmt;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
 use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
-use crate::rng::RngConfig;
+use crate::rng::ResolvedRng;
 use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
@@ -201,8 +201,8 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Mass
 pub fn randomize_r(
     phys_obj: &mut PhysObj,
     method: VectorSamplingMethod<'_>,
-    rng: RngConfig,
-) -> Result<RngConfig, MassiveParticlesError> {
+    rng: ResolvedRng,
+) -> Result<ResolvedRng, MassiveParticlesError> {
     let r = phys_obj.core.get_mut::<f64>(ATTR_R)?;
     sample_vectors(r, method, rng).map_err(Into::into)
 }
@@ -227,8 +227,8 @@ pub enum VelocitySamplingMethod<'a> {
 pub fn randomize_v(
     phys_obj: &mut PhysObj,
     method: VelocitySamplingMethod<'_>,
-    rng: RngConfig,
-) -> Result<RngConfig, MassiveParticlesError> {
+    rng: ResolvedRng,
+) -> Result<ResolvedRng, MassiveParticlesError> {
     match method {
         VelocitySamplingMethod::Uniform { low, high } => {
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
@@ -260,7 +260,7 @@ pub fn randomize_v(
             }
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
-            let mut filler = TensorRandFiller::try_new(
+            let mut filler = TensorRandFiller::new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
@@ -270,7 +270,7 @@ pub fn randomize_v(
             .map_err(MassiveParticlesError::Rng)?;
             if tau == 0.0 {
                 v.as_tensor_mut().data.par_iter_mut().for_each(|x| *x = 0.0);
-                return Ok(filler.rng_config());
+                return Ok(filler.resolved_rng());
             }
 
             filler
@@ -295,7 +295,7 @@ pub fn randomize_v(
                     }
                 });
 
-            Ok(filler.rng_config())
+            Ok(filler.resolved_rng())
         }
     }
 }

@@ -19,7 +19,7 @@ use rayon::prelude::*;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
 use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
-use crate::rng::RngConfig;
+use crate::rng::ResolvedRng;
 use crate::threading::parallel_chunk_len;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,8 +110,8 @@ impl std::error::Error for VectorSamplingError {
 pub fn sample_vectors(
     vectors: &mut VectorList<f64>,
     method: VectorSamplingMethod<'_>,
-    rng: RngConfig,
-) -> Result<RngConfig, VectorSamplingError> {
+    rng: ResolvedRng,
+) -> Result<ResolvedRng, VectorSamplingError> {
     let dim = vectors.dim();
     let n = vectors.num_vectors();
 
@@ -121,20 +121,20 @@ pub fn sample_vectors(
                 return Err(VectorSamplingError::InvalidUniformBounds { low, high });
             }
 
-            let mut filler = TensorRandFiller::try_new(RandType::Uniform { low, high }, rng)
+            let mut filler = TensorRandFiller::new(RandType::Uniform { low, high }, rng)
                 .map_err(VectorSamplingError::Rng)?;
             if dim > 0 && n > 0 {
                 filler
                     .try_refresh_dense(vectors.as_tensor_mut())
                     .map_err(VectorSamplingError::Rng)?;
             }
-            filler.rng_config()
+            filler.resolved_rng()
         }
         VectorSamplingMethod::UniformCentered { box_size } => {
             validate_len("box_size", box_size.len(), dim)?;
             validate_finite_nonnegative("box_size", box_size)?;
 
-            let mut filler = TensorRandFiller::try_new(
+            let mut filler = TensorRandFiller::new(
                 RandType::Uniform {
                     low: 0.0,
                     high: 1.0,
@@ -161,7 +161,7 @@ pub fn sample_vectors(
                         }
                     });
             }
-            filler.rng_config()
+            filler.resolved_rng()
         }
         VectorSamplingMethod::GaussianPerAxis { mean, std } => {
             validate_len("mean", mean.len(), dim)?;
@@ -169,7 +169,7 @@ pub fn sample_vectors(
             validate_finite("mean", mean)?;
             validate_finite_nonnegative("std", std)?;
 
-            let mut filler = TensorRandFiller::try_new(
+            let mut filler = TensorRandFiller::new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
@@ -195,7 +195,7 @@ pub fn sample_vectors(
                         }
                     });
             }
-            filler.rng_config()
+            filler.resolved_rng()
         }
         VectorSamplingMethod::JitteredLattice { spacings, sigmas } => {
             validate_len("spacings", spacings.len(), dim)?;
@@ -203,7 +203,7 @@ pub fn sample_vectors(
             validate_finite_nonnegative("spacings", spacings)?;
             validate_finite_nonnegative("sigmas", sigmas)?;
 
-            let mut filler = TensorRandFiller::try_new(
+            let mut filler = TensorRandFiller::new(
                 RandType::Normal {
                     mean: 0.0,
                     std: 1.0,
@@ -235,7 +235,7 @@ pub fn sample_vectors(
                         }
                     });
             }
-            filler.rng_config()
+            filler.resolved_rng()
         }
     };
 

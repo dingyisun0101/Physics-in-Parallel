@@ -1,14 +1,14 @@
 //! Indexed in-place permutation used by PiP-owned scientific containers.
 
-use crate::rng::{IndexedRng, RngConfig, RngConfigError};
+use crate::rng::{IndexedRng, ResolvedRng, RngError};
 
 const DOMAIN_INDEXED_SHUFFLE: u64 = 0x899f_2c5e_12bd_ba4d;
 
 /// Applies an unbiased Fisher-Yates permutation and returns resolved RNG provenance.
 pub(crate) fn shuffle_slice_indexed<T>(
     values: &mut [T],
-    rng: RngConfig,
-) -> Result<RngConfig, RngConfigError> {
+    rng: ResolvedRng,
+) -> Result<ResolvedRng, RngError> {
     let key = IndexedRng::new(rng)?;
     for (draw, upper) in (2..=values.len()).rev().enumerate() {
         let selected = key
@@ -16,7 +16,7 @@ pub(crate) fn shuffle_slice_indexed<T>(
             .expect("Fisher-Yates upper bound is positive");
         values.swap(upper - 1, selected);
     }
-    Ok(key.rng_config())
+    Ok(key.resolved_rng())
 }
 
 #[cfg(test)]
@@ -28,9 +28,9 @@ mod tests {
         let source: Vec<usize> = (0..128).map(|index| index % 7).collect();
         let mut first = source.clone();
         let mut second = source.clone();
-        let rng = RngConfig::new(Some(41), None);
+        let rng = ResolvedRng::new(41, crate::rng::RngMethod::IndexedSplitMix64);
         let resolved = shuffle_slice_indexed(&mut first, rng).unwrap();
-        assert_eq!(resolved.seed(), Some(41));
+        assert_eq!(resolved.seed(), 41);
         shuffle_slice_indexed(&mut second, rng).unwrap();
         assert_eq!(first, second);
         assert_ne!(first, source);

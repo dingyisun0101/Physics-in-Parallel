@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::random::{DOMAIN_KERNEL_SAMPLE, IndexedRng, uniform_index, unit_f64};
-use crate::rng::{RngConfig, RngConfigError};
+use crate::rng::{ResolvedRng, RngError};
 
 /// Serializable description of one square-lattice displacement distribution.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
@@ -42,7 +42,7 @@ pub enum KernelError {
     InvalidPowerLaw { l: f64, c: f64, mu: f64 },
     InvalidUniformDistance { l: f64, c: f64 },
     InvalidNearestNeighborDimension { dimension: usize },
-    RngConfig(RngConfigError),
+    Rng(RngError),
 }
 
 impl fmt::Display for KernelError {
@@ -60,7 +60,7 @@ impl fmt::Display for KernelError {
                 formatter,
                 "nearest-neighbor kernel dimension must be positive; got {dimension}"
             ),
-            Self::RngConfig(error) => error.fmt(formatter),
+            Self::Rng(error) => error.fmt(formatter),
         }
     }
 }
@@ -68,7 +68,7 @@ impl fmt::Display for KernelError {
 impl Error for KernelError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::RngConfig(error) => Some(error),
+            Self::Rng(error) => Some(error),
             _ => None,
         }
     }
@@ -80,7 +80,7 @@ pub trait Kernel: Send + Sync {
     /// Samples one value from `(sweep, sample_index)` using unified RNG configuration.
     fn sample_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         sample_index: u64,
     ) -> Result<f64, KernelError>;
@@ -88,7 +88,7 @@ pub trait Kernel: Send + Sync {
     /// Samples a stable batch whose result does not depend on worker count.
     fn sample_batch_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         n: usize,
     ) -> Result<Vec<f64>, KernelError>;
@@ -133,17 +133,17 @@ impl PowerLawKernel {
 impl Kernel for PowerLawKernel {
     fn sample_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         sample_index: u64,
     ) -> Result<f64, KernelError> {
-        let rng = IndexedRng::new(rng).map_err(KernelError::RngConfig)?;
+        let rng = IndexedRng::new(rng).map_err(KernelError::Rng)?;
         Ok(self.sample_resolved(rng, sweep, sample_index))
     }
 
     fn sample_batch_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         n: usize,
     ) -> Result<Vec<f64>, KernelError> {
@@ -195,17 +195,17 @@ impl UniformDistanceKernel {
 impl Kernel for UniformDistanceKernel {
     fn sample_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         sample_index: u64,
     ) -> Result<f64, KernelError> {
-        let rng = IndexedRng::new(rng).map_err(KernelError::RngConfig)?;
+        let rng = IndexedRng::new(rng).map_err(KernelError::Rng)?;
         Ok(self.sample_resolved(rng, sweep, sample_index))
     }
 
     fn sample_batch_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         n: usize,
     ) -> Result<Vec<f64>, KernelError> {
@@ -258,17 +258,17 @@ impl NearestNeighborKernel {
 impl Kernel for NearestNeighborKernel {
     fn sample_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         sample_index: u64,
     ) -> Result<f64, KernelError> {
-        let rng = IndexedRng::new(rng).map_err(KernelError::RngConfig)?;
+        let rng = IndexedRng::new(rng).map_err(KernelError::Rng)?;
         Ok(self.sample_resolved(rng, sweep, sample_index))
     }
 
     fn sample_batch_indexed(
         &self,
-        rng: RngConfig,
+        rng: ResolvedRng,
         sweep: u64,
         n: usize,
     ) -> Result<Vec<f64>, KernelError> {
@@ -321,11 +321,11 @@ impl ResolvedKernel for NearestNeighborKernel {
 
 fn sample_batch_resolved<K: ResolvedKernel + Sync>(
     kernel: &K,
-    rng: RngConfig,
+    rng: ResolvedRng,
     sweep: u64,
     n: usize,
 ) -> Result<Vec<f64>, KernelError> {
-    let rng = IndexedRng::new(rng).map_err(KernelError::RngConfig)?;
+    let rng = IndexedRng::new(rng).map_err(KernelError::Rng)?;
     let mut output = vec![0.0; n];
     output
         .par_iter_mut()

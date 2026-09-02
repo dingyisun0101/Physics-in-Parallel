@@ -1,8 +1,9 @@
-//! Unified configuration and provenance for PiP-owned randomness.
+//! PiP-owned, fully resolved randomness.
 //!
-//! Every public stochastic PiP API accepts [`RngConfig`] as its only random
-//! configuration input. Sampling implementations remain specialized: indexed
-//! randomness has no cursor, while tensor fillers own stateful generators.
+//! Every public stochastic API accepts [`ResolvedRng`]. PiP never chooses a
+//! hidden seed or method on behalf of a caller. Applications may construct a
+//! reproducible value with [`ResolvedRng::new`] or explicitly request host
+//! entropy with [`ResolvedRng::from_entropy`].
 
 use std::fmt;
 
@@ -65,126 +66,98 @@ impl RngMethod {
     }
 }
 
-/// Complete optional RNG configuration accepted by every public stochastic API.
+/// A concrete seed and RNG method accepted by every PiP stochastic API.
 ///
-/// Missing values select the receiving component's documented defaults. Once
-/// a component resolves this configuration, it retains the generated seed and
-/// selected method so callers can record exact provenance.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+/// This type contains no defaults or unresolved options. In a workflow-driven
+/// application, adapt the workflow seed into this type at the application
+/// boundary and retain the value as part of the run provenance.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RngConfig {
-    seed: Option<u64>,
-    method: Option<RngMethod>,
+pub struct ResolvedRng {
+    seed: u64,
+    method: RngMethod,
 }
 
-impl RngConfig {
-    /// Creates the sole PiP randomness configuration object.
-    pub const fn new(seed: Option<u64>, method: Option<RngMethod>) -> Self {
+impl ResolvedRng {
+    /// Constructs reproducible randomness from an explicit seed and method.
+    pub const fn new(seed: u64, method: RngMethod) -> Self {
         Self { seed, method }
     }
 
-    pub const fn seed(self) -> Option<u64> {
+    /// Explicitly chooses a seed from host entropy.
+    pub fn from_entropy(method: RngMethod) -> Self {
+        Self::new(rand::random(), method)
+    }
+
+    pub const fn seed(self) -> u64 {
         self.seed
     }
 
-    pub const fn method(self) -> Option<RngMethod> {
+    pub const fn method(self) -> RngMethod {
         self.method
     }
 
-    /// Returns the resolved seed as stable decimal provenance.
-    pub fn encode_seed(self) -> Option<String> {
-        self.seed.map(|seed| seed.to_string())
+    /// Returns the seed in the stable encoding reported by the method.
+    pub fn encode_seed(self) -> String {
+        self.seed.to_string()
     }
 
-    /// Resolves defaults and validates this configuration for one component.
-    ///
-    /// This is primarily useful to downstream plugin authors. Ordinary users
-    /// pass `RngConfig` directly to a stochastic PiP API and read the resolved
-    /// configuration back from that component.
-    pub fn resolve_for(
+    /// Validates that a component implements this resolved method.
+    pub fn ensure_supported(
         self,
         component: &'static str,
-        default_method: RngMethod,
         supported_methods: &[RngMethod],
-    ) -> Result<Self, RngConfigError> {
-        let method = self.method.unwrap_or(default_method);
-        if !supported_methods.contains(&method) {
-            return Err(RngConfigError::UnsupportedMethod { component, method });
+    ) -> Result<Self, RngError> {
+        if supported_methods.contains(&self.method) {
+            Ok(self)
+        } else {
+            Err(RngError::UnsupportedMethod {
+                component,
+                method: self.method,
+            })
         }
-        Ok(Self {
-            seed: Some(self.seed.unwrap_or_else(rand::random)),
-            method: Some(method),
-        })
     }
 }
 
-/// Invalid use of unified RNG configuration.
+/// Invalid use of a resolved RNG method.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum RngConfigError {
-    MissingSeed {
-        component: &'static str,
-    },
-    MissingMethod {
-        component: &'static str,
-    },
+pub enum RngError {
     UnsupportedMethod {
         component: &'static str,
         method: RngMethod,
     },
 }
 
-/// Resolved execution object for schedule-independent indexed randomness.
+impl fmt::Display for RngError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedMethod { component, method } => write!(
+                formatter,
+                "RNG method `{}` is not supported by {component}",
+                method.name()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RngError {}
+
+/// Schedule-independent indexed randomness.
 ///
-/// Each value is a pure function of the resolved [`RngConfig`] and the five
-/// caller-supplied coordinates. Downstream scientific plugins can therefore
-/// define stable random domains without maintaining a cursor or depending on
-/// Rayon scheduling.
+/// Each value is a pure function of the resolved RNG and the five supplied
+/// coordinates, so results do not depend on Rayon scheduling.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct IndexedRng(RngConfig);
+pub struct IndexedRng(ResolvedRng);
 
 impl IndexedRng {
-    /// Resolves unified configuration for indexed SplitMix64 randomness.
-    pub fn new(rng: RngConfig) -> Result<Self, RngConfigError> {
-        rng.resolve_for(
-            "IndexedRng",
-            RngMethod::IndexedSplitMix64,
-            &[RngMethod::IndexedSplitMix64],
-        )
-        .map(Self)
+    pub fn new(rng: ResolvedRng) -> Result<Self, RngError> {
+        rng.ensure_supported("IndexedRng", &[RngMethod::IndexedSplitMix64])
+            .map(Self)
     }
 
-    /// Restores an indexed key from a fully resolved configuration.
-    pub fn try_from_resolved(rng: RngConfig) -> Result<Self, RngConfigError> {
-        if rng.seed().is_none() {
-            return Err(RngConfigError::MissingSeed {
-                component: "IndexedRng",
-            });
-        }
-        let Some(method) = rng.method() else {
-            return Err(RngConfigError::MissingMethod {
-                component: "IndexedRng",
-            });
-        };
-        if method != RngMethod::IndexedSplitMix64 {
-            return Err(RngConfigError::UnsupportedMethod {
-                component: "IndexedRng",
-                method,
-            });
-        }
-        Ok(Self(rng))
-    }
-
-    /// Builds an indexed key after an internal caller has resolved it.
-    pub(crate) fn from_resolved_unchecked(rng: RngConfig) -> Self {
-        debug_assert_eq!(rng.method(), Some(RngMethod::IndexedSplitMix64));
-        debug_assert!(rng.seed().is_some());
-        Self(rng)
-    }
-
-    /// Returns fully resolved configuration for provenance.
-    pub const fn rng_config(self) -> RngConfig {
+    pub const fn resolved_rng(self) -> ResolvedRng {
         self.0
     }
 
@@ -195,8 +168,6 @@ impl IndexedRng {
     }
 
     /// Maps indexed words uniformly into `0..upper` using Lemire rejection.
-    ///
-    /// Returns `None` when `upper` is zero.
     pub fn uniform_index(
         self,
         step: u64,
@@ -238,9 +209,7 @@ impl IndexedRng {
         component: u64,
         draw: u64,
     ) -> u64 {
-        let mut state = splitmix64(
-            self.rng_config().seed().expect("resolved indexed seed") ^ 0x6a09_e667_f3bc_c909,
-        );
+        let mut state = splitmix64(self.0.seed ^ 0x6a09_e667_f3bc_c909);
         for value in [step, domain, item, component, draw] {
             state = splitmix64(state ^ splitmix64(value.wrapping_add(0x9e37_79b9_7f4a_7c15)));
         }
@@ -256,74 +225,20 @@ const fn splitmix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
-impl fmt::Display for RngConfigError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingSeed { component } => {
-                write!(
-                    formatter,
-                    "resolved RNG configuration for {component} is missing a seed"
-                )
-            }
-            Self::MissingMethod { component } => write!(
-                formatter,
-                "resolved RNG configuration for {component} is missing a method"
-            ),
-            Self::UnsupportedMethod { component, method } => write!(
-                formatter,
-                "RNG method `{}` is not supported by {component}",
-                method.name()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RngConfigError {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn serde_preserves_one_unified_configuration() {
-        let config = RngConfig::new(Some(42), Some(RngMethod::ChaCha12));
-        let json = serde_json::to_string(&config).unwrap();
-        assert_eq!(serde_json::from_str::<RngConfig>(&json).unwrap(), config);
+    fn serde_preserves_resolved_randomness() {
+        let rng = ResolvedRng::new(42, RngMethod::ChaCha12);
+        let json = serde_json::to_string(&rng).unwrap();
+        assert_eq!(serde_json::from_str::<ResolvedRng>(&json).unwrap(), rng);
     }
 
     #[test]
-    fn resolution_fills_defaults_and_rejects_unsupported_options() {
-        let resolved = RngConfig::default()
-            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng])
-            .unwrap();
-        assert!(resolved.seed().is_some());
-        assert_eq!(resolved.method(), Some(RngMethod::SmallRng));
-
-        let error = RngConfig::new(None, Some(RngMethod::IndexedSplitMix64))
-            .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng])
-            .unwrap_err();
-        assert!(matches!(error, RngConfigError::UnsupportedMethod { .. }));
-    }
-
-    #[test]
-    fn indexed_rng_restoration_requires_fully_resolved_state() {
-        assert!(matches!(
-            IndexedRng::try_from_resolved(RngConfig::default()),
-            Err(RngConfigError::MissingSeed { .. })
-        ));
-        assert!(matches!(
-            IndexedRng::try_from_resolved(RngConfig::new(Some(3), None)),
-            Err(RngConfigError::MissingMethod { .. })
-        ));
-
-        let resolved = IndexedRng::new(RngConfig::new(Some(3), None))
-            .unwrap()
-            .rng_config();
-        assert_eq!(
-            IndexedRng::try_from_resolved(resolved)
-                .unwrap()
-                .rng_config(),
-            resolved
-        );
+    fn indexed_rng_rejects_stateful_methods() {
+        let error = IndexedRng::new(ResolvedRng::new(3, RngMethod::SmallRng)).unwrap_err();
+        assert!(matches!(error, RngError::UnsupportedMethod { .. }));
     }
 }

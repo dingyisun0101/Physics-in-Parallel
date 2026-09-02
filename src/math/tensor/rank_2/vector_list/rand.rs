@@ -24,7 +24,7 @@ use serde_json::Value;
 use crate::math::tensor::rank_n::dense::Tensor;
 use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
 use crate::math::{RandType, TensorRandError, TensorRandFiller};
-use crate::rng::RngConfig;
+use crate::rng::ResolvedRng;
 
 use super::VectorList;
 
@@ -37,7 +37,7 @@ pub trait VectorListRand {
     type Elem;
 
     /// Allocate output storage and rank-N random-fill buffers.
-    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError>
+    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError>
     where
         Self: Sized;
 
@@ -76,7 +76,7 @@ impl VectorListRand for HaarVectors {
     type Elem = f64;
 
     /// Allocate a vector list and a rank-N normal random filler.
-    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
+    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
 
@@ -95,7 +95,7 @@ impl HaarVectors {
     fn try_with_mode(
         dim: usize,
         n: usize,
-        rng: RngConfig,
+        rng: ResolvedRng,
         mode: FillMode,
     ) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
@@ -134,8 +134,8 @@ impl HaarVectors {
             ),
         };
         let filler = match mode {
-            FillMode::Stateful => TensorRandFiller::try_new(kind, rng)?,
-            FillMode::Indexed => TensorRandFiller::try_new_indexed(kind, rng)?,
+            FillMode::Stateful => TensorRandFiller::new(kind, rng)?,
+            FillMode::Indexed => TensorRandFiller::new(kind, rng)?,
         };
         Ok(Self {
             vl: VectorList::empty(dim, n),
@@ -148,7 +148,11 @@ impl HaarVectors {
     }
 
     /// Constructs schedule-independent Haar vectors for explicit scientific steps.
-    pub fn try_new_indexed(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
+    pub fn try_new_indexed(
+        dim: usize,
+        n: usize,
+        rng: ResolvedRng,
+    ) -> Result<Self, TensorRandError> {
         Self::try_with_mode(dim, n, rng, FillMode::Indexed)
     }
 
@@ -212,8 +216,8 @@ impl HaarVectors {
     }
 
     /// Returns the fully resolved random configuration used by this generator.
-    pub fn rng_config(&self) -> RngConfig {
-        self.filler.rng_config()
+    pub fn resolved_rng(&self) -> ResolvedRng {
+        self.filler.resolved_rng()
     }
 
     #[inline]
@@ -284,14 +288,14 @@ impl VectorListRand for NNVectors {
     type Elem = isize;
 
     /// Allocate output rows and a rank-N integer-code random filler.
-    fn new(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
+    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "NNVectors::new: dim must be > 0");
         assert!(n > 0, "NNVectors::new: n must be > 0");
 
         let vl = VectorList::<isize>::empty(dim, n);
         let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
 
-        let code_filler = TensorRandFiller::try_new(
+        let code_filler = TensorRandFiller::new(
             RandType::UniformInt {
                 low: 0,
                 high: (2 * dim) as i64 - 1,
@@ -346,7 +350,11 @@ fn decode_nearest_neighbor_codes(codes: &[usize], dim: usize, output: &mut [isiz
 
 impl NNVectors {
     /// Constructs schedule-independent nearest-neighbor vectors.
-    pub fn try_new_indexed(dim: usize, n: usize, rng: RngConfig) -> Result<Self, TensorRandError> {
+    pub fn try_new_indexed(
+        dim: usize,
+        n: usize,
+        rng: ResolvedRng,
+    ) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "NNVectors::try_new_indexed: dim must be > 0");
         assert!(n > 0, "NNVectors::try_new_indexed: n must be > 0");
         Ok(Self {
@@ -354,7 +362,7 @@ impl NNVectors {
             dim,
             n,
             code_buf: Tensor::empty(&[n]),
-            code_filler: TensorRandFiller::try_new_indexed(
+            code_filler: TensorRandFiller::new(
                 RandType::UniformInt {
                     low: 0,
                     high: (2 * dim) as i64 - 1,
@@ -385,8 +393,8 @@ impl NNVectors {
     }
 
     /// Returns the fully resolved random configuration used by this generator.
-    pub fn rng_config(&self) -> RngConfig {
-        self.code_filler.rng_config()
+    pub fn resolved_rng(&self) -> ResolvedRng {
+        self.code_filler.resolved_rng()
     }
 
     #[inline]

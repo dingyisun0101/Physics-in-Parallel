@@ -59,17 +59,25 @@ pub(crate) fn uniform_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rng::RngConfig;
+    use crate::rng::ResolvedRng;
 
     #[test]
     fn complete_random_coordinate_changes_the_word() {
-        let key = IndexedRng::new(RngConfig::new(Some(17), None)).unwrap();
+        let key = IndexedRng::new(ResolvedRng::new(
+            17,
+            crate::rng::RngMethod::IndexedSplitMix64,
+        ))
+        .unwrap();
         let base = indexed_word(key, 2, 3, 4, 5, 6);
         assert_eq!(base, 0x995b_eef1_54ed_1885);
         assert_ne!(
             base,
             indexed_word(
-                IndexedRng::new(RngConfig::new(Some(18), None)).unwrap(),
+                IndexedRng::new(ResolvedRng::new(
+                    18,
+                    crate::rng::RngMethod::IndexedSplitMix64,
+                ))
+                .unwrap(),
                 2,
                 3,
                 4,
@@ -86,11 +94,15 @@ mod tests {
 
     #[test]
     fn public_identity_is_stable() {
-        let key = IndexedRng::new(RngConfig::new(Some(12_345), None)).unwrap();
-        let config = key.rng_config();
-        assert_eq!(config.encode_seed().as_deref(), Some("12345"));
-        assert_eq!(config.method().unwrap().name(), "splitmix64_indexed");
-        assert_eq!(config.method().unwrap().version(), "1");
-        assert_eq!(config.method().unwrap().seed_encoding(), "u64_decimal");
+        let key = IndexedRng::new(ResolvedRng::new(
+            12_345,
+            crate::rng::RngMethod::IndexedSplitMix64,
+        ))
+        .unwrap();
+        let config = key.resolved_rng();
+        assert_eq!(config.encode_seed(), "12345");
+        assert_eq!(config.method().name(), "splitmix64_indexed");
+        assert_eq!(config.method().version(), "1");
+        assert_eq!(config.method().seed_encoding(), "u64_decimal");
     }
 }

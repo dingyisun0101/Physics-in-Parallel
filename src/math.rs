@@ -10,6 +10,6 @@ pub mod tensor;
 // `crate::advanced`.
 pub use scalar::{Complex, Scalar, ScalarCastError};
 pub use tensor::{
-    DEFAULT_RANDOM_MAX_THREADS, Matrix, MatrixError, RandType, StorageKind, Tensor, TensorError,
-    TensorRandError, TensorRandFiller, Values, VectorList, VectorListError,
+    Matrix, MatrixError, RandType, StorageKind, Tensor, TensorError, TensorRandError,
+    TensorRandFiller, Values, VectorList, VectorListError,
 };
