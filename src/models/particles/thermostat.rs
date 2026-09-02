@@ -41,53 +41,20 @@ pub enum ThermostatError {
     InvalidDt {
         dt: f64,
     },
-    /// Lifted error from `AttrsCore` accessors.
-    Attrs(AttrsError),
-    /// Invalid per-attribute vector dimension.
-    InvalidAttrShape {
-        label: &'static str,
-        expected_dim: usize,
-        got_dim: usize,
-    },
-    /// Attribute row count mismatch against velocity row count.
-    InconsistentParticleCount {
-        label: &'static str,
-        expected: usize,
-        got: usize,
-    },
+    State(ParticleStateError),
     Rng(RngError),
 }
 
 impl From<AttrsError> for ThermostatError {
     #[inline]
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
 impl From<ParticleStateError> for ThermostatError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            },
-        }
+        Self::State(value)
     }
 }
 
@@ -104,23 +71,7 @@ impl fmt::Display for ThermostatError {
                     "thermostat time step must be finite and positive; got {dt}"
                 )
             }
-            Self::Attrs(error) => write!(f, "thermostat attribute error: {error}"),
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "thermostat attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                f,
-                "thermostat attribute `{label}` has {got} particles; expected {expected}"
-            ),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
             Self::Rng(error) => write!(f, "thermostat RNG error: {error}"),
         }
     }
@@ -129,7 +80,7 @@ impl fmt::Display for ThermostatError {
 impl std::error::Error for ThermostatError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Attrs(error) => Some(error),
+            Self::State(error) => Some(error),
             Self::Rng(error) => Some(error),
             _ => None,
         }
@@ -137,7 +88,7 @@ impl std::error::Error for ThermostatError {
 }
 
 /// Generic thermostat contract for particle state.
-pub trait Thermostat {
+pub trait Thermostat: Send {
     /// Applies one thermostat step with time step `dt`.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), ThermostatError>;
 }

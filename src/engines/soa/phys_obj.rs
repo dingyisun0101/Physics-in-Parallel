@@ -23,9 +23,6 @@ Invariants:
 */
 
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
-use std::path::Path;
 
 use ahash::AHashMap;
 use num_complex::Complex;
@@ -66,11 +63,6 @@ impl AttrsMeta {
             label: label.into(),
             comment: comment.into(),
         }
-    }
-
-    #[inline]
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
     }
 }
 
@@ -193,11 +185,6 @@ impl AttrsCore {
         self.entries
             .iter()
             .filter_map(|entry| entry.as_ref().map(|entry| entry.label.as_str()))
-    }
-
-    #[inline]
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
     }
 
     #[inline]
@@ -837,23 +824,6 @@ impl PhysObj {
         values: &[T],
     ) -> Result<(), AttrsError> {
         self.core.set_vector_of(label, object, values)
-    }
-
-    #[inline]
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    pub fn save_to_json<P, N>(&self, output_dir: P, filename: N) -> std::io::Result<()>
-    where
-        P: AsRef<Path>,
-        N: AsRef<Path>,
-    {
-        fs::create_dir_all(output_dir.as_ref())?;
-        let output_file = output_dir.as_ref().join(filename);
-        let mut writer = BufWriter::new(File::create(output_file)?);
-        serde_json::to_writer(&mut writer, self).map_err(std::io::Error::other)?;
-        writer.flush()
     }
 }
 

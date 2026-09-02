@@ -36,8 +36,7 @@ use crate::models::particles::state::{ParticleStateError, gather_inverse_mass};
 /// Errors returned by massive-particle construction and randomization helpers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MassiveParticlesError {
-    /// Lower-level attribute/core error.
-    Attrs(AttrsError),
+    State(ParticleStateError),
     /// Requested particle vector dimension is zero.
     InvalidDimension {
         /// Invalid dimension value.
@@ -60,20 +59,6 @@ pub enum MassiveParticlesError {
         /// Invalid inverse-mass value.
         value: f64,
     },
-    /// Inverse-mass attribute is not scalar-valued.
-    InvalidMassInvShape {
-        /// Expected vector dimension.
-        expected_dim: usize,
-        /// Actual vector dimension.
-        got_dim: usize,
-    },
-    /// Attribute row count does not match the velocity row count.
-    InconsistentParticleCount {
-        /// Expected number of rows.
-        expected: usize,
-        /// Actual number of rows.
-        got: usize,
-    },
     /// Lower-level vector sampling error.
     Sampling(VectorSamplingError),
     /// Lower-level random tensor generation error.
@@ -82,7 +67,7 @@ pub enum MassiveParticlesError {
 
 impl From<AttrsError> for MassiveParticlesError {
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
@@ -95,7 +80,7 @@ impl From<VectorSamplingError> for MassiveParticlesError {
 impl fmt::Display for MassiveParticlesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Attrs(error) => write!(f, "particle attribute error: {error}"),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
             Self::InvalidDimension { dim } => {
                 write!(f, "particle vector dimension must be positive; got {dim}")
             }
@@ -110,17 +95,6 @@ impl fmt::Display for MassiveParticlesError {
                 f,
                 "inverse mass at particle {index} must be finite and non-negative; got {value}"
             ),
-            Self::InvalidMassInvShape {
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "inverse-mass attribute has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount { expected, got } => write!(
-                f,
-                "inverse-mass attribute has {got} particles; expected {expected}"
-            ),
             Self::Sampling(error) => write!(f, "particle sampling error: {error}"),
             Self::Rng(error) => write!(f, "particle RNG error: {error}"),
         }
@@ -130,7 +104,7 @@ impl fmt::Display for MassiveParticlesError {
 impl std::error::Error for MassiveParticlesError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Attrs(error) => Some(error),
+            Self::State(error) => Some(error),
             Self::Sampling(error) => Some(error),
             Self::Rng(error) => Some(error),
             _ => None,
@@ -140,20 +114,7 @@ impl std::error::Error for MassiveParticlesError {
 
 impl From<ParticleStateError> for MassiveParticlesError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                expected_dim,
-                got_dim,
-                ..
-            } => Self::InvalidMassInvShape {
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount { expected, got, .. } => {
-                Self::InconsistentParticleCount { expected, got }
-            }
-        }
+        Self::State(value)
     }
 }
 

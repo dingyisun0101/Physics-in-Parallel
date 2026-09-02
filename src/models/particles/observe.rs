@@ -31,8 +31,7 @@ use rayon::prelude::*;
 /// Errors returned by particle observers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObserveError {
-    /// Error bubbled up from underlying attribute storage.
-    Attrs(AttrsError),
+    State(ParticleStateError),
     /// Numeric state violates an observer precondition.
     InvalidState {
         /// Name of the state field with invalid value.
@@ -40,81 +39,27 @@ pub enum ObserveError {
         /// Invalid numeric value encountered by the observer.
         value: f64,
     },
-    /// One attribute column has unexpected per-particle vector dimension.
-    InvalidAttrShape {
-        /// Attribute label that failed shape validation.
-        label: &'static str,
-        /// Expected vector dimension for this attribute.
-        expected_dim: usize,
-        /// Observed vector dimension in storage.
-        got_dim: usize,
-    },
-    /// One attribute column has inconsistent number of particles.
-    InconsistentParticleCount {
-        /// Attribute label that failed particle-count validation.
-        label: &'static str,
-        /// Expected particle count derived from canonical attributes.
-        expected: usize,
-        /// Observed particle count in storage.
-        got: usize,
-    },
 }
 
 impl From<AttrsError> for ObserveError {
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
 impl From<ParticleStateError> for ObserveError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            },
-        }
+        Self::State(value)
     }
 }
 
 impl fmt::Display for ObserveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Attrs(error) => write!(f, "observer attribute error: {error}"),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
             Self::InvalidState { field, value } => {
                 write!(f, "observer found invalid `{field}` value {value}")
             }
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "observer attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                f,
-                "observer attribute `{label}` has {got} particles; expected {expected}"
-            ),
         }
     }
 }
@@ -122,7 +67,7 @@ impl fmt::Display for ObserveError {
 impl std::error::Error for ObserveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Attrs(error) => Some(error),
+            Self::State(error) => Some(error),
             _ => None,
         }
     }
@@ -193,7 +138,7 @@ fn kinetic_energy_from_context(ctx: &KineticContext) -> Result<f64, ObserveError
 }
 
 /// Computes one observable from the current particle state.
-pub trait Observer {
+pub trait Observer: Send + Sync {
     type Output;
 
     /// Computes one observable from `objects`.
@@ -204,7 +149,7 @@ pub trait Observer {
 #[derive(Debug, Clone, Copy)]
 pub struct KineticEnergyObserver {
     /// Which particle subset contributes to kinetic energy.
-    pub selection: ParticleSelection,
+    selection: ParticleSelection,
 }
 
 impl KineticEnergyObserver {
@@ -240,7 +185,7 @@ impl Observer for KineticEnergyObserver {
 #[derive(Debug, Clone, Copy)]
 pub struct TemperatureObserver {
     /// Which particle subset contributes to temperature.
-    pub selection: ParticleSelection,
+    selection: ParticleSelection,
 }
 
 impl TemperatureObserver {

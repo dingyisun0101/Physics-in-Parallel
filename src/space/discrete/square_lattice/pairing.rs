@@ -56,50 +56,6 @@ pub enum PairingMethod {
     },
 }
 
-/// Immutable public configuration for an allocation-stable pair generator.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PairGeneratorConfig {
-    method: PairingMethod,
-    num_pairs: usize,
-    rng: ResolvedRng,
-}
-
-impl PairGeneratorConfig {
-    pub const fn new(method: PairingMethod, num_pairs: usize, rng: ResolvedRng) -> Self {
-        Self {
-            method,
-            num_pairs,
-            rng,
-        }
-    }
-
-    pub const fn independent_uniform(num_pairs: usize, rng: ResolvedRng) -> Self {
-        Self::new(PairingMethod::IndependentUniform, num_pairs, rng)
-    }
-
-    pub const fn kernel(
-        kernel: KernelType,
-        num_pairs: usize,
-        sources: SourceMode,
-        rng: ResolvedRng,
-    ) -> Self {
-        Self::new(PairingMethod::Kernel { kernel, sources }, num_pairs, rng)
-    }
-
-    pub const fn method(self) -> PairingMethod {
-        self.method
-    }
-
-    pub const fn num_pairs(self) -> usize {
-        self.num_pairs
-    }
-
-    pub const fn rng(self) -> ResolvedRng {
-        self.rng
-    }
-}
-
 /// Invalid pair-generator construction.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -194,7 +150,8 @@ impl From<TensorRandError> for PairGenerationError {
 #[derive(Clone)]
 pub struct PairGenerator {
     layout: RowMajorLayout,
-    config: PairGeneratorConfig,
+    method: PairingMethod,
+    rng: ResolvedRng,
     kernel: Option<BuiltinKernel>,
     random_filler: TensorRandFiller,
     workspace: PairingWorkspace,
@@ -225,7 +182,7 @@ impl fmt::Debug for PairGenerator {
         formatter
             .debug_struct("PairGenerator")
             .field("shape", &self.layout.shape())
-            .field("method", &self.config.method())
+            .field("method", &self.method)
             .field("rng", &self.random_filler.resolved_rng())
             .field("generated_sweep", &self.generated_sweep)
             .field("num_pairs", &self.num_pairs())
@@ -235,33 +192,34 @@ impl fmt::Debug for PairGenerator {
 
 impl PairGenerator {
     /// Constructs an allocation-stable pair generator from explicit randomness.
-    pub fn new(shape: &[usize], config: PairGeneratorConfig) -> Result<Self, PairGenerationError> {
+    pub fn new(
+        shape: &[usize],
+        method: PairingMethod,
+        num_pairs: usize,
+        rng: ResolvedRng,
+    ) -> Result<Self, PairGenerationError> {
         let layout = validate_layout(shape)?;
-        if config.num_pairs() == 0 {
+        if num_pairs == 0 {
             return Err(PairGenerationError::ZeroPairs);
         }
 
         let rank = shape.len();
-        if config.num_pairs() > isize::MAX as usize
-            || config
-                .num_pairs()
+        if num_pairs > isize::MAX as usize
+            || num_pairs
                 .checked_mul(rank)
                 .is_none_or(|size| size > isize::MAX as usize)
         {
-            return Err(PairGenerationError::PairBufferOverflow {
-                num_pairs: config.num_pairs(),
-                rank,
-            });
+            return Err(PairGenerationError::PairBufferOverflow { num_pairs, rank });
         }
         let random_filler = TensorRandFiller::new(
             RandType::Uniform {
                 low: 0.0,
                 high: 1.0,
             },
-            config.rng(),
+            rng,
         )?;
         let resolved_rng = random_filler.resolved_rng();
-        let (kernel, workspace) = match config.method() {
+        let (kernel, workspace) = match method {
             PairingMethod::IndependentUniform => (None, PairingWorkspace::IndependentUniform),
             PairingMethod::Kernel { kernel, sources } => {
                 validate_kernel_rank(kernel, rank)?;
@@ -269,7 +227,7 @@ impl PairGenerator {
                     KernelType::NearestNeighbor { .. } => (
                         KernelDirections::NearestNeighbor(NNVectors::try_new_indexed(
                             rank,
-                            config.num_pairs(),
+                            num_pairs,
                             resolved_rng,
                         )?),
                         None,
@@ -277,17 +235,17 @@ impl PairGenerator {
                     KernelType::PowerLaw { .. } | KernelType::UniformDistance { .. } => (
                         KernelDirections::Radial(HaarVectors::try_new_indexed(
                             rank,
-                            config.num_pairs(),
+                            num_pairs,
                             resolved_rng,
                         )?),
-                        Some(vec![0.0; config.num_pairs()]),
+                        Some(vec![0.0; num_pairs]),
                     ),
                 };
                 (
                     Some(try_create_builtin_kernel(kernel)?),
                     PairingWorkspace::Kernel {
                         source_sites: (sources == SourceMode::RandomUniform)
-                            .then(|| DenseTensor::empty(&[config.num_pairs()])),
+                            .then(|| DenseTensor::empty(&[num_pairs])),
                         directions: Box::new(directions),
                         length_units,
                     },
@@ -297,14 +255,15 @@ impl PairGenerator {
 
         Ok(Self {
             layout,
-            config,
+            method,
+            rng: resolved_rng,
             kernel,
             random_filler,
             workspace,
             generated_sweep: None,
-            source_coords_cache: VectorList::empty(rank, config.num_pairs()),
-            displacement_coords_cache: VectorList::empty(rank, config.num_pairs()),
-            target_coords_cache: VectorList::empty(rank, config.num_pairs()),
+            source_coords_cache: VectorList::empty(rank, num_pairs),
+            displacement_coords_cache: VectorList::empty(rank, num_pairs),
+            target_coords_cache: VectorList::empty(rank, num_pairs),
         })
     }
 
@@ -408,19 +367,11 @@ impl PairGenerator {
     }
 
     pub fn method(&self) -> PairingMethod {
-        self.config.method()
-    }
-
-    pub fn config(&self) -> PairGeneratorConfig {
-        PairGeneratorConfig::new(
-            self.config.method(),
-            self.config.num_pairs(),
-            self.resolved_rng(),
-        )
+        self.method
     }
 
     pub fn resolved_rng(&self) -> ResolvedRng {
-        self.random_filler.resolved_rng()
+        self.rng
     }
 
     /// Returns the sweep represented by the current buffers, if generated.

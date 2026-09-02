@@ -23,9 +23,10 @@ pub use particles::create_state::{
 pub use particles::integrator::{ExplicitEuler, Integrator, IntegratorError, SemiImplicitEuler};
 pub use particles::interactions::{
     ParticleNeighborList, ParticleNeighborListError, PowerLawNetwork, PowerLawNetworkError,
-    PowerLawRecord, SpringNetwork, SpringNetworkError, SpringRecord,
+    SpringNetwork, SpringNetworkError,
 };
 pub use particles::observe::{KineticEnergyObserver, ObserveError, Observer, TemperatureObserver};
+pub use particles::state::ParticleStateError;
 pub use particles::thermostat::{LangevinThermostat, Thermostat, ThermostatError};
 
 pub use crate::engines::soa::phys_obj::{AttrsError, PhysObj};

@@ -18,11 +18,11 @@ pub type SpringCutoff = (f64, f64);
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spring {
     /// Spring constant.
-    pub k: f64,
+    k: f64,
     /// Unstretched length.
-    pub l_0: f64,
+    l_0: f64,
     /// Optional pair-distance cutoff `(min, max)`.
-    pub cutoff: Option<SpringCutoff>,
+    cutoff: Option<SpringCutoff>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -64,6 +64,18 @@ impl Spring {
         let spring = Self { k, l_0, cutoff };
         spring.validate()?;
         Ok(spring)
+    }
+
+    pub const fn spring_constant(&self) -> f64 {
+        self.k
+    }
+
+    pub const fn rest_length(&self) -> f64 {
+        self.l_0
+    }
+
+    pub const fn cutoff(&self) -> Option<SpringCutoff> {
+        self.cutoff
     }
 
     /// Validates physical spring parameters.

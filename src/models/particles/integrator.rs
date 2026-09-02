@@ -36,56 +36,18 @@ pub enum IntegratorError {
         dt: f64,
     },
     /// Error bubbled up from underlying attribute storage.
-    Attrs(AttrsError),
-    /// One attribute column has unexpected per-particle vector dimension.
-    InvalidAttrShape {
-        /// Attribute label that failed shape validation.
-        label: &'static str,
-        /// Expected vector dimension for this attribute.
-        expected_dim: usize,
-        /// Observed vector dimension in storage.
-        got_dim: usize,
-    },
-    /// One attribute column has inconsistent number of particles.
-    InconsistentParticleCount {
-        /// Attribute label that failed particle-count validation.
-        label: &'static str,
-        /// Expected particle count derived from canonical attributes.
-        expected: usize,
-        /// Observed particle count in storage.
-        got: usize,
-    },
+    State(ParticleStateError),
 }
 
 impl From<AttrsError> for IntegratorError {
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
 impl From<ParticleStateError> for IntegratorError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            },
-        }
+        Self::State(value)
     }
 }
 
@@ -98,23 +60,7 @@ impl fmt::Display for IntegratorError {
                     "integration time step must be finite and positive; got {dt}"
                 )
             }
-            Self::Attrs(error) => write!(f, "integrator attribute error: {error}"),
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "integrator attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                f,
-                "integrator attribute `{label}` has {got} particles; expected {expected}"
-            ),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
         }
     }
 }
@@ -122,14 +68,14 @@ impl fmt::Display for IntegratorError {
 impl std::error::Error for IntegratorError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Attrs(error) => Some(error),
+            Self::State(error) => Some(error),
             _ => None,
         }
     }
 }
 
 /// Time-integrator contract.
-pub trait Integrator {
+pub trait Integrator: Send {
     /// Advances particle state by one time step.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError>;
 }

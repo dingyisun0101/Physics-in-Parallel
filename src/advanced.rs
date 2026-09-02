@@ -4,39 +4,23 @@
 //! by PiP's foundational or ready-model facades. Their invariants are catalogued
 //! in the repository's `advanced_api.md`.
 
-pub use crate::engines::observe::{MeanReducer, Reducer};
 pub use crate::engines::soa::interaction::{
     Interaction, InteractionError, InteractionId, InteractionNodes, InteractionOrder,
     InteractionTopology, ObjId,
 };
 pub use crate::engines::soa::neighbor_list::{NeighborList, NeighborListError};
 pub use crate::engines::soa::phys_obj::{AttrId, AttrsCore, AttrsMeta};
-pub use crate::math::io::json::{
-    FlatPayload, FromJsonPayload, JSON_SCHEMA_VERSION, SparsePayload, SparsePayloadParts,
-    ToJsonPayload,
-};
-pub use crate::math::io::string::TensorStringConvert;
-pub use crate::math::scalar::ScalarSerde;
 pub use crate::math::tensor::rank_2::matrix::{
-    AntiSymmetricMatrix, DiagonalMatrix, LowerTriangularMatrix, MatrixBackend, RankNDense,
-    RankNSparse, SparseMatrix, StrictLowerTriangularMatrix, StrictUpperTriangularMatrix,
-    SymmetricMatrix, UpperTriangularMatrix,
+    AntiSymmetricMatrix, DiagonalMatrix, LowerTriangularMatrix, StrictLowerTriangularMatrix,
+    StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix,
 };
-pub use crate::math::tensor::rank_2::vector_list::{
-    DynVectorList, HaarVectors, NNVectors, VectorListRand,
-};
-pub use crate::math::tensor::rank_n::dense_rand::{NUM_RNGS, TensorRandElement};
-pub use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
-pub use crate::math::tensor::rank_n::{Backend, Dense, RowMajorLayout, Sparse, TensorResult};
 pub use crate::sampling::{DynamicWeightedIndex, DynamicWeightedIndexError};
 pub use crate::space::discrete::square_lattice::kernel::{
     Kernel, NearestNeighborKernel, PowerLawKernel, UniformDistanceKernel,
 };
-pub use crate::space::io::square_lattice::save_square_lattice;
-pub use crate::space::space_trait::Space;
 
 use crate::engines::soa::phys_obj::PhysObj;
-use crate::math::Scalar;
+use crate::math::{Matrix, Scalar, StorageKind, Tensor, VectorList};
 use crate::space::SquareLattice;
 
 /// Raw structure-of-arrays access for custom model and interchange code.
@@ -90,3 +74,77 @@ impl<T: Scalar> SquareLatticeAdvanced<T> for SquareLattice<T> {
         SquareLattice::downsample(self, target_shape)
     }
 }
+
+/// Storage-native access for custom kernels.
+///
+/// Prefer each container's coordinate-based basic API. These flat-index and
+/// backing-storage operations expose representation details and can have very
+/// different costs for dense and sparse values.
+pub trait RawStorage<T: Scalar> {
+    fn value_at_index(&self, index: usize) -> Option<T>;
+    fn set_value_at_index(&mut self, index: usize, value: T) -> bool;
+    fn dense_values(&self) -> Option<&[T]>;
+    fn dense_values_mut(&mut self) -> Option<&mut [T]>;
+    fn stored_entries(&self) -> Vec<(usize, T)>;
+}
+
+impl<T: Scalar> RawStorage<T> for Tensor<T> {
+    fn value_at_index(&self, index: usize) -> Option<T> {
+        (index < self.size()).then(|| self.get_flat_unchecked(index))
+    }
+
+    fn set_value_at_index(&mut self, index: usize, value: T) -> bool {
+        if index >= self.size() {
+            return false;
+        }
+        self.set_flat_unchecked(index, value);
+        true
+    }
+
+    fn dense_values(&self) -> Option<&[T]> {
+        self.dense_values()
+    }
+
+    fn dense_values_mut(&mut self) -> Option<&mut [T]> {
+        self.dense_values_mut()
+    }
+
+    fn stored_entries(&self) -> Vec<(usize, T)> {
+        match self.storage_kind() {
+            StorageKind::Dense => self.values().enumerate().collect(),
+            StorageKind::Sparse => self
+                .sparse_entries()
+                .expect("sparse representation has sparse entries")
+                .collect(),
+        }
+    }
+}
+
+macro_rules! delegate_raw_storage {
+    ($container:ident) => {
+        impl<T: Scalar> RawStorage<T> for $container<T> {
+            fn value_at_index(&self, index: usize) -> Option<T> {
+                RawStorage::value_at_index(self.tensor(), index)
+            }
+
+            fn set_value_at_index(&mut self, index: usize, value: T) -> bool {
+                RawStorage::set_value_at_index(self.tensor_mut(), index, value)
+            }
+
+            fn dense_values(&self) -> Option<&[T]> {
+                RawStorage::dense_values(self.tensor())
+            }
+
+            fn dense_values_mut(&mut self) -> Option<&mut [T]> {
+                RawStorage::dense_values_mut(self.tensor_mut())
+            }
+
+            fn stored_entries(&self) -> Vec<(usize, T)> {
+                RawStorage::stored_entries(self.tensor())
+            }
+        }
+    };
+}
+
+delegate_raw_storage!(Matrix);
+delegate_raw_storage!(VectorList);

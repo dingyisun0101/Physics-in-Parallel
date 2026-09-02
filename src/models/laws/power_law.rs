@@ -19,11 +19,11 @@ pub type PowerLawRange = (f64, f64);
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PowerLawDecay {
     /// Strength constant.
-    pub k: f64,
+    k: f64,
     /// Power exponent.
-    pub alpha: f64,
+    alpha: f64,
     /// Optional active distance interval `(min, max)`.
-    pub range: Option<PowerLawRange>,
+    range: Option<PowerLawRange>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -65,6 +65,18 @@ impl PowerLawDecay {
         let payload = Self { k, alpha, range };
         payload.validate()?;
         Ok(payload)
+    }
+
+    pub const fn strength(&self) -> f64 {
+        self.k
+    }
+
+    pub const fn exponent(&self) -> f64 {
+        self.alpha
+    }
+
+    pub const fn range(&self) -> Option<PowerLawRange> {
+        self.range
     }
 
     /// Validates power-law parameters.

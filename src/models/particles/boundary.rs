@@ -34,23 +34,13 @@ use crate::space::continuous::boundary::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParticleBoundaryError {
     Boundary(ContinuousBoundaryError),
-    Attrs(AttrsError),
-    InvalidAttrShape {
-        label: &'static str,
-        expected_dim: usize,
-        got_dim: usize,
-    },
-    InconsistentParticleCount {
-        label: &'static str,
-        expected: usize,
-        got: usize,
-    },
+    State(ParticleStateError),
 }
 
 impl From<AttrsError> for ParticleBoundaryError {
     #[inline]
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
@@ -63,27 +53,7 @@ impl From<ContinuousBoundaryError> for ParticleBoundaryError {
 
 impl From<ParticleStateError> for ParticleBoundaryError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            },
-        }
+        Self::State(value)
     }
 }
 
@@ -91,23 +61,7 @@ impl fmt::Display for ParticleBoundaryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Boundary(error) => write!(f, "particle boundary geometry error: {error}"),
-            Self::Attrs(error) => write!(f, "particle boundary attribute error: {error}"),
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "particle boundary attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                f,
-                "particle boundary attribute `{label}` has {got} particles; expected {expected}"
-            ),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
         }
     }
 }
@@ -116,13 +70,12 @@ impl std::error::Error for ParticleBoundaryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Boundary(error) => Some(error),
-            Self::Attrs(error) => Some(error),
-            _ => None,
+            Self::State(error) => Some(error),
         }
     }
 }
 
-pub trait ParticleBoundary: ContinuousBoundary {
+pub trait ParticleBoundary: ContinuousBoundary + Send + Sync {
     /// Apply this continuous boundary to canonical particle positions and
     /// velocities stored in `PhysObj`.
     fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError>;
@@ -130,7 +83,7 @@ pub trait ParticleBoundary: ContinuousBoundary {
 
 impl<T> ParticleBoundary for T
 where
-    T: ContinuousBoundary,
+    T: ContinuousBoundary + Send + Sync,
 {
     fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError> {
         let (dim, n, masks) = shape_alive_rigid(objects)?;

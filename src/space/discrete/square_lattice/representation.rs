@@ -23,17 +23,15 @@ Boundary conditions:
       hard-wall mirror boundary for index lookup.
 */
 
-use std::path::PathBuf;
 use std::{error::Error, fmt};
 
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::math::TensorError;
-use crate::math::scalar::{Scalar, ScalarSerde};
+use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout, Tensor};
 use crate::sampling::shuffle_slice_indexed;
-use crate::space::space_trait::Space;
 use crate::threading::parallel_chunk_len;
 
 use super::random::IndexedRng;
@@ -63,7 +61,7 @@ impl BoundaryCondition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SquareLatticeConfig {
+pub struct SquareLatticeGeometry {
     shape: Vec<usize>,
     boundary: BoundaryCondition,
     spacing: Vec<f64>,
@@ -71,39 +69,41 @@ pub struct SquareLatticeConfig {
     layout: RowMajorLayout,
 }
 
-impl SquareLatticeConfig {
-    /// Creates a validated square-lattice configuration.
-    pub fn try_new(
+impl SquareLatticeGeometry {
+    /// Creates validated square-lattice geometry.
+    pub fn new(
         shape: &[usize],
         boundary: BoundaryCondition,
         spacing: Option<&[f64]>,
-    ) -> Result<Self, SquareLatticeConfigError> {
+    ) -> Result<Self, SquareLatticeGeometryError> {
         if shape.is_empty() {
-            return Err(SquareLatticeConfigError::EmptyShape);
+            return Err(SquareLatticeGeometryError::EmptyShape);
         }
         let layout = RowMajorLayout::try_new(shape).map_err(|error| match error {
             TensorError::InvalidShape { .. } if shape.is_empty() => {
-                SquareLatticeConfigError::EmptyShape
+                SquareLatticeGeometryError::EmptyShape
             }
-            TensorError::InvalidShape { .. } => SquareLatticeConfigError::ZeroAxis {
+            TensorError::InvalidShape { .. } => SquareLatticeGeometryError::ZeroAxis {
                 axis: shape
                     .iter()
                     .position(|extent| *extent == 0)
                     .expect("invalid nonempty shape has a zero axis"),
             },
             TensorError::ShapeProductOverflow { .. } => {
-                SquareLatticeConfigError::SiteCountOverflow {
+                SquareLatticeGeometryError::SiteCountOverflow {
                     shape: shape.to_vec(),
                 }
             }
-            TensorError::IndexSpaceOverflow { .. } => SquareLatticeConfigError::SiteCountOverflow {
-                shape: shape.to_vec(),
-            },
+            TensorError::IndexSpaceOverflow { .. } => {
+                SquareLatticeGeometryError::SiteCountOverflow {
+                    shape: shape.to_vec(),
+                }
+            }
             _ => unreachable!("row-major layout construction reports only shape errors"),
         })?;
         let spacing = match spacing {
             Some(spacing) if spacing.len() != shape.len() => {
-                return Err(SquareLatticeConfigError::SpacingRank {
+                return Err(SquareLatticeGeometryError::SpacingRank {
                     expected: shape.len(),
                     actual: spacing.len(),
                 });
@@ -113,7 +113,7 @@ impl SquareLatticeConfig {
         };
         for (axis, value) in spacing.iter().copied().enumerate() {
             if !value.is_finite() || value <= 0.0 {
-                return Err(SquareLatticeConfigError::InvalidSpacing { axis });
+                return Err(SquareLatticeGeometryError::InvalidSpacing { axis });
             }
         }
         Ok(Self {
@@ -124,26 +124,13 @@ impl SquareLatticeConfig {
         })
     }
 
-    /// Creates a configuration, panicking if its shape is invalid.
-    ///
-    /// New fallible boundaries should prefer [`Self::try_new`].
     #[inline]
-    pub(crate) fn new(
-        shape: &[usize],
-        boundary: BoundaryCondition,
-        spacing: Option<&[f64]>,
-    ) -> Self {
-        Self::try_new(shape, boundary, spacing)
-            .unwrap_or_else(|error| panic!("invalid SquareLatticeConfig: {error}"))
-    }
-
-    #[inline]
-    pub fn periodic(shape: &[usize]) -> Self {
+    pub fn periodic(shape: &[usize]) -> Result<Self, SquareLatticeGeometryError> {
         Self::new(shape, BoundaryCondition::Periodic, None)
     }
 
     #[inline]
-    pub fn reflective(shape: &[usize]) -> Self {
+    pub fn reflective(shape: &[usize]) -> Result<Self, SquareLatticeGeometryError> {
         Self::new(shape, BoundaryCondition::Reflective, None)
     }
 
@@ -237,13 +224,13 @@ impl SquareLatticeConfig {
         input: &[f64],
         components: usize,
         output: &mut [f64],
-    ) -> Result<(), SquareLatticeConfigError> {
+    ) -> Result<(), SquareLatticeGeometryError> {
         let expected = self
             .num_sites()
             .checked_mul(components)
-            .ok_or(SquareLatticeConfigError::ValueCountOverflow)?;
+            .ok_or(SquareLatticeGeometryError::ValueCountOverflow)?;
         if components == 0 || input.len() != expected || output.len() != expected {
-            return Err(SquareLatticeConfigError::ValueLayout {
+            return Err(SquareLatticeGeometryError::ValueLayout {
                 expected,
                 input: input.len(),
                 output: output.len(),
@@ -279,7 +266,7 @@ impl SquareLatticeConfig {
     }
 }
 
-impl<'de> Deserialize<'de> for SquareLatticeConfig {
+impl<'de> Deserialize<'de> for SquareLatticeGeometry {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -294,7 +281,7 @@ impl<'de> Deserialize<'de> for SquareLatticeConfig {
         }
 
         let document = Document::deserialize(deserializer)?;
-        Self::try_new(
+        Self::new(
             &document.shape,
             document.boundary,
             document.spacing.as_deref(),
@@ -306,7 +293,7 @@ impl<'de> Deserialize<'de> for SquareLatticeConfig {
 /// Invalid square-lattice geometry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SquareLatticeConfigError {
+pub enum SquareLatticeGeometryError {
     /// A lattice must have at least one axis.
     EmptyShape,
     /// Every declared axis must contain at least one site.
@@ -345,7 +332,7 @@ pub enum SquareLatticeConfigError {
     Rng(RngError),
 }
 
-impl fmt::Display for SquareLatticeConfigError {
+impl fmt::Display for SquareLatticeGeometryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyShape => formatter.write_str("square lattice shape must not be empty"),
@@ -396,7 +383,7 @@ impl fmt::Display for SquareLatticeConfigError {
     }
 }
 
-impl Error for SquareLatticeConfigError {
+impl Error for SquareLatticeGeometryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Rng(error) => Some(error),
@@ -434,16 +421,16 @@ pub enum SquareLatticeInitMethod<T: Scalar> {
 
 #[derive(Debug, Clone)]
 pub struct SquareLattice<T: Scalar> {
-    cfg: SquareLatticeConfig,
+    cfg: SquareLatticeGeometry,
     cells: Tensor<T, DenseBackend>,
     initialization_rng: Option<ResolvedRng>,
 }
 
 impl<T: Scalar> SquareLattice<T> {
     pub fn new(
-        cfg: SquareLatticeConfig,
+        cfg: SquareLatticeGeometry,
         init_method: SquareLatticeInitMethod<T>,
-    ) -> Result<Self, SquareLatticeConfigError> {
+    ) -> Result<Self, SquareLatticeGeometryError> {
         let mut lattice = Self {
             cells: Tensor::<T, DenseBackend>::empty(&cfg.tensor_shape()),
             cfg,
@@ -459,9 +446,9 @@ impl<T: Scalar> SquareLattice<T> {
                 rng,
             } => {
                 if choices.is_empty() {
-                    return Err(SquareLatticeConfigError::EmptyChoices);
+                    return Err(SquareLatticeGeometryError::EmptyChoices);
                 }
-                let key = IndexedRng::new(rng).map_err(SquareLatticeConfigError::Rng)?;
+                let key = IndexedRng::new(rng).map_err(SquareLatticeGeometryError::Rng)?;
                 lattice.initialization_rng = Some(key.resolved_rng());
                 let cumulative = cumulative_weights(&choices, weights.as_deref())?;
                 let min_sites_per_job = parallel_chunk_len(lattice.num_sites()).unwrap_or(1);
@@ -498,7 +485,7 @@ impl<T: Scalar> SquareLattice<T> {
             }
             SquareLatticeInitMethod::Values { values } => {
                 if values.len() != lattice.cfg.num_sites() {
-                    return Err(SquareLatticeConfigError::ValueCount {
+                    return Err(SquareLatticeGeometryError::ValueCount {
                         expected: lattice.cfg.num_sites(),
                         actual: values.len(),
                     });
@@ -508,14 +495,14 @@ impl<T: Scalar> SquareLattice<T> {
             }
             SquareLatticeInitMethod::ShuffledValues { mut values, rng } => {
                 if values.len() != lattice.cfg.num_sites() {
-                    return Err(SquareLatticeConfigError::ValueCount {
+                    return Err(SquareLatticeGeometryError::ValueCount {
                         expected: lattice.cfg.num_sites(),
                         actual: values.len(),
                     });
                 }
                 lattice.initialization_rng = Some(
                     shuffle_slice_indexed(&mut values, rng)
-                        .map_err(SquareLatticeConfigError::Rng)?,
+                        .map_err(SquareLatticeGeometryError::Rng)?,
                 );
                 lattice.cells =
                     Tensor::<T, DenseBackend>::from_vec(&lattice.cfg.tensor_shape(), values);
@@ -566,7 +553,8 @@ impl<T: Scalar> SquareLattice<T> {
             .zip(target_shape.iter())
             .map(|(&old_dim, &new_dim)| old_dim as f64 / new_dim as f64)
             .collect();
-        let new_cfg = SquareLatticeConfig::new(target_shape, self.cfg.boundary(), None);
+        let new_cfg = SquareLatticeGeometry::new(target_shape, self.cfg.boundary(), None)
+            .expect("validated downsample shape is valid geometry");
         let mut new = Self {
             cells: Tensor::<T, DenseBackend>::empty(&new_cfg.tensor_shape()),
             cfg: new_cfg,
@@ -601,7 +589,7 @@ impl<T: Scalar> SquareLattice<T> {
 impl<T: Scalar> SquareLattice<T> {
     /// Returns the authoritative geometry configuration.
     #[inline]
-    pub fn config(&self) -> &SquareLatticeConfig {
+    pub fn geometry(&self) -> &SquareLatticeGeometry {
         &self.cfg
     }
 
@@ -691,7 +679,11 @@ impl<T: Scalar> SquareLattice<T> {
     }
 
     #[inline]
-    pub(crate) fn from_parts(cfg: SquareLatticeConfig, data: Vec<T>) -> Self {
+    pub(crate) fn from_parts(
+        cfg: SquareLatticeGeometry,
+        data: Vec<T>,
+        initialization_rng: Option<ResolvedRng>,
+    ) -> Self {
         let expected = cfg.num_sites();
         assert_eq!(
             data.len(),
@@ -702,63 +694,20 @@ impl<T: Scalar> SquareLattice<T> {
         Self {
             cells: Tensor::<T, DenseBackend>::from_vec(&cfg.tensor_shape(), data),
             cfg,
-            initialization_rng: None,
+            initialization_rng,
         }
-    }
-}
-
-impl<T: ScalarSerde> Space<T> for SquareLattice<T> {
-    #[inline]
-    fn data(&self) -> &[T] {
-        self.data()
-    }
-
-    #[inline]
-    fn dims(&self) -> Vec<usize> {
-        self.cfg.tensor_shape()
-    }
-
-    #[inline]
-    fn linear_size(&self) -> usize {
-        self.cfg.num_sites()
-    }
-
-    #[inline]
-    fn get(&self, coord: &[isize]) -> &T {
-        self.get(coord)
-    }
-
-    #[inline]
-    fn get_mut(&mut self, coord: &[isize]) -> &mut T {
-        self.get_mut(coord)
-    }
-
-    #[inline]
-    fn set(&mut self, coord: &[isize], val: T) {
-        self.set(coord, val);
-    }
-
-    #[inline]
-    fn save(&self, output_file: &PathBuf, l_target: usize) -> std::io::Result<()> {
-        let target_shape = vec![l_target; self.cfg.rank()];
-        crate::space::io::square_lattice::save_square_lattice(self, &target_shape, output_file)
-    }
-
-    #[inline]
-    fn set_all(&mut self, val: T) {
-        self.fill(val);
     }
 }
 
 fn cumulative_weights<T>(
     choices: &[T],
     weights: Option<&[f64]>,
-) -> Result<Option<Vec<f64>>, SquareLatticeConfigError> {
+) -> Result<Option<Vec<f64>>, SquareLatticeGeometryError> {
     let Some(weights) = weights else {
         return Ok(None);
     };
     if weights.len() != choices.len() {
-        return Err(SquareLatticeConfigError::WeightCount {
+        return Err(SquareLatticeGeometryError::WeightCount {
             choices: choices.len(),
             weights: weights.len(),
         });
@@ -767,13 +716,13 @@ fn cumulative_weights<T>(
     let mut cumulative = Vec::with_capacity(weights.len());
     for (index, weight) in weights.iter().copied().enumerate() {
         if !weight.is_finite() || weight < 0.0 {
-            return Err(SquareLatticeConfigError::InvalidWeight { index });
+            return Err(SquareLatticeGeometryError::InvalidWeight { index });
         }
         total += weight;
         cumulative.push(total);
     }
     if total == 0.0 {
-        return Err(SquareLatticeConfigError::ZeroWeight);
+        return Err(SquareLatticeGeometryError::ZeroWeight);
     }
     Ok(Some(cumulative))
 }

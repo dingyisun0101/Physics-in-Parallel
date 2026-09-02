@@ -7,8 +7,8 @@ pub use crate::math::{
 pub use crate::rng::{IndexedRng, ResolvedRng, RngError, RngMethod};
 pub use crate::space::{
     BoundaryCondition, BoundaryError, ClampBox, ContinuousBoundary, KernelError, KernelType,
-    PairGenerationError, PairGenerator, PairGeneratorConfig, PairingMethod, PeriodicBox,
-    ReflectBox, SourceMode, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
-    SquareLatticeInitMethod, VectorSamplingError, VectorSamplingMethod, sample_vectors,
+    PairGenerationError, PairGenerator, PairingMethod, PeriodicBox, ReflectBox, SourceMode,
+    SquareLattice, SquareLatticeGeometry, SquareLatticeGeometryError, SquareLatticeInitMethod,
+    VectorSamplingError, VectorSamplingMethod, sample_vectors,
 };
 pub use crate::threading::{ParallelismError, max_threads, set_max_threads};

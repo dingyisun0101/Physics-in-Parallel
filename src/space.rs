@@ -12,7 +12,7 @@ pub use continuous::boundary::{
 };
 pub use continuous::sampling::{VectorSamplingError, VectorSamplingMethod, sample_vectors};
 pub use discrete::square_lattice::{
-    BoundaryCondition, KernelError, KernelType, PairGenerationError, PairGenerator,
-    PairGeneratorConfig, PairingMethod, SourceMode, SquareLattice, SquareLatticeConfig,
-    SquareLatticeConfigError, SquareLatticeInitMethod,
+    BoundaryCondition, KernelError, KernelType, PairGenerationError, PairGenerator, PairingMethod,
+    SourceMode, SquareLattice, SquareLatticeGeometry, SquareLatticeGeometryError,
+    SquareLatticeInitMethod,
 };

@@ -23,89 +23,37 @@ use crate::models::particles::state::{ParticleStateError, gather_alive_flags};
 /// Errors returned by particle-level neighbor-list operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParticleNeighborListError {
-    /// Lower-level attribute/core access error.
-    Attrs(AttrsError),
-    /// Lower-level engine neighbor-list error.
-    Neighbor(NeighborListError),
-    /// Required particle attribute has the wrong vector dimension.
-    InvalidAttrShape {
-        /// Attribute label that failed validation.
-        label: &'static str,
-        /// Expected vector dimension.
-        expected_dim: usize,
-        /// Actual vector dimension.
-        got_dim: usize,
-    },
-    /// Attribute row count does not match the position row count.
-    InconsistentParticleCount {
-        /// Attribute label that failed validation.
-        label: &'static str,
-        /// Expected number of particle rows.
-        expected: usize,
-        /// Actual number of rows.
-        got: usize,
-    },
+    State(ParticleStateError),
+    Geometry { message: String },
 }
 
 impl From<AttrsError> for ParticleNeighborListError {
     fn from(value: AttrsError) -> Self {
-        Self::Attrs(value)
+        Self::State(value.into())
     }
 }
 
 impl From<NeighborListError> for ParticleNeighborListError {
     fn from(value: NeighborListError) -> Self {
-        Self::Neighbor(value)
+        Self::Geometry {
+            message: value.to_string(),
+        }
     }
 }
 
 impl From<ParticleStateError> for ParticleNeighborListError {
     fn from(value: ParticleStateError) -> Self {
-        match value {
-            ParticleStateError::Attrs(err) => Self::Attrs(err),
-            ParticleStateError::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            },
-            ParticleStateError::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            },
-        }
+        Self::State(value)
     }
 }
 
 impl fmt::Display for ParticleNeighborListError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Attrs(error) => write!(f, "particle neighbor-list attribute error: {error}"),
-            Self::Neighbor(error) => write!(f, "particle neighbor-list geometry error: {error}"),
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                f,
-                "particle neighbor-list attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                f,
-                "particle neighbor-list attribute `{label}` has {got} particles; expected {expected}"
-            ),
+            Self::State(error) => write!(f, "invalid particle state: {error}"),
+            Self::Geometry { message } => {
+                write!(f, "particle neighbor-list geometry error: {message}")
+            }
         }
     }
 }
@@ -113,9 +61,8 @@ impl fmt::Display for ParticleNeighborListError {
 impl std::error::Error for ParticleNeighborListError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Attrs(error) => Some(error),
-            Self::Neighbor(error) => Some(error),
-            _ => None,
+            Self::State(error) => Some(error),
+            Self::Geometry { .. } => None,
         }
     }
 }
@@ -154,16 +101,6 @@ impl ParticleNeighborList {
     /// Returns the physical cutoff distance.
     pub fn cutoff(&self) -> f64 {
         self.cutoff
-    }
-
-    /// Returns the wrapped engine-level candidate list.
-    pub fn candidates(&self) -> &NeighborList {
-        &self.candidates
-    }
-
-    /// Returns mutable access to the wrapped engine-level candidate list.
-    pub fn candidates_mut(&mut self) -> &mut NeighborList {
-        &mut self.candidates
     }
 
     /// Rebuilds nearby-cell candidates from `objects.core[ATTR_R]`.
@@ -222,23 +159,15 @@ impl ParticleNeighborList {
         Ok(pairs)
     }
 
-    /// Explicit alias for `collect_pairs`.
-    pub fn collect_pairs_within_cutoff(
-        &self,
-        objects: &PhysObj,
-        selection: ParticleSelection,
-    ) -> Result<Vec<(usize, usize)>, ParticleNeighborListError> {
-        self.collect_pairs(objects, selection)
-    }
-
     fn validate_position_dim(&self, got_dim: usize) -> Result<(), ParticleNeighborListError> {
         let expected_dim = self.dim();
         if got_dim != expected_dim {
-            return Err(ParticleNeighborListError::InvalidAttrShape {
+            return Err(ParticleStateError::InvalidAttrShape {
                 label: ATTR_R,
                 expected_dim,
                 got_dim,
-            });
+            }
+            .into());
         }
         Ok(())
     }

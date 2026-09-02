@@ -15,10 +15,8 @@ pub(crate) mod random;
 pub(crate) mod representation;
 
 pub use kernel::{KernelError, KernelType};
-pub use pairing::{
-    PairGenerationError, PairGenerator, PairGeneratorConfig, PairingMethod, SourceMode,
-};
+pub use pairing::{PairGenerationError, PairGenerator, PairingMethod, SourceMode};
 pub use representation::{
-    BoundaryCondition, SquareLattice, SquareLatticeConfig, SquareLatticeConfigError,
+    BoundaryCondition, SquareLattice, SquareLatticeGeometry, SquareLatticeGeometryError,
     SquareLatticeInitMethod,
 };
