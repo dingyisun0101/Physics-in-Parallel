@@ -16,6 +16,9 @@ on top of it.
 */
 
 use core::fmt;
+use std::collections::HashSet;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::engines::soa::interaction::InteractionOrder;
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
@@ -64,6 +67,25 @@ pub enum SpringNetworkError {
         id: InteractionId,
         /// Actual number of nodes.
         arity: usize,
+    },
+    /// A restored spring connects one particle to itself.
+    SelfPair {
+        /// Repeated particle index.
+        particle: usize,
+    },
+    /// A restored spring endpoint is outside the declared particle bound.
+    ParticleOutOfBounds {
+        /// Invalid particle index.
+        particle: usize,
+        /// Exclusive upper particle bound.
+        num_particles: usize,
+    },
+    /// A restored record repeats an existing unordered spring pair.
+    DuplicatePair {
+        /// Canonical lower endpoint.
+        i: usize,
+        /// Canonical upper endpoint.
+        j: usize,
     },
 }
 
@@ -140,8 +162,40 @@ impl fmt::Display for SpringNetworkError {
             Self::InvalidSpringArity { id, arity } => {
                 write!(f, "spring interaction {id} has arity {arity}; expected 2")
             }
+            Self::SelfPair { particle } => {
+                write!(f, "spring pair repeats particle {particle}")
+            }
+            Self::ParticleOutOfBounds {
+                particle,
+                num_particles,
+            } => write!(
+                f,
+                "spring particle index {particle} is out of bounds for {num_particles} particles"
+            ),
+            Self::DuplicatePair { i, j } => {
+                write!(f, "duplicate spring pair ({i}, {j})")
+            }
         }
     }
+}
+
+/// Stable serializable representation of one spring interaction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpringRecord {
+    /// First particle endpoint.
+    pub i: usize,
+    /// Second particle endpoint.
+    pub j: usize,
+    /// Validated spring law.
+    pub spring: Spring,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpringNetworkSerde {
+    num_particles: usize,
+    springs: Vec<SpringRecord>,
 }
 
 impl std::error::Error for SpringNetworkError {
@@ -167,6 +221,29 @@ impl Default for SpringNetwork {
     }
 }
 
+impl Serialize for SpringNetwork {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SpringNetworkSerde {
+            num_particles: self.num_particles(),
+            springs: self.records().map_err(serde::ser::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SpringNetwork {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let state = SpringNetworkSerde::deserialize(deserializer)?;
+        Self::from_records(state.num_particles, state.springs).map_err(serde::de::Error::custom)
+    }
+}
+
 impl SpringNetwork {
     /// Creates an empty spring network.
     pub fn empty() -> Self {
@@ -180,6 +257,72 @@ impl SpringNetwork {
         let mut springs = Interaction::new(num_particles, InteractionOrder::Unordered);
         springs.reserve(spring_capacity);
         Self { springs }
+    }
+
+    /// Returns the exclusive particle-index bound.
+    pub fn num_particles(&self) -> usize {
+        self.springs.n_objects()
+    }
+
+    /// Restores a spring network from strict unordered pair records.
+    pub fn from_records(
+        num_particles: usize,
+        records: impl IntoIterator<Item = SpringRecord>,
+    ) -> Result<Self, SpringNetworkError> {
+        let records = records.into_iter();
+        let mut network = Self::with_capacity(num_particles, records.size_hint().0);
+        let mut seen = HashSet::new();
+
+        for record in records {
+            record.spring.validate()?;
+            if record.i == record.j {
+                return Err(SpringNetworkError::SelfPair { particle: record.i });
+            }
+            for particle in [record.i, record.j] {
+                if particle >= num_particles {
+                    return Err(SpringNetworkError::ParticleOutOfBounds {
+                        particle,
+                        num_particles,
+                    });
+                }
+            }
+
+            let pair = if record.i < record.j {
+                (record.i, record.j)
+            } else {
+                (record.j, record.i)
+            };
+            if !seen.insert(pair) {
+                return Err(SpringNetworkError::DuplicatePair {
+                    i: pair.0,
+                    j: pair.1,
+                });
+            }
+            network.springs.set_pair(pair.0, pair.1, record.spring)?;
+        }
+
+        Ok(network)
+    }
+
+    /// Exports active springs in stable interaction-id order.
+    pub fn records(&self) -> Result<Vec<SpringRecord>, SpringNetworkError> {
+        self.springs
+            .iter()
+            .map(|(id, nodes, spring)| {
+                if nodes.arity() != 2 {
+                    return Err(SpringNetworkError::InvalidSpringArity {
+                        id,
+                        arity: nodes.arity(),
+                    });
+                }
+                spring.validate()?;
+                Ok(SpringRecord {
+                    i: nodes.nodes[0],
+                    j: nodes.nodes[1],
+                    spring: *spring,
+                })
+            })
+            .collect()
     }
 
     /// Number of active springs.

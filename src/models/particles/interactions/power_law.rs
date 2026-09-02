@@ -8,6 +8,9 @@ contributions into the canonical particle acceleration attribute `ATTR_A`.
 */
 
 use core::fmt;
+use std::collections::HashSet;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::engines::soa::interaction::InteractionOrder;
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
@@ -56,6 +59,25 @@ pub enum PowerLawNetworkError {
         id: InteractionId,
         /// Actual number of nodes.
         arity: usize,
+    },
+    /// A restored interaction connects one particle to itself.
+    SelfPair {
+        /// Repeated particle index.
+        particle: usize,
+    },
+    /// A restored interaction endpoint is outside the declared particle bound.
+    ParticleOutOfBounds {
+        /// Invalid particle index.
+        particle: usize,
+        /// Exclusive upper particle bound.
+        num_particles: usize,
+    },
+    /// A restored record repeats an existing unordered pair.
+    DuplicatePair {
+        /// Canonical lower endpoint.
+        i: usize,
+        /// Canonical upper endpoint.
+        j: usize,
     },
 }
 
@@ -133,8 +155,40 @@ impl fmt::Display for PowerLawNetworkError {
                 f,
                 "power-law interaction {id} has arity {arity}; expected 2"
             ),
+            Self::SelfPair { particle } => {
+                write!(f, "power-law pair repeats particle {particle}")
+            }
+            Self::ParticleOutOfBounds {
+                particle,
+                num_particles,
+            } => write!(
+                f,
+                "power-law particle index {particle} is out of bounds for {num_particles} particles"
+            ),
+            Self::DuplicatePair { i, j } => {
+                write!(f, "duplicate power-law pair ({i}, {j})")
+            }
         }
     }
+}
+
+/// Stable serializable representation of one power-law interaction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PowerLawRecord {
+    /// First particle endpoint.
+    pub i: usize,
+    /// Second particle endpoint.
+    pub j: usize,
+    /// Validated power-law value.
+    pub law: PowerLawDecay,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PowerLawNetworkSerde {
+    num_particles: usize,
+    interactions: Vec<PowerLawRecord>,
 }
 
 impl std::error::Error for PowerLawNetworkError {
@@ -160,6 +214,30 @@ impl Default for PowerLawNetwork {
     }
 }
 
+impl Serialize for PowerLawNetwork {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        PowerLawNetworkSerde {
+            num_particles: self.num_particles(),
+            interactions: self.records().map_err(serde::ser::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PowerLawNetwork {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let state = PowerLawNetworkSerde::deserialize(deserializer)?;
+        Self::from_records(state.num_particles, state.interactions)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl PowerLawNetwork {
     /// Creates an empty power-law network.
     pub fn empty() -> Self {
@@ -173,6 +251,72 @@ impl PowerLawNetwork {
         let mut interactions = Interaction::new(num_particles, InteractionOrder::Unordered);
         interactions.reserve(pair_capacity);
         Self { interactions }
+    }
+
+    /// Returns the exclusive particle-index bound.
+    pub fn num_particles(&self) -> usize {
+        self.interactions.n_objects()
+    }
+
+    /// Restores a power-law network from strict unordered pair records.
+    pub fn from_records(
+        num_particles: usize,
+        records: impl IntoIterator<Item = PowerLawRecord>,
+    ) -> Result<Self, PowerLawNetworkError> {
+        let records = records.into_iter();
+        let mut network = Self::with_capacity(num_particles, records.size_hint().0);
+        let mut seen = HashSet::new();
+
+        for record in records {
+            record.law.validate()?;
+            if record.i == record.j {
+                return Err(PowerLawNetworkError::SelfPair { particle: record.i });
+            }
+            for particle in [record.i, record.j] {
+                if particle >= num_particles {
+                    return Err(PowerLawNetworkError::ParticleOutOfBounds {
+                        particle,
+                        num_particles,
+                    });
+                }
+            }
+
+            let pair = if record.i < record.j {
+                (record.i, record.j)
+            } else {
+                (record.j, record.i)
+            };
+            if !seen.insert(pair) {
+                return Err(PowerLawNetworkError::DuplicatePair {
+                    i: pair.0,
+                    j: pair.1,
+                });
+            }
+            network.interactions.set_pair(pair.0, pair.1, record.law)?;
+        }
+
+        Ok(network)
+    }
+
+    /// Exports active interactions in stable interaction-id order.
+    pub fn records(&self) -> Result<Vec<PowerLawRecord>, PowerLawNetworkError> {
+        self.interactions
+            .iter()
+            .map(|(id, nodes, law)| {
+                if nodes.arity() != 2 {
+                    return Err(PowerLawNetworkError::InvalidPowerLawArity {
+                        id,
+                        arity: nodes.arity(),
+                    });
+                }
+                law.validate()?;
+                Ok(PowerLawRecord {
+                    i: nodes.nodes[0],
+                    j: nodes.nodes[1],
+                    law: *law,
+                })
+            })
+            .collect()
     }
 
     /// Number of unordered all-to-all pairs for `num_particles`.

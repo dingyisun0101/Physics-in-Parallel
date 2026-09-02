@@ -92,19 +92,23 @@ No error should mention Workflow or a downstream configuration format.
 
 ## Stage 3: Serializable Model State
 
+Status: completed on `tmp`.
+
 Goal: serialize physical values and model state through validated, deterministic
 representations.
 
 Planned public values:
 
 - Serde-enabled `Spring`, `SpringCutoff`, `PowerLawDecay`, and `PowerLawRange`
+- Serde-enabled `InteractionOrder`, `InteractionNodes`, and validated
+  `InteractionTopology`
 - `SpringRecord { i, j, spring }`
 - `PowerLawRecord { i, j, law }`
 - deterministic record iterators or exports on both network types
 - validated `from_records` constructors
 - custom Serde for `SpringNetwork` and `PowerLawNetwork` through their records
 
-Serialization rules:
+Model-network serialization rules:
 
 1. Serialize only active interactions, never hash-map layout, spare capacity,
    free-list order, or another implementation detail.
@@ -116,9 +120,10 @@ Serialization rules:
    invalid law values with typed network errors.
 6. Keep configuration selectors and construction policy downstream.
 
-Direct Serde for generic engine topology is optional. It should be added only
-if it has an independently useful, validated representation; model networks do
-not need to expose engine internals to become recordable.
+Generic `InteractionTopology` persistence preserves active interaction ids and
+explicit holes. Deserialization canonicalizes nodes and rebuilds the lookup map
+and reusable-id list; hash-map layout and free-list ordering are never part of
+the serialized representation.
 
 ## Stage 4: Construction And Inspection APIs
 

@@ -10,6 +10,8 @@ quantity.
 
 use core::fmt;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 /// Optional active distance interval `(min, max)`.
 pub type PowerLawRange = (f64, f64);
 
@@ -22,6 +24,39 @@ pub struct PowerLawDecay {
     pub alpha: f64,
     /// Optional active distance interval `(min, max)`.
     pub range: Option<PowerLawRange>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PowerLawSerde {
+    k: f64,
+    alpha: f64,
+    range: Option<PowerLawRange>,
+}
+
+impl Serialize for PowerLawDecay {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.validate().map_err(serde::ser::Error::custom)?;
+        PowerLawSerde {
+            k: self.k,
+            alpha: self.alpha,
+            range: self.range,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PowerLawDecay {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = PowerLawSerde::deserialize(deserializer)?;
+        Self::new(value.k, value.alpha, value.range).map_err(serde::de::Error::custom)
+    }
 }
 
 impl PowerLawDecay {

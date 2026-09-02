@@ -9,6 +9,8 @@ lattice sites, graph nodes, or any future model object.
 
 use core::fmt;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 /// Optional distance window `(min, max)` where this spring is active.
 pub type SpringCutoff = (f64, f64);
 
@@ -21,6 +23,39 @@ pub struct Spring {
     pub l_0: f64,
     /// Optional pair-distance cutoff `(min, max)`.
     pub cutoff: Option<SpringCutoff>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SpringSerde {
+    k: f64,
+    l_0: f64,
+    cutoff: Option<SpringCutoff>,
+}
+
+impl Serialize for Spring {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.validate().map_err(serde::ser::Error::custom)?;
+        SpringSerde {
+            k: self.k,
+            l_0: self.l_0,
+            cutoff: self.cutoff,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Spring {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = SpringSerde::deserialize(deserializer)?;
+        Self::new(value.k, value.l_0, value.cutoff).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Spring {

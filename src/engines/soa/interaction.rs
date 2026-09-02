@@ -26,6 +26,7 @@ the topology and payload storage remain synchronized.
 use ahash::AHashMap;
 use core::fmt;
 use rayon::prelude::*;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::phys_obj::AttrsError;
 
@@ -36,7 +37,8 @@ pub type ObjId = usize;
 pub type InteractionId = usize;
 
 /// Whether participant order changes the identity of an interaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InteractionOrder {
     /// Preserve caller-provided node order exactly.
     Ordered,
@@ -45,7 +47,8 @@ pub enum InteractionOrder {
 }
 
 /// Object indices participating in one interaction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InteractionNodes {
     /// Object indices identifying one interaction term; arity is `nodes.len()`.
     pub nodes: Box<[ObjId]>,
@@ -109,6 +112,15 @@ pub enum InteractionError {
         /// First offending object index in that interaction.
         obj: ObjId,
     },
+    /// Restored topology contains the same interaction more than once.
+    DuplicateNodes {
+        /// Canonical participant list shared by both ids.
+        nodes: Box<[ObjId]>,
+        /// First interaction id using the participant list.
+        existing: InteractionId,
+        /// Later interaction id using the same participant list.
+        incoming: InteractionId,
+    },
     /// Wrapped attribute/core error from `PhysObj` operations.
     Attrs(
         /// Lower-level attribute/core error details.
@@ -146,6 +158,14 @@ impl fmt::Display for InteractionError {
                 f,
                 "reducing to {n_objects} objects would invalidate interaction {id} at object {obj}"
             ),
+            Self::DuplicateNodes {
+                nodes,
+                existing,
+                incoming,
+            } => write!(
+                f,
+                "interaction ids {existing} and {incoming} contain duplicate nodes {nodes:?}"
+            ),
             Self::Attrs(error) => write!(f, "interaction attribute error: {error}"),
         }
     }
@@ -175,7 +195,87 @@ pub struct InteractionTopology {
     free_ids: Vec<InteractionId>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InteractionTopologySerde {
+    n_objects: usize,
+    order: InteractionOrder,
+    slots: Vec<Option<InteractionNodes>>,
+}
+
+impl Serialize for InteractionTopology {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        InteractionTopologySerde {
+            n_objects: self.n_objects,
+            order: self.order,
+            slots: self.nodes_of_id.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for InteractionTopology {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let state = InteractionTopologySerde::deserialize(deserializer)?;
+        Self::from_serialized_slots(state.n_objects, state.order, state.slots)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl InteractionTopology {
+    fn from_serialized_slots(
+        n_objects: usize,
+        order: InteractionOrder,
+        mut nodes_of_id: Vec<Option<InteractionNodes>>,
+    ) -> Result<Self, InteractionError> {
+        let mut id_of_nodes = AHashMap::with_capacity(nodes_of_id.len());
+
+        for (id, maybe_nodes) in nodes_of_id.iter_mut().enumerate() {
+            let Some(nodes) = maybe_nodes else {
+                continue;
+            };
+            if nodes.nodes.is_empty() {
+                return Err(InteractionError::EmptyNodes);
+            }
+            for &obj in nodes.nodes.iter() {
+                if obj >= n_objects {
+                    return Err(InteractionError::InvalidObjId { obj, n_objects });
+                }
+            }
+
+            let canonical = InteractionNodes::from_slice(&canonicalize_nodes(&nodes.nodes, order));
+            if let Some(existing) = id_of_nodes.insert(canonical.clone(), id) {
+                return Err(InteractionError::DuplicateNodes {
+                    nodes: canonical.nodes,
+                    existing,
+                    incoming: id,
+                });
+            }
+            *nodes = canonical;
+        }
+
+        let free_ids = nodes_of_id
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(id, nodes)| nodes.is_none().then_some(id))
+            .collect();
+
+        Ok(Self {
+            n_objects,
+            order,
+            id_of_nodes,
+            nodes_of_id,
+            free_ids,
+        })
+    }
+
     /// Constructs an empty unordered topology.
     pub fn new(n_objects: usize) -> Self {
         Self::with_order(n_objects, InteractionOrder::Unordered)

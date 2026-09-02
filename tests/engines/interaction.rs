@@ -27,6 +27,56 @@ fn topology_reuses_freed_id() {
 }
 
 #[test]
+fn topology_serde_preserves_active_ids_and_rebuilds_free_slots() {
+    let mut topology = InteractionTopology::new(6);
+    let first = topology.add(&[0, 1]).unwrap();
+    let removed = topology.add(&[2, 3]).unwrap();
+    let third = topology.add(&[4, 5]).unwrap();
+    topology.remove(&[2, 3]).unwrap();
+
+    let json = serde_json::to_string(&topology).unwrap();
+    let mut restored: InteractionTopology = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored.n_objects(), 6);
+    assert_eq!(restored.order(), InteractionOrder::Unordered);
+    assert_eq!(restored.id_of(&[1, 0]).unwrap(), Some(first));
+    assert_eq!(restored.id_of(&[5, 4]).unwrap(), Some(third));
+    assert_eq!(restored.capacity_slots(), 3);
+    assert_eq!(restored.free_slot_count(), 1);
+    assert_eq!(restored.add(&[1, 5]).unwrap(), removed);
+}
+
+#[test]
+fn topology_serde_rejects_invalid_persisted_state() {
+    let duplicate = r#"{
+        "n_objects": 4,
+        "order": "unordered",
+        "slots": [
+            {"nodes": [0, 2]},
+            null,
+            {"nodes": [2, 0]}
+        ]
+    }"#;
+    assert!(
+        serde_json::from_str::<InteractionTopology>(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate nodes")
+    );
+
+    let out_of_bounds = r#"{"n_objects":2,"order":"ordered","slots":[{"nodes":[0,2]}]}"#;
+    assert!(
+        serde_json::from_str::<InteractionTopology>(out_of_bounds)
+            .unwrap_err()
+            .to_string()
+            .contains("out of bounds")
+    );
+
+    let unknown = r#"{"n_objects":2,"order":"ordered","slots":[],"free_ids":[]}"#;
+    assert!(serde_json::from_str::<InteractionTopology>(unknown).is_err());
+}
+
+#[test]
 fn topology_ordered_keeps_node_order_distinct() {
     let mut topo = InteractionTopology::with_order(4, InteractionOrder::Ordered);
 

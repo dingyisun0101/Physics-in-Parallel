@@ -41,6 +41,73 @@ fn add_twice_same_pair_overwrites_payload() {
 }
 
 #[test]
+fn records_and_serde_preserve_power_law_network_state() {
+    let records = [
+        PowerLawRecord {
+            i: 3,
+            j: 1,
+            law: PowerLawDecay::new(2.0, -2.0, None).unwrap(),
+        },
+        PowerLawRecord {
+            i: 0,
+            j: 4,
+            law: PowerLawDecay::new(5.0, 1.5, Some((0.2, 6.0))).unwrap(),
+        },
+    ];
+    let network = PowerLawNetwork::from_records(6, records).unwrap();
+    assert_eq!(network.num_particles(), 6);
+    assert_eq!(network.records().unwrap()[0].i, 1);
+    assert_eq!(network.records().unwrap()[0].j, 3);
+
+    let json = serde_json::to_string(&network).unwrap();
+    let restored: PowerLawNetwork = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.num_particles(), 6);
+    assert_eq!(restored.records().unwrap(), network.records().unwrap());
+}
+
+#[test]
+fn power_law_records_reject_invalid_network_state() {
+    let law = PowerLawDecay::new(1.0, -2.0, None).unwrap();
+
+    assert_eq!(
+        PowerLawNetwork::from_records(2, [PowerLawRecord { i: 0, j: 0, law }]).unwrap_err(),
+        PowerLawNetworkError::SelfPair { particle: 0 }
+    );
+    assert_eq!(
+        PowerLawNetwork::from_records(2, [PowerLawRecord { i: 0, j: 2, law }]).unwrap_err(),
+        PowerLawNetworkError::ParticleOutOfBounds {
+            particle: 2,
+            num_particles: 2,
+        }
+    );
+    assert_eq!(
+        PowerLawNetwork::from_records(
+            3,
+            [
+                PowerLawRecord { i: 0, j: 2, law },
+                PowerLawRecord { i: 2, j: 0, law },
+            ],
+        )
+        .unwrap_err(),
+        PowerLawNetworkError::DuplicatePair { i: 0, j: 2 }
+    );
+
+    let duplicate = r#"{
+        "num_particles": 3,
+        "interactions": [
+            {"i": 0, "j": 1, "law": {"k": 1.0, "alpha": -2.0, "range": null}},
+            {"i": 1, "j": 0, "law": {"k": 1.0, "alpha": -2.0, "range": null}}
+        ]
+    }"#;
+    assert!(
+        serde_json::from_str::<PowerLawNetwork>(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate power-law pair")
+    );
+}
+
+#[test]
 fn remove_nonexistent_pair_returns_none() {
     let mut network = PowerLawNetwork::empty();
     assert!(network.remove_power_law((10, 11)).unwrap().is_none());

@@ -5,8 +5,8 @@ pub use crate::models::{
     Integrator, IntegratorError, KineticEnergyObserver, LangevinThermostat, MassiveParticlesError,
     ObserveError, Observer, ParticleBoundary, ParticleBoundaryError, ParticleNeighborList,
     ParticleNeighborListError, ParticleSelection, PhysObj, PowerLawDecay, PowerLawError,
-    PowerLawNetwork, PowerLawNetworkError, PowerLawRange, SemiImplicitEuler, Spring, SpringCutoff,
-    SpringLawError, SpringNetwork, SpringNetworkError, TemperatureObserver, Thermostat,
-    ThermostatError, VelocitySamplingMethod, create_template, is_alive, is_rigid, randomize_r,
-    randomize_v, set_alive, set_rigid,
+    PowerLawNetwork, PowerLawNetworkError, PowerLawRange, PowerLawRecord, SemiImplicitEuler,
+    Spring, SpringCutoff, SpringLawError, SpringNetwork, SpringNetworkError, SpringRecord,
+    TemperatureObserver, Thermostat, ThermostatError, VelocitySamplingMethod, create_template,
+    is_alive, is_rigid, randomize_r, randomize_v, set_alive, set_rigid,
 };

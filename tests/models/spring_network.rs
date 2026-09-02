@@ -93,6 +93,95 @@ fn par_iter_springs_visits_all_active_springs() {
 }
 
 #[test]
+fn records_and_serde_preserve_bound_and_stable_active_order() {
+    let mut network = SpringNetwork::with_capacity(8, 3);
+    network.add_spring((4, 1), 2.0, 1.0, None).unwrap();
+    network
+        .add_spring((7, 2), 3.0, 1.5, Some((0.1, 4.0)))
+        .unwrap();
+    network.remove_spring((1, 4)).unwrap();
+    network.add_spring((6, 0), 5.0, 2.0, None).unwrap();
+
+    let records = network.records().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!((records[0].i, records[0].j), (0, 6));
+    assert_eq!((records[1].i, records[1].j), (2, 7));
+
+    let json = serde_json::to_string(&network).unwrap();
+    let restored: SpringNetwork = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.num_particles(), 8);
+    assert_eq!(restored.records().unwrap(), records);
+
+    let empty = SpringNetwork::with_capacity(12, 0);
+    let restored_empty: SpringNetwork =
+        serde_json::from_str(&serde_json::to_string(&empty).unwrap()).unwrap();
+    assert_eq!(restored_empty.num_particles(), 12);
+    assert!(restored_empty.is_empty());
+}
+
+#[test]
+fn from_records_rejects_invalid_network_state() {
+    let spring = Spring::new(1.0, 1.0, None).unwrap();
+
+    assert_eq!(
+        SpringNetwork::from_records(3, [SpringRecord { i: 1, j: 1, spring }],).unwrap_err(),
+        SpringNetworkError::SelfPair { particle: 1 }
+    );
+    assert_eq!(
+        SpringNetwork::from_records(3, [SpringRecord { i: 0, j: 3, spring }],).unwrap_err(),
+        SpringNetworkError::ParticleOutOfBounds {
+            particle: 3,
+            num_particles: 3,
+        }
+    );
+    assert_eq!(
+        SpringNetwork::from_records(
+            3,
+            [
+                SpringRecord { i: 0, j: 2, spring },
+                SpringRecord { i: 2, j: 0, spring },
+            ],
+        )
+        .unwrap_err(),
+        SpringNetworkError::DuplicatePair { i: 0, j: 2 }
+    );
+
+    let invalid = SpringRecord {
+        i: 0,
+        j: 1,
+        spring: Spring {
+            k: f64::NAN,
+            l_0: 1.0,
+            cutoff: None,
+        },
+    };
+    assert!(matches!(
+        SpringNetwork::from_records(2, [invalid]).unwrap_err(),
+        SpringNetworkError::Law(SpringLawError::InvalidSpringConstant { .. })
+    ));
+}
+
+#[test]
+fn spring_network_serde_rejects_malformed_records() {
+    let duplicate = r#"{
+        "num_particles": 3,
+        "springs": [
+            {"i": 0, "j": 2, "spring": {"k": 1.0, "l_0": 1.0, "cutoff": null}},
+            {"i": 2, "j": 0, "spring": {"k": 2.0, "l_0": 1.0, "cutoff": null}}
+        ]
+    }"#;
+    assert!(
+        serde_json::from_str::<SpringNetwork>(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate spring pair")
+    );
+
+    let unknown = r#"{"num_particles":2,"springs":[],"implementation_detail":"forbidden"}"#;
+    assert!(serde_json::from_str::<SpringNetwork>(unknown).is_err());
+}
+
+#[test]
 fn invalid_spring_parameters_are_rejected() {
     let mut network = SpringNetwork::empty();
 

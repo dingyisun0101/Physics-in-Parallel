@@ -23,7 +23,7 @@ pub use particles::create_state::{
 pub use particles::integrator::{ExplicitEuler, Integrator, IntegratorError, SemiImplicitEuler};
 pub use particles::interactions::{
     ParticleNeighborList, ParticleNeighborListError, PowerLawNetwork, PowerLawNetworkError,
-    SpringNetwork, SpringNetworkError,
+    PowerLawRecord, SpringNetwork, SpringNetworkError, SpringRecord,
 };
 pub use particles::observe::{KineticEnergyObserver, ObserveError, Observer, TemperatureObserver};
 pub use particles::thermostat::{LangevinThermostat, Thermostat, ThermostatError};
