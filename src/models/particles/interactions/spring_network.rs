@@ -15,6 +15,8 @@ state lives in `PhysObj`; `apply_hooke_acceleration` reads `ATTR_R`,
 on top of it.
 */
 
+use core::fmt;
+
 use crate::engines::soa::interaction::InteractionOrder;
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::engines::soa::{Interaction, InteractionError, InteractionId};
@@ -105,6 +107,50 @@ impl From<ParticleStateError> for SpringNetworkError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for SpringNetworkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Attrs(error) => write!(f, "spring-network attribute error: {error}"),
+            Self::Interaction(error) => write!(f, "spring-network topology error: {error}"),
+            Self::Law(error) => write!(f, "spring-network law error: {error}"),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "spring-network attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "spring-network attribute `{label}` has {got} particles; expected {expected}"
+            ),
+            Self::InvalidInverseMass { index, value } => write!(
+                f,
+                "spring-network inverse mass at particle {index} must be finite and non-negative; got {value}"
+            ),
+            Self::InvalidSpringArity { id, arity } => {
+                write!(f, "spring interaction {id} has arity {arity}; expected 2")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SpringNetworkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            Self::Interaction(error) => Some(error),
+            Self::Law(error) => Some(error),
+            _ => None,
         }
     }
 }

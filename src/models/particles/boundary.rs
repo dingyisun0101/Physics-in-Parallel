@@ -18,6 +18,8 @@ Particle-specific behavior is limited to storage traversal and masks:
   odd number of reflecting wall crossings.
 */
 
+use core::fmt;
+
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
@@ -81,6 +83,41 @@ impl From<ParticleStateError> for ParticleBoundaryError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for ParticleBoundaryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Boundary(error) => write!(f, "particle boundary geometry error: {error}"),
+            Self::Attrs(error) => write!(f, "particle boundary attribute error: {error}"),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "particle boundary attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "particle boundary attribute `{label}` has {got} particles; expected {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ParticleBoundaryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Boundary(error) => Some(error),
+            Self::Attrs(error) => Some(error),
+            _ => None,
         }
     }
 }

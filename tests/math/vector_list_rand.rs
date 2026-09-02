@@ -76,7 +76,7 @@ fn indexed_nearest_neighbor_vectors_are_exact_and_replay_steps() {
     generator.try_refresh_at(11, 0x4e4e).unwrap();
     assert_eq!(snapshot(&generator.vl), first);
 
-    for row in first.chunks_exact(5) {
+    for row in first.as_chunks::<5>().0 {
         assert_eq!(row.iter().filter(|&&value| value != 0).count(), 1);
         assert!(row.iter().all(|value| (-1..=1).contains(value)));
     }

@@ -24,6 +24,7 @@ the topology and payload storage remain synchronized.
 */
 
 use ahash::AHashMap;
+use core::fmt;
 use rayon::prelude::*;
 
 use super::phys_obj::AttrsError;
@@ -118,6 +119,44 @@ pub enum InteractionError {
 impl From<AttrsError> for InteractionError {
     fn from(value: AttrsError) -> Self {
         Self::Attrs(value)
+    }
+}
+
+impl fmt::Display for InteractionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyNodes => write!(f, "interaction must contain at least one object"),
+            Self::InvalidObjId { obj, n_objects } => write!(
+                f,
+                "interaction object index {obj} is out of bounds for {n_objects} objects"
+            ),
+            Self::InvalidInteractionId { id, n_slots } => write!(
+                f,
+                "interaction id {id} is inactive or out of bounds for {n_slots} slots"
+            ),
+            Self::OrderChangeCollision {
+                nodes,
+                existing,
+                incoming,
+            } => write!(
+                f,
+                "changing interaction order would merge ids {existing} and {incoming} at nodes {nodes:?}"
+            ),
+            Self::ObjectCountWouldInvalidate { n_objects, id, obj } => write!(
+                f,
+                "reducing to {n_objects} objects would invalidate interaction {id} at object {obj}"
+            ),
+            Self::Attrs(error) => write!(f, "interaction attribute error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for InteractionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            _ => None,
+        }
     }
 }
 

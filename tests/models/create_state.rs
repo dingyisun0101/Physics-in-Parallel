@@ -77,7 +77,7 @@ fn randomize_r_rejects_invalid_position_parameters() {
         RngConfig::default(),
     )
     .unwrap_err();
-    assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
+    assert!(matches!(err, MassiveParticlesError::Sampling(_)));
 
     let err = randomize_r(
         &mut obj,
@@ -88,7 +88,7 @@ fn randomize_r_rejects_invalid_position_parameters() {
         RngConfig::default(),
     )
     .unwrap_err();
-    assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
+    assert!(matches!(err, MassiveParticlesError::Sampling(_)));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn randomize_v_invalid_and_mass_inv_validation() {
         RngConfig::default(),
     )
     .unwrap_err();
-    assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
+    assert!(matches!(err, MassiveParticlesError::Sampling(_)));
 
     obj.set_attribute_vector::<f64>(ATTR_M_INV, 1, &[-1.0])
         .unwrap();
@@ -137,7 +137,7 @@ fn randomize_v_gaussian_per_axis_validates_parameters() {
         RngConfig::default(),
     )
     .unwrap_err();
-    assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
+    assert!(matches!(err, MassiveParticlesError::Sampling(_)));
 
     let err = randomize_v(
         &mut obj,
@@ -148,5 +148,5 @@ fn randomize_v_gaussian_per_axis_validates_parameters() {
         RngConfig::default(),
     )
     .unwrap_err();
-    assert!(matches!(err, MassiveParticlesError::Distribution { .. }));
+    assert!(matches!(err, MassiveParticlesError::Sampling(_)));
 }

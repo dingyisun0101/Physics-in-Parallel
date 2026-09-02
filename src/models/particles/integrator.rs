@@ -17,6 +17,8 @@ Acceleration is not cleared after integration; force/acceleration management is
 left to the caller.
 */
 
+use core::fmt;
+
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
@@ -83,6 +85,45 @@ impl From<ParticleStateError> for IntegratorError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for IntegratorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDt { dt } => {
+                write!(
+                    f,
+                    "integration time step must be finite and positive; got {dt}"
+                )
+            }
+            Self::Attrs(error) => write!(f, "integrator attribute error: {error}"),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "integrator attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "integrator attribute `{label}` has {got} particles; expected {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for IntegratorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            _ => None,
         }
     }
 }

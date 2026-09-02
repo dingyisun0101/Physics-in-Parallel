@@ -22,6 +22,7 @@ Invariants:
       structured `AttrsError` on mismatch.
 */
 
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -108,6 +109,45 @@ pub enum AttrsError {
         got: usize,
     },
 }
+
+impl fmt::Display for AttrsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateLabel { label } => write!(f, "attribute label `{label}` already exists"),
+            Self::UnknownLabel { label } => write!(f, "unknown attribute label `{label}`"),
+            Self::UnknownId { id } => write!(f, "unknown attribute id {id}"),
+            Self::InvalidVectorShape { dim, n } => write!(
+                f,
+                "attribute vector shape requires positive dimension and object count; got dim={dim}, n={n}"
+            ),
+            Self::InconsistentObjectCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "attribute `{label}` has {got} objects; expected {expected}"
+            ),
+            Self::ObjOutOfBounds { label, obj, n } => write!(
+                f,
+                "object index {obj} is out of bounds for attribute `{label}` with {n} objects"
+            ),
+            Self::WrongType {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "attribute `{label}` has scalar type `{got}`; expected `{expected}`"
+            ),
+            Self::WrongVectorLen { expected, got } => {
+                write!(f, "attribute vector has length {got}; expected {expected}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AttrsError {}
 
 #[derive(Debug, Clone)]
 struct AttrEntry {

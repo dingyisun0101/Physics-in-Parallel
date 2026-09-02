@@ -19,6 +19,8 @@ observables. `ParticleSelection::All` intentionally ignores `ATTR_ALIVE` and is
 intended for debugging or inspecting all allocated slots.
 */
 
+use core::fmt;
+
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
 use crate::models::particles::state::{
@@ -86,6 +88,42 @@ impl From<ParticleStateError> for ObserveError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for ObserveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Attrs(error) => write!(f, "observer attribute error: {error}"),
+            Self::InvalidState { field, value } => {
+                write!(f, "observer found invalid `{field}` value {value}")
+            }
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "observer attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "observer attribute `{label}` has {got} particles; expected {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ObserveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            _ => None,
         }
     }
 }

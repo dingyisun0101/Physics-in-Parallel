@@ -13,6 +13,8 @@ is where particle-specific rules belong: position attribute validation, cutoff
 distance checks, and optional exclusion of dead particles.
 */
 
+use core::fmt;
+
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::engines::soa::{NeighborList, NeighborListError};
 use crate::models::particles::attrs::{ATTR_R, ParticleSelection};
@@ -79,6 +81,41 @@ impl From<ParticleStateError> for ParticleNeighborListError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for ParticleNeighborListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Attrs(error) => write!(f, "particle neighbor-list attribute error: {error}"),
+            Self::Neighbor(error) => write!(f, "particle neighbor-list geometry error: {error}"),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "particle neighbor-list attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "particle neighbor-list attribute `{label}` has {got} particles; expected {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ParticleNeighborListError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            Self::Neighbor(error) => Some(error),
+            _ => None,
         }
     }
 }

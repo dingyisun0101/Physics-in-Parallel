@@ -13,6 +13,8 @@ The target storage is a `VectorList<f64>` with shape `[n_vectors, dim]`. Each
 row is one sampled continuous vector.
 */
 
+use core::fmt;
+
 use rayon::prelude::*;
 
 use crate::math::tensor::rank_2::vector_list::VectorList;
@@ -65,6 +67,44 @@ pub enum VectorSamplingError {
         rule: &'static str,
     },
     Rng(TensorRandError),
+}
+
+impl fmt::Display for VectorSamplingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUniformBounds { low, high } => write!(
+                f,
+                "uniform sampling bounds must be finite with low < high; got low={low}, high={high}"
+            ),
+            Self::InvalidParameterLength {
+                parameter,
+                expected,
+                got,
+            } => write!(
+                f,
+                "sampling parameter `{parameter}` has length {got}; expected {expected}"
+            ),
+            Self::InvalidParameterValue {
+                parameter,
+                index,
+                value,
+                rule,
+            } => write!(
+                f,
+                "sampling parameter `{parameter}` has invalid value {value} at index {index}; expected {rule}"
+            ),
+            Self::Rng(error) => write!(f, "vector sampling RNG error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for VectorSamplingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Rng(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 pub fn sample_vectors(

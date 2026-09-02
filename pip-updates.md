@@ -53,6 +53,8 @@ thread budget without PiP creating hidden pools.
 
 ## Stage 2: Error Ergonomics
 
+Status: completed on `tmp`.
+
 Goal: every public model operation returns an error that composes naturally in
 ordinary Rust applications.
 

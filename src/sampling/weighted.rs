@@ -170,7 +170,7 @@ impl DynamicWeightedIndex {
 
 #[inline]
 const fn low_bit(value: usize) -> usize {
-    value & value.wrapping_neg()
+    value.isolate_lowest_one()
 }
 
 fn highest_power_of_two_at_most(value: usize) -> usize {

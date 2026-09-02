@@ -21,6 +21,8 @@ chunks, while particle-specific rules such as alive masks and rigid masks live
 in `models::particles::boundary`.
 */
 
+use core::fmt;
+
 use crate::threading::parallel_chunk_len;
 use rayon::prelude::*;
 
@@ -46,6 +48,32 @@ pub enum BoundaryError {
         got: usize,
     },
 }
+
+impl fmt::Display for BoundaryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidBounds { axis, min, max } => write!(
+                f,
+                "boundary bounds on axis {axis} must be finite with min < max; got min={min}, max={max}"
+            ),
+            Self::InvalidVectorDimension {
+                label,
+                expected,
+                got,
+            } => write!(f, "{label} vector has dimension {got}; expected {expected}"),
+            Self::InvalidFlatVectorListLength { label, dim, len } => write!(
+                f,
+                "flat {label} data has length {len}, which is not divisible by dimension {dim}"
+            ),
+            Self::InconsistentFlatVectorListLength { expected, got } => write!(
+                f,
+                "flat velocity data has length {got}; expected {expected} to match positions"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoundaryError {}
 
 pub trait ContinuousBoundary: Sync {
     fn dim(&self) -> usize;

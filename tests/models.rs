@@ -2,6 +2,8 @@
 mod boundary;
 #[path = "models/create_state.rs"]
 mod create_state;
+#[path = "models/errors.rs"]
+mod errors;
 #[path = "models/integrator.rs"]
 mod integrator;
 #[path = "models/laws.rs"]

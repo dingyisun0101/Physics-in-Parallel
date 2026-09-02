@@ -17,6 +17,8 @@ particle and velocity component. The random stream is deterministic for a fixed
 `seed`, `step_counter`, particle index, and component traversal order.
 */
 
+use core::fmt;
+
 use rayon::prelude::*;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
@@ -85,6 +87,51 @@ impl From<ParticleStateError> for ThermostatError {
                 expected,
                 got,
             },
+        }
+    }
+}
+
+impl fmt::Display for ThermostatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidParam { field, value } => write!(
+                f,
+                "thermostat parameter `{field}` must be finite and non-negative; got {value}"
+            ),
+            Self::InvalidDt { dt } => {
+                write!(
+                    f,
+                    "thermostat time step must be finite and positive; got {dt}"
+                )
+            }
+            Self::Attrs(error) => write!(f, "thermostat attribute error: {error}"),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "thermostat attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                f,
+                "thermostat attribute `{label}` has {got} particles; expected {expected}"
+            ),
+            Self::RngConfig(error) => write!(f, "thermostat RNG configuration error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ThermostatError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            Self::RngConfig(error) => Some(error),
+            _ => None,
         }
     }
 }

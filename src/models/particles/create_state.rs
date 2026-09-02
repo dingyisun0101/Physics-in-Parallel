@@ -17,6 +17,8 @@ Canonical template attributes:
 - `rigid`: rigid-mask scalar, initialized to zero.
 */
 
+use core::fmt;
+
 use crate::math::tensor::rank_2::vector_list::VectorList;
 use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
 use crate::rng::RngConfig;
@@ -72,11 +74,9 @@ pub enum MassiveParticlesError {
         /// Actual number of rows.
         got: usize,
     },
-    /// Distribution parameters are invalid.
-    Distribution {
-        /// Human-readable validation message.
-        msg: String,
-    },
+    /// Lower-level vector sampling error.
+    Sampling(VectorSamplingError),
+    /// Lower-level random tensor generation error.
     Rng(TensorRandError),
 }
 
@@ -88,8 +88,52 @@ impl From<AttrsError> for MassiveParticlesError {
 
 impl From<VectorSamplingError> for MassiveParticlesError {
     fn from(value: VectorSamplingError) -> Self {
-        Self::Distribution {
-            msg: format!("{value:?}"),
+        Self::Sampling(value)
+    }
+}
+
+impl fmt::Display for MassiveParticlesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Attrs(error) => write!(f, "particle attribute error: {error}"),
+            Self::InvalidDimension { dim } => {
+                write!(f, "particle vector dimension must be positive; got {dim}")
+            }
+            Self::InvalidParticleCount { n } => {
+                write!(f, "particle count must be positive; got {n}")
+            }
+            Self::InvalidTau { tau } => write!(
+                f,
+                "Maxwell-Boltzmann tau must be finite and non-negative; got {tau}"
+            ),
+            Self::InvalidMassInv { index, value } => write!(
+                f,
+                "inverse mass at particle {index} must be finite and non-negative; got {value}"
+            ),
+            Self::InvalidMassInvShape {
+                expected_dim,
+                got_dim,
+            } => write!(
+                f,
+                "inverse-mass attribute has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount { expected, got } => write!(
+                f,
+                "inverse-mass attribute has {got} particles; expected {expected}"
+            ),
+            Self::Sampling(error) => write!(f, "particle sampling error: {error}"),
+            Self::Rng(error) => write!(f, "particle RNG error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for MassiveParticlesError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Attrs(error) => Some(error),
+            Self::Sampling(error) => Some(error),
+            Self::Rng(error) => Some(error),
+            _ => None,
         }
     }
 }

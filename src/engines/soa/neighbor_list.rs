@@ -18,6 +18,8 @@ The list is non-periodic; periodic or reflective boundary policies belong in
 space or model-level code.
 */
 
+use core::fmt;
+
 /// Errors returned by neighbor-list construction and rebuild operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NeighborListError {
@@ -43,6 +45,30 @@ pub enum NeighborListError {
         got_len: usize,
     },
 }
+
+impl fmt::Display for NeighborListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidCellWidth { cell_width } => write!(
+                f,
+                "neighbor-list cell width must be finite and positive; got {cell_width}"
+            ),
+            Self::InvalidBounds { axis, min, max } => write!(
+                f,
+                "neighbor-list bounds on axis {axis} must be finite with min < max; got min={min}, max={max}"
+            ),
+            Self::InvalidPositionShape {
+                expected_len,
+                got_len,
+            } => write!(
+                f,
+                "flat position data has length {got_len}; expected {expected_len}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for NeighborListError {}
 
 /// Cell-linked list that emits candidate object pairs from neighboring cells.
 #[derive(Debug, Clone)]
