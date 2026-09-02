@@ -1,4 +1,4 @@
-"""NumPy reader for direct PiP 4.0 JSON documents."""
+"""NumPy reader for direct PiP 4.0 alpha JSON documents."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _payload_to_ndarray(payload) -> np.ndarray:
         return _universal_tensor_to_ndarray(payload)
     if {"geometry", "values", "initialization_rng"}.issubset(payload):
         return _lattice_to_ndarray(payload)
-    raise ValueError("unsupported PiP 4.0 array document")
+    raise ValueError("unsupported PiP 4.0 alpha array document")
 
 
 def _universal_tensor_to_ndarray(payload) -> np.ndarray:

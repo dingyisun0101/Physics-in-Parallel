@@ -1,11 +1,44 @@
 # Physics in Parallel
 
+> **ALPHA / BREAKING UPDATE**
+>
+> `4.0.0-alpha.1` is an unstable, clean-slate rewrite. It is not compatible
+> with PiP 3.x. Public APIs and serialized representations may change without
+> migration support before 4.0.0. Pin the exact alpha version and do not treat
+> alpha data formats as archival.
+
 Physics in Parallel (PiP) provides reusable multicore numerical building
 blocks for simulations: backend-agnostic tensors, spatial sampling, lattices,
 pair generation, and ready-to-use particle models.
 
-Version 4.0.0 is a clean-slate API. No compatibility with pre-4.0 releases is
-provided.
+## Installation
+
+During the alpha, pin the exact release:
+
+```toml
+[dependencies]
+physics_in_parallel = "=4.0.0-alpha.1"
+```
+
+PiP requires Rust 1.97 or newer.
+
+## Breaking Changes From 3.x
+
+PiP 4.0 intentionally provides no compatibility aliases, migration wrappers,
+or readers for 3.x data. The main changes are:
+
+- `Tensor<T>`, `Matrix<T>`, and `VectorList<T>` are backend-agnostic public
+  types with explicitly selected dense or sparse storage.
+- Random operations take `ResolvedRng`; optional seeds and implicit entropy
+  fallbacks are gone.
+- Numerical foundations and ready-made physical models use independent
+  `prelude::basic` and `prelude::models` imports.
+- One process-wide `set_max_threads` setting replaces per-object worker
+  controls. PiP uses the caller's active Rayon pool.
+- Direct validated Serde is the conversion boundary. PiP no longer owns file,
+  output-directory, reducer, checkpoint, or JSON-string policy.
+- PiP constructors accept semantic runtime values. Applications own grouped
+  configuration types and workflow adapters.
 
 > **Thread-pool setup is the application's responsibility.** PiP uses the
 > active Rayon pool and never creates a pool. Configure one shared pool before
@@ -24,9 +57,10 @@ use physics_in_parallel::prelude::models::*;
 use physics_in_parallel::prelude::advanced::*;
 ```
 
-The basic prelude contains ordinary numerical and spatial tools. The models
-prelude contains particle state and physical behavior. The advanced prelude is
-opt-in and exposes raw storage and generic engines. No prelude imports another.
+The basic prelude contains numerical, random, spatial, and execution tools. The
+models prelude contains particle state and physical behavior. The advanced
+prelude is opt-in and exposes raw storage and generic engines. No prelude
+imports another, and domain roots remain available for explicit imports.
 
 ## Quick Start
 
@@ -92,7 +126,8 @@ let nondeterministic = ResolvedRng::from_entropy(RngMethod::ChaCha12);
 Indexed operations are schedule-independent. Long-lived stochastic objects
 retain the resolved RNG and any counter needed for reproducible continuation.
 When PiP is used with a workflow system, the application adapts the workflow's
-purpose-derived seed into `ResolvedRng`; PiP does not depend on that workflow.
+purpose-derived seed into `ResolvedRng`; PiP does not depend on or know about
+that workflow.
 
 ## Models
 
@@ -113,5 +148,8 @@ JSON-string helpers, payload APIs, file writers, reducers, output directories,
 or checkpoint schedules. Applications and workflow systems own persistence and
 aggregation policy.
 
-See [api.md](api.md) for the complete contract and
-[advanced_api.md](advanced_api.md) before using lower-level facilities.
+API details live in the crate's rustdoc. Read the
+[advanced API guide](https://github.com/dingyisun0101/Physics-in-Parallel/blob/main/advanced_api.md)
+before using lower-level facilities, and see the
+[example guide](https://github.com/dingyisun0101/Physics-in-Parallel/blob/main/EXAMPLES.md)
+for the checked example inventory.

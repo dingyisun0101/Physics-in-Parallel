@@ -2,6 +2,12 @@
 Physics in Parallel provides backend-agnostic numerical containers, spatial
 tools, and reusable physical models.
 
+# Alpha warning
+
+PiP 4.0 is an unstable, clean-slate rewrite. Alpha releases are incompatible
+with PiP 3.x, and their public API and serialized representations may change
+without migration support before 4.0.0.
+
 # Thread-pool responsibility
 
 PiP uses the active Rayon pool and never creates one. Applications must
@@ -22,7 +28,9 @@ use physics_in_parallel::prelude::advanced::*;
 ```
 
 Start with the basic or model API. Raw storage and generic engines are advanced;
-implementation modules are private.
+implementation modules are private. PiP owns runtime scientific values, while
+applications own user configuration, persistence policy, and workflow
+integration.
 */
 
 pub mod advanced;

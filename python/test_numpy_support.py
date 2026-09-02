@@ -1,4 +1,4 @@
-"""Cross-language checks for PiP 4.0 array documents."""
+"""Cross-language checks for PiP 4.0 alpha array documents."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class NumpySupportTests(unittest.TestCase):
         np.testing.assert_array_equal(array, np.array([[1, 2], [3, 4]]))
 
     def test_pre_4_schema_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unsupported PiP 4.0"):
+        with self.assertRaisesRegex(ValueError, "unsupported PiP 4.0 alpha"):
             self.decode({"kind": "tensor", "shape": [1], "data": [1]})
 
 

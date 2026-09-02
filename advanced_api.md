@@ -1,14 +1,18 @@
 # PiP Advanced API
 
+> **Alpha API:** this guide targets `4.0.0-alpha.1`. Advanced interfaces may
+> change between alpha releases and have no compatibility contract with 3.x.
+
 The advanced API is opt-in:
 
 ```rust
 use physics_in_parallel::prelude::advanced::*;
 ```
 
-Use a domain's basic API first. Use this layer only for missing coverage or a
-measured efficiency requirement. PiP's crate-private implementation modules
-remain inaccessible.
+Use `prelude::basic` or `prelude::models` first. Use this layer only for missing
+coverage or a measured efficiency requirement. PiP's crate-private
+implementation modules remain inaccessible, and the advanced prelude does not
+implicitly import either normal prelude.
 
 ## Exported Symbols
 
