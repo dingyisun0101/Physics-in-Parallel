@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Shared tensor algorithms used by `TensorTrait` default methods.
 //!
 //! Backend implementations may override trait defaults when they can do better,

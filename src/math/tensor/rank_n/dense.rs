@@ -98,21 +98,6 @@ impl<T: Scalar> Tensor<T> {
     }
 
     #[inline]
-    pub(crate) fn from_vec(shape: &[usize], data: Vec<T>) -> Self {
-        let expected = checked_num_elements(shape, "dense tensor from vector");
-        assert_eq!(
-            data.len(),
-            expected,
-            "dense tensor data length mismatch: expected {expected}, got {}",
-            data.len()
-        );
-        Self {
-            shape: shape.to_vec(),
-            data,
-        }
-    }
-
-    #[inline]
     pub(crate) fn data(&self) -> &[T] {
         &self.data
     }

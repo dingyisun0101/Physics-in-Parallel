@@ -35,7 +35,7 @@ use std::ops::{Add, BitAnd, Div, Mul, Sub};
 use crate::threading::parallel_chunk_len;
 
 use super::dense::{Tensor as TensorDense, checked_num_elements};
-use super::layout::{RowMajorLayout, flat_index_wrapped, normalize_flat_index};
+use super::layout::{flat_index_wrapped, normalize_flat_index};
 use super::tensor_trait::TensorTrait;
 use crate::math::scalar::{Scalar, ScalarCastError};
 
@@ -165,20 +165,6 @@ impl<T: Scalar> Tensor<T> {
     ///     oversized coordinates wrap periodically.
     pub fn get(&self, idx: &[isize]) -> T {
         self.get_opt(idx).copied().unwrap_or_else(T::zero)
-    }
-
-    #[inline]
-    /// Details:
-    /// - Purpose: Returns a mutable reference to the stored value at a wrapped
-    ///   coordinate, inserting an explicit zero first when the coordinate was
-    ///   previously implicit.
-    /// - Parameters:
-    ///   - `idx` (`&[isize]`): One signed coordinate per axis; negative and
-    ///     oversized coordinates wrap periodically.
-    pub(crate) fn get_mut_or_insert_zero(&mut self, idx: &[isize]) -> &mut T {
-        let k = self.index(idx);
-        // Insert zero on miss, then return &mut to the stored value.
-        self.data.entry(k).or_insert_with(T::zero)
     }
 
     /// Set value at multi-index. Inserting `0` **removes** the entry.
@@ -622,7 +608,8 @@ where
     /// - Parameters:
     ///   - `indices` (`&[isize]`): One signed coordinate per tensor axis.
     fn get_mut(&mut self, indices: &[isize]) -> &mut T {
-        self.get_mut_or_insert_zero(indices)
+        let index = self.index(indices);
+        self.data.entry(index).or_insert_with(T::zero)
     }
 
     #[inline(always)]

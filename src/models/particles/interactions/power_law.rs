@@ -289,9 +289,10 @@ impl PowerLawNetwork {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ((usize, usize), &PowerLawDecay)> + '_ {
-        self.interactions.iter().filter_map(|(_, nodes, law)| {
-            (nodes.nodes.len() == 2).then(|| ((nodes.nodes[0], nodes.nodes[1]), law))
-        })
+        self.interactions
+            .iter()
+            .filter(|(_, nodes, _)| nodes.nodes.len() == 2)
+            .map(|(_, nodes, law)| ((nodes.nodes[0], nodes.nodes[1]), law))
     }
 
     pub fn clear(&mut self) {

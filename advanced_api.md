@@ -1,108 +1,80 @@
-# PiP advanced API
+# PiP Advanced API
 
-This document is the exhaustive contract for
-`physics_in_parallel::prelude::advanced`. It is opt-in and does not import the
-basic or models preludes.
+The advanced API is opt-in:
 
-Advanced APIs are intended for custom algorithms, storage backends, schema
-integration, and generic engines. Ordinary simulation code should prefer the
-basic and models APIs in the main README.
+```rust
+use physics_in_parallel::prelude::advanced::*;
+```
 
-## Exported symbols
+Use a domain's basic API first. Use this layer only for missing coverage or a
+measured efficiency requirement. PiP's crate-private implementation modules
+remain inaccessible.
 
-The advanced prelude exports exactly these symbols:
+## Exported Symbols
 
-- Tensor backends and layout: `Backend`, `Dense`, `Sparse`, `RowMajorLayout`,
-  `TensorTrait`, `TensorResult`, `RankNDense`, `RankNSparse`.
-- Matrix backends and structured matrices: `MatrixBackend`, `SparseMatrix`,
-  `DiagonalMatrix`, `SymmetricMatrix`, `AntiSymmetricMatrix`,
-  `UpperTriangularMatrix`, `StrictUpperTriangularMatrix`,
-  `LowerTriangularMatrix`, `StrictLowerTriangularMatrix`.
-- Dynamic and generated vector batches: `DynVectorList`, `VectorListRand`,
-  `HaarVectors`, `NNVectors`.
-- Random-fill extension points: `TensorRandElement`, `NUM_RNGS`.
-- Dynamic discrete sampling: `DynamicWeightedIndex`,
-  `DynamicWeightedIndexError`.
-- Scalar and interchange support: `ScalarSerde`, `TensorStringConvert`,
-  `FlatPayload`, `SparsePayload`, `SparsePayloadParts`,
-  `ToJsonPayload`, `FromJsonPayload`, `JSON_SCHEMA_VERSION`.
-- Generic system storage: `AttrId`, `AttrsMeta`, `AttrsCore`,
-  `PhysObjAdvanced`.
-- Generic interactions: `ObjId`, `InteractionId`, `InteractionNodes`,
-  `InteractionOrder`, `InteractionTopology`, `Interaction`,
-  `InteractionError`, `NeighborList`, `NeighborListError`.
-- Generic reduction: `Reducer`, `MeanReducer`.
-- Spatial extension points: `Space`, `SquareLatticeAdvanced`, `Kernel`,
-  `NearestNeighborKernel`, `PowerLawKernel`, `UniformDistanceKernel`,
-  `save_square_lattice`.
+Raw container storage:
 
-All public variants and documented methods on these items are part of the
-advanced contract. Generated Rustdoc is the exact signature reference.
+- `RawStorage`
 
-## Invariants and intended use
+Structured matrix representations:
 
-### Backends
+- `DiagonalMatrix`
+- `SymmetricMatrix`
+- `AntiSymmetricMatrix`
+- `UpperTriangularMatrix`
+- `StrictUpperTriangularMatrix`
+- `LowerTriangularMatrix`
+- `StrictLowerTriangularMatrix`
 
-`Backend`, `TensorTrait`, and `MatrixBackend` exist for algorithms that must be
-generic over storage. `Dense` and `Sparse` are marker backends;
-`RowMajorLayout` owns coordinate/flat-index conversion. Sparse values must be
-canonical: sorted unique flat indices, in bounds, with explicit zeros omitted.
+Generic object and interaction engines:
 
-Structured matrix markers encode mathematical storage constraints. Operations
-that cannot preserve such a structure return a dense result explicitly.
+- `AttrId`, `AttrsMeta`, `AttrsCore`, `AttrsError`, `PhysObjAdvanced`
+- `ObjId`, `InteractionId`, `InteractionNodes`, `InteractionOrder`
+- `InteractionTopology`, `Interaction`, `InteractionError`
+- `NeighborList`, `NeighborListError`
 
-### Random extensions
+Sampling and square-lattice extensions:
 
-`TensorRandElement` is the sealed set of scalar types PiP can fill directly.
-It is exposed only so generic advanced code can state the same bound as
-`TensorRandFiller`; downstream crates cannot implement it. `NUM_RNGS` is the
-fixed deterministic lane count for stateful random streams. It is deliberately
-independent of Rayon worker scheduling and worker count, so changing execution
-parallelism does not change seeded results.
+- `DynamicWeightedIndex`, `DynamicWeightedIndexError`
+- `Kernel`, `NearestNeighborKernel`, `PowerLawKernel`
+- `UniformDistanceKernel`, `SquareLatticeAdvanced`
 
-`VectorListRand`, `HaarVectors`, and `NNVectors` expose reusable generators for
-custom algorithms. Basic consumers should use `TensorRandFiller` or the
-high-level sampling and pairing APIs.
+## Raw Storage
 
-`DynamicWeightedIndex` is an RNG-independent mutable weighted order index. It
-maps an integer drawn from `0..total()` to an item, supports exact item
-exclusion, and updates one weight in logarithmic time. Integer weights and
-checked totals make its selection contract exact. Callers compose it with
-`IndexedRng` or another PiP random source; the index never owns or advances an
-RNG.
+`RawStorage<T>` provides flat-index reads and writes, optional dense slices,
+and stored-entry extraction for `Tensor<T>`, `Matrix<T>`, and `VectorList<T>`.
+The ordinary coordinate-based methods should be considered first.
 
-### Generic object engine
+Representation matters here:
 
-`AttrsCore` is heterogeneous structure-of-arrays storage with stable attribute
-IDs and equal object counts across columns. `AttrsMeta` stores collection
-metadata. `PhysObjAdvanced` provides raw metadata and attribute-store access
-when the typed `PhysObj` facade does not cover an integration need.
+- dense slices exist only for dense storage
+- stored-entry traversal is `O(total elements)` for dense storage
+- stored-entry traversal is `O(stored elements)` for sparse storage
+- flat writes to sparse storage may insert or remove entries
 
-`InteractionTopology` canonicalizes node order according to
-`InteractionOrder`; `Interaction<T>` attaches payloads to that topology.
-`NeighborList` is model-agnostic spatial candidate generation. Ready particle
-models wrap these facilities and belong to `prelude::models`.
+Code using this trait deliberately accepts backend-sensitive costs.
 
-### Space extensions
+## Generic Engines
 
-`Space` is the generic indexing/storage trait. Normal square-lattice code uses
-the inherent lattice methods instead. `SquareLatticeAdvanced` currently adds
-downsampling.
+`AttrsCore` is heterogeneous structure-of-arrays storage. `PhysObjAdvanced`
+allows custom model adapters to inspect or replace that raw storage. Normal
+particle code uses `PhysObj` typed accessors and handles `ParticleStateError`.
 
-`Kernel` and its concrete implementations are exposed for custom pairing
-algorithms. Normal pair generation selects built-ins through `KernelType`, so
-users do not construct or dispatch kernel objects themselves.
+`Interaction<T>` and `NeighborList` are generic engines. Physical networks and
+`ParticleNeighborList` intentionally hide them; model users work with particle
+pairs and model-owned errors instead.
 
-### Interchange
+## Structured Matrices
 
-Payload and conversion traits support custom persistence layers. The schema
-version and payload types describe PiP data only; they do not prescribe file
-layout, checkpointing, or workflow behavior.
+Structured matrix types encode storage constraints that do not fit the
+universal dense/sparse `Matrix<T>` contract. They are advanced because their
+operations and result types depend on the represented structure. They are not
+alternate backends for the basic `Matrix<T>` type.
 
-## Internal boundary
+## Extension Rules
 
-Modules not reachable through `prelude::basic`, `prelude::models`, or this
-advanced prelude are crate-private. They are free to change and must not be
-duplicated in downstream code. If a missing capability can be composed from
-the published layers, composition is preferred over exposing another backend
-primitive.
+Advanced APIs may expose representation or generic-engine concepts, but they
+must not create a second normal route for model construction, arithmetic,
+serialization, randomness, or thread-pool ownership. Direct Serde remains the
+only conversion API, and `set_max_threads` remains the only PiP-wide execution
+setting.

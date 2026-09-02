@@ -1,20 +1,28 @@
 /*!
-Physics in Parallel crate root.
+Physics in Parallel provides backend-agnostic numerical containers, spatial
+tools, and reusable physical models.
 
-Purpose:
-This crate provides layered infrastructure for physics-oriented numerical
-simulation:
+# Thread-pool responsibility
 
-- `math` defines scalar, tensor, matrix, vector-list, random-fill, and math IO
-  foundations.
-- `space` adds continuous and discrete spatial semantics on top of math
-  containers.
-- `engines` provides model-agnostic runtime storage and interaction backends.
-- `models` provides concrete physical model pieces that use the lower layers.
+PiP uses the active Rayon pool and never creates one. Applications must
+configure one shared pool before concurrent work begins or let their workflow
+runner do so. Independent pools can oversubscribe the machine. Normally call
+[`threading::set_max_threads`] once during startup to set the maximum worker
+participation requested by any single PiP method.
 
-The crate-wide prelude separates foundational, model-level, and advanced APIs:
+# API tiers
 
-`use physics_in_parallel::prelude::basic::*;`
+Domain roots are authoritative. Independent convenience preludes expose basic
+numerics, ready physical models, and opt-in advanced facilities:
+
+```rust
+use physics_in_parallel::prelude::basic::*;
+use physics_in_parallel::prelude::models::*;
+use physics_in_parallel::prelude::advanced::*;
+```
+
+Start with the basic or model API. Raw storage and generic engines are advanced;
+implementation modules are private.
 */
 
 pub mod advanced;

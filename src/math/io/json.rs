@@ -2,32 +2,11 @@ use std::any::TypeId;
 
 use num_complex::Complex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::math::scalar::Scalar;
 
 /// Version shared by the current PiP JSON payload schemas.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
-
-pub trait ToJsonPayload {
-    type Payload: Serialize;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error>;
-
-    fn to_json_value(&self) -> Result<Value, serde_json::Error> {
-        serde_json::to_value(self.to_json_payload()?)
-    }
-
-    fn to_json_string(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.to_json_payload()?)
-    }
-}
-
-pub trait FromJsonPayload: Sized {
-    type Payload: for<'de> Deserialize<'de>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String>;
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +19,7 @@ pub struct FlatPayload<T> {
 }
 
 impl<T: Scalar> FlatPayload<T> {
-    pub fn new(kind: &str, shape: Vec<usize>, data: Vec<T>) -> Self {
+    pub(crate) fn new(kind: &str, shape: Vec<usize>, data: Vec<T>) -> Self {
         Self {
             kind: kind.to_string(),
             version: JSON_SCHEMA_VERSION,

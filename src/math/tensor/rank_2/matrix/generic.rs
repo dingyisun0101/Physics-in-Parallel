@@ -53,8 +53,6 @@ pub struct Matrix<T: Scalar, B: MatrixBackend<T> = RankNDense<T>> {
 pub type DenseMatrix<T> = Matrix<T, RankNDense<T>>;
 
 /// Sparse rank-N-backed matrix.
-pub type SparseMatrix<T> = Matrix<T, RankNSparse<T>>;
-
 /// Failure while constructing a matrix or applying it to a vector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]

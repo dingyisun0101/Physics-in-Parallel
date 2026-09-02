@@ -1,208 +1,117 @@
 # Physics in Parallel
 
-> **Alpha and breaking API notice:** PiP is under active design. Version 3.7.0
-> is the current API contract; every version before 3.7.0 is considered broken
-> and unsupported. Versions still increase normally, but any alpha release may
-> contain breaking changes. Pin the exact version used by a scientific project.
+Physics in Parallel (PiP) provides reusable multicore numerical building
+blocks for simulations: backend-agnostic tensors, spatial sampling, lattices,
+pair generation, and ready-to-use particle models.
 
-Physics in Parallel (PiP) provides reusable, multicore numerical building
-blocks for simulations: tensors, matrices, vector batches, spatial sampling,
-lattices, pair generation, and ready-to-use particle models.
+Version 4.0.0 is a clean-slate API. No compatibility with pre-4.0 releases is
+provided.
 
-## API contract
+> **Thread-pool setup is the application's responsibility.** PiP uses the
+> active Rayon pool and never creates a pool. Configure one shared pool before
+> starting concurrent work, especially when using a workflow runner, or the
+> process may oversubscribe the machine. Call `set_max_threads` once at startup
+> to cap worker participation by any single PiP method.
 
-PiP deliberately has three non-overlapping preludes:
+## API Layers
 
-```rust
-use physics_in_parallel::prelude::basic::*;    // foundational user API
-use physics_in_parallel::prelude::models::*;   // ready physical models
-use physics_in_parallel::prelude::advanced::*; // backend and extension API
-```
-
-Import only the layers a program uses. No prelude imports another. The old
-crate-wide and domain-specific preludes no longer exist.
-
-The `basic` and `models` symbols listed below are the complete normal user API.
-The opt-in backend API is catalogued in [advanced_api.md](advanced_api.md).
-Anything not re-exported by one of these preludes is implementation detail and
-cannot be imported by downstream crates.
-
-Some foundational container types have inherent methods whose signatures use
-advanced-only backend types. Those methods are advanced API despite living on
-the same Rust type; the signature makes the boundary explicit.
-
-PiP itself follows the same dependency rule: compose the basic API first, use
-the advanced API only when it supplies a necessary capability, and access an
-internal implementation only when a public route would materially harm
-performance or cannot express the operation.
-
-## Basic API
-
-`physics_in_parallel::prelude::basic` exports exactly these symbols:
-
-- Randomness: `RngConfig`, `RngMethod`, `RngConfigError`, `IndexedRng`.
-- Explicit execution convenience: `ComputePool`, `ComputePoolError`,
-  `with_threads`.
-- Scalars: `Scalar`, `Complex`, `ScalarCastError`.
-- Dense mathematics: `Tensor`, `TensorError`, `Matrix`, `DenseMatrix`,
-  `MatrixError`, `VectorList`.
-- Random filling: `RandType`, `TensorRandFiller`, `TensorRandError`,
-  `DEFAULT_RANDOM_MAX_THREADS`.
-- Continuous space: `BoundaryError`, `ContinuousBoundary`, `ClampBox`,
-  `PeriodicBox`, `ReflectBox`, `VectorSamplingMethod`, `VectorSamplingError`,
-  `sample_vectors`.
-- Square lattices: `BoundaryCondition`, `SquareLatticeConfig`,
-  `SquareLatticeConfigError`, `SquareLattice`, `SquareLatticeInitMethod`.
-- Pair generation: `PairGeneratorConfig`, `PairGenerator`, `PairingMethod`,
-  `SourceMode`, `KernelType`, `KernelError`, `PairGenerationError`.
-
-The core container conventions are consistent:
-
-- `Tensor` uses owned contiguous row-major storage and a dynamic shape.
-  `as_slice` and `as_mut_slice` provide zero-copy dense access;
-  `try_from_vec` validates incoming ownership transfers; `copy_from`,
-  `zip_from`, and `for_each_chunk_mut` support allocation-free simulation
-  kernels. Coordinate and flat accessors both wrap periodically, including
-  negative and oversized indices.
-- `Matrix` uses signed `(row, column)` and flat access with periodic wrapping.
-  Arithmetic keeps the backend when that is mathematically valid. Scalar
-  multiplication is named `scalar_mul`; `mul_vectors_into` applies one matrix
-  to a caller-owned contiguous vector batch.
-- `VectorList` stores `num_vectors` rows of dimension `dim`; use `vector`,
-  `vector_mut`, `vector_owned`, `set_vector`, `axis`, and `set_axis`
-  for row/axis access.
-- `SquareLattice` exposes coordinate and flat forms of `get`, `get_mut`, and
-  `set`, plus `shape`, `rank`, `num_sites`, and `fill`, without requiring the
-  advanced `Space` trait. Every accessor applies its configured boundary.
-  `SquareLatticeInitMethod::ShuffledValues` accepts one complete flat row-major
-  value list and applies a reproducible unbiased permutation before constructing
-  the shaped lattice. The shuffle machinery remains internal to PiP.
-
-Dense `Tensor`, `Matrix`, and `VectorList` provide constructors, shape/access
-methods, elementwise arithmetic, `scalar_mul`, casts, and Serde. `Tensor`
-additionally provides mapping and tensor algebra such as transpose, dot, norm,
-cross, wedge, and matrix multiplication. `Matrix` additionally provides
-transpose, Hermitian transpose, trace, matrix multiplication, and `abs`.
-`VectorList` additionally provides parallel row traversal, per-row scaling,
-norms, normalization, and polar decomposition. Rustdoc is the exact signature
-reference.
-
-### Randomness
-
-`RngConfig` is the only randomness configuration accepted by normal stochastic
-APIs. A missing seed uses host entropy; a missing method uses the component's
-documented default. Long-lived generators expose their resolved configuration.
-Indexed filling and pair generation are deterministic independently of Rayon
-scheduling and worker count. `TensorRandFiller::max_threads` is an
-instance-local runtime limit: it bounds how many workers one fill may occupy
-without changing deterministic RNG lanes or generated values.
-
-### Internal parallelism
-
-PiP uses the current Rayon pool and does not normally create or own another
-thread pool. Kernel work planning adapts to the workload and the number of
-workers available in that pool. There is no process-wide PiP thread or
-partition setting.
-
-Callers that need a reusable fixed-size execution environment may opt in:
+Domain roots are authoritative: `math`, `rng`, `space`, `models`, and
+`threading`. Three independent preludes are available for convenience:
 
 ```rust
 use physics_in_parallel::prelude::basic::*;
-
-let pool = ComputePool::new(4)?;
-let _result = pool.install(|| expensive_calculation());
-# Ok::<(), Box<dyn std::error::Error>>(())
-# fn expensive_calculation() {}
+use physics_in_parallel::prelude::models::*;
+use physics_in_parallel::prelude::advanced::*;
 ```
 
-`with_threads` is the one-operation shortcut; construct `ComputePool` directly
-when executing repeatedly so worker creation is amortized. Both are explicit
-conveniences. Existing Rayon pools, environment configuration, and
-higher-level workflow concurrency remain owned by the caller.
+The basic prelude contains ordinary numerical and spatial tools. The models
+prelude contains particle state and physical behavior. The advanced prelude is
+opt-in and exposes raw storage and generic engines. No prelude imports another.
 
-Elementwise and batched matrix operations select serial execution below a
-conservative work threshold and bounded Rayon execution above it. This avoids
-paying task-scheduling costs for small tensors while retaining multicore
-throughput for spatial fields. `Tensor::sum_serial` is the stable row-major
-reduction for calculations whose floating-point order is scientifically
-observable; `Tensor::sum` is the parallel throughput-oriented reduction.
+## Quick Start
 
-### Workflow and serialization
+```rust
+use physics_in_parallel::prelude::basic::{
+    ResolvedRng, RngMethod, VectorSamplingMethod, set_max_threads,
+};
+use physics_in_parallel::prelude::models::{
+    ParticleSelection, Spring, SpringNetwork, create_template, randomize_r,
+};
 
-PiP containers implement Serde directly. A `Tensor<f64>` or
-`Option<Tensor<f64>>` can therefore be inserted into a heterogeneous workflow
-state and passed directly to a generic writer without an adapter or conversion
-allocation. Dense tensors serialize as a versioned flat payload containing
-`kind`, `version`, `scalar`, `shape`, and row-major `data`; deserialization
-validates all five fields before constructing storage.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    set_max_threads(Some(4))?;
 
-PiP is the canonical Rust numerical representation and has no Rust `ndarray`
-dependency. Python readers may reconstruct the versioned payload as NumPy
-arrays at the external analysis boundary.
+    let mut particles = create_template(2, 2)?;
+    let rng = ResolvedRng::new(42, RngMethod::IndexedSplitMix64);
+    randomize_r(
+        &mut particles,
+        VectorSamplingMethod::Uniform { low: -1.0, high: 1.0 },
+        rng,
+    )?;
 
-### Pair generation
+    let mut network = SpringNetwork::new();
+    network.insert((0, 1), Spring::new(1.0, 0.5, None)?)?;
+    network.apply(&mut particles, ParticleSelection::AliveOnly)?;
+    Ok(())
+}
+```
 
-Construct a `PairGeneratorConfig`, then a `PairGenerator` from the lattice
-shape. Every pairing method produces the same meanings and shapes: one source
-site and one target site per pair. `PairingMethod::IndependentUniform` samples
-source and target independently over the full shape and allows self-pairs.
-Kernel-based methods instead sample a displacement. Their raw target
-coordinates can lie outside the declared shape and must be passed to
-`SquareLattice` access methods, whose indexing rules resolve the boundary.
-Users do not add boundary logic to the generator.
+Run the complete example with `cargo run --example basic_particle`.
 
-## Models API
+## Universal Containers
 
-`physics_in_parallel::prelude::models` exports exactly these symbols:
+`Tensor<T>`, `Matrix<T>`, and `VectorList<T>` each hide a dense or sparse
+representation behind one public mathematical type. Both representations are
+fundamental; callers choose explicitly through dense-value or sparse-entry
+constructors.
 
-- State: `PhysObj`, `AttrsError`, `create_template`, `MassiveParticlesError`,
-  `VelocitySamplingMethod`, `randomize_r`, `randomize_v`.
-- Canonical attributes: `ATTR_R`, `ATTR_V`, `ATTR_A`, `ATTR_M`, `ATTR_M_INV`,
-  `ATTR_ALIVE`, `ATTR_RIGID`, `ParticleSelection`, `set_alive`, `is_alive`,
-  `set_rigid`, `is_rigid`.
-- Boundaries: `ParticleBoundary`, `ParticleBoundaryError`.
-- Integration: `Integrator`, `IntegratorError`, `ExplicitEuler`,
-  `SemiImplicitEuler`.
-- Thermostats: `Thermostat`, `ThermostatError`, `LangevinThermostat`.
-- Observation: `Observer`, `ObserveError`, `KineticEnergyObserver`,
-  `TemperatureObserver`.
-- Laws: `Spring`, `SpringCutoff`, `SpringLawError`, `PowerLawDecay`,
-  `PowerLawRange`, `PowerLawError`.
-- Interactions: `SpringNetwork`, `SpringNetworkError`, `PowerLawNetwork`,
-  `PowerLawNetworkError`, `ParticleNeighborList`,
-  `ParticleNeighborListError`.
+- `storage_kind`, `make_dense`, and `make_sparse` control representation.
+- PiP never changes representation implicitly.
+- Allocating operations preserve the receiver's representation.
+- `*_into` operations preserve the caller-selected output representation.
+- Direct Serde preserves representation.
+- Basic access uses coordinates and returns values.
+- Flat indices, contiguous slices, and stored-entry traversal require the
+  advanced `RawStorage` trait.
 
-`PhysObj` is the canonical system state, so users do not need a wrapper struct.
-Its normal API exposes metadata, object count, typed attribute access, typed
-attribute-vector access, mutation, serialization, and JSON persistence.
-Boolean state is accessed through the bool-facing helpers; its compact numeric
-encoding is internal.
+Sparse storage does not make every operation sparse-cost. Logical `values()`,
+general mapping, and operations that produce many nonzero values can require
+time or memory proportional to the full logical size. Read each method's
+`# Complexity` and `# Result storage` sections before choosing a representation.
+
+## Randomness
+
+Every public stochastic API accepts a fully specified `ResolvedRng`. PiP has no
+optional seed, hidden default method, or implicit entropy fallback.
+
+```rust
+let reproducible = ResolvedRng::new(7, RngMethod::ChaCha12);
+let nondeterministic = ResolvedRng::from_entropy(RngMethod::ChaCha12);
+```
+
+Indexed operations are schedule-independent. Long-lived stochastic objects
+retain the resolved RNG and any counter needed for reproducible continuation.
+When PiP is used with a workflow system, the application adapts the workflow's
+purpose-derived seed into `ResolvedRng`; PiP does not depend on that workflow.
+
+## Models
+
+`PhysObj` is canonical particle state. Typed attribute access returns universal
+`VectorList` values, and invalid state is reported through
+`ParticleStateError`. Integrators and thermostats require `Send`; immutable
+behaviors that may be shared across workers require `Send + Sync`.
+
+`Spring` and `PowerLawDecay` are validated immutable values. Their networks use
+particle pairs as identity, grow the minimum endpoint bound automatically, and
+return the previous law on replacement. Bulk insertion is transactional.
+Network deserialization rejects duplicate pairs.
 
 ## Serialization
 
-Scientific containers implement Serde directly. Dense data is row-major;
-sparse data uses canonical sorted flat indices; heterogeneous particle
-attributes preserve stable IDs and scalar types. Invalid shapes, scalar
-mismatches, malformed sparse entries, unsupported schema versions, and
-non-finite JSON numbers are rejected during reconstruction.
+Direct validated Serde is PiP's only conversion contract. PiP does not provide
+JSON-string helpers, payload APIs, file writers, reducers, output directories,
+or checkpoint schedules. Applications and workflow systems own persistence and
+aggregation policy.
 
-PiP owns numerical data formats, not workflow policy. Checkpoint cadence,
-directories, queues, run metadata, and resumption belong to the consuming
-workflow crate.
-
-## Examples
-
-See [EXAMPLES.md](EXAMPLES.md). Run an example with:
-
-```bash
-cargo run --release --example <example_name> -- <arguments>
-```
-
-## Development contract
-
-- Higher layers reuse lower-layer APIs instead of duplicating algorithms.
-- Inferable information is not requested again at downstream call sites.
-- Backend and layout details stay out of normal user code.
-- New public functionality is composed from existing APIs whenever possible.
-- Advanced additions require a concrete use case not covered by the basic or
-  models API.
+See [api.md](api.md) for the complete contract and
+[advanced_api.md](advanced_api.md) before using lower-level facilities.

@@ -674,11 +674,6 @@ impl<T: Scalar> SquareLattice<T> {
     }
 
     #[inline]
-    pub(crate) fn tensor_shape(&self) -> Vec<usize> {
-        self.cfg.tensor_shape()
-    }
-
-    #[inline]
     pub(crate) fn from_parts(
         cfg: SquareLatticeGeometry,
         data: Vec<T>,

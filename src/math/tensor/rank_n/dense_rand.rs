@@ -289,16 +289,6 @@ impl TensorRandFiller {
         Ok(())
     }
 
-    pub(crate) fn try_refresh_dense<T: TensorRandElement>(
-        &mut self,
-        tensor: &mut DenseTensor<T>,
-    ) -> Result<(), TensorRandError> {
-        if self.indexed.is_some() {
-            return Err(TensorRandError::IndexedStepRequired);
-        }
-        T::try_fill(self, tensor)
-    }
-
     /// Fallibly fills a caller-owned contiguous slice in place.
     ///
     /// This uses the same distribution, RNG state, and parallel chunking as

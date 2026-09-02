@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // src/math_foundations/tensor/tensor_trait.rs
 /*!
 A self-contained tensor contract for math-facing code.

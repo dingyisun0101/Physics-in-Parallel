@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /*!
 Generic front API for tensor storage backends.
 

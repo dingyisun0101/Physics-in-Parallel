@@ -3,9 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::math::io::json::{
-    FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
-};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, SparsePayload, ensure_finite};
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_n::{
     Dense, Sparse, Tensor, dense::Tensor as DenseStorage, sparse::Tensor as SparseStorage,
@@ -34,38 +32,20 @@ where
         D: Deserializer<'de>,
     {
         let payload = FlatPayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+        dense_from_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
-impl<T> ToJsonPayload for DenseStorage<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = FlatPayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        ensure_finite(self.data(), "tensor")
-            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
-        Ok(FlatPayload::new(
-            "tensor",
-            self.shape().to_vec(),
-            self.data().to_vec(),
-        ))
-    }
-}
-
-impl<T> FromJsonPayload for DenseStorage<T>
+fn dense_from_payload<T>(payload: FlatPayload<T>) -> Result<DenseStorage<T>, String>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = FlatPayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate_dense("tensor")?;
-        ensure_finite(&payload.data, "tensor")?;
-        Ok(Self::from_parts_unchecked(payload.shape, payload.data))
-    }
+    payload.validate_dense("tensor")?;
+    ensure_finite(&payload.data, "tensor")?;
+    Ok(DenseStorage::from_parts_unchecked(
+        payload.shape,
+        payload.data,
+    ))
 }
 
 impl<T> Serialize for SparseStorage<T>
@@ -91,41 +71,25 @@ where
         D: Deserializer<'de>,
     {
         let payload = SparsePayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+        sparse_from_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
-impl<T> ToJsonPayload for SparseStorage<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = SparsePayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        sparse_payload(self, "tensor_sparse")
-            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
-    }
-}
-
-impl<T> FromJsonPayload for SparseStorage<T>
+fn sparse_from_payload<T>(payload: SparsePayload<T>) -> Result<SparseStorage<T>, String>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = SparsePayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        let (shape, indices, values) = payload.into_validated_parts("tensor_sparse")?;
-        ensure_finite(&values, "tensor_sparse")?;
-        if let Some(position) = values.iter().position(|value| *value == T::zero()) {
-            return Err(format!(
-                "tensor_sparse contains an explicit zero at sparse position {position}"
-            ));
-        }
-        Ok(Self::from_flat_pairs(
-            shape,
-            indices.into_iter().zip(values).collect(),
-        ))
+    let (shape, indices, values) = payload.into_validated_parts("tensor_sparse")?;
+    ensure_finite(&values, "tensor_sparse")?;
+    if let Some(position) = values.iter().position(|value| *value == T::zero()) {
+        return Err(format!(
+            "tensor_sparse contains an explicit zero at sparse position {position}"
+        ));
     }
+    Ok(SparseStorage::from_flat_pairs(
+        shape,
+        indices.into_iter().zip(values).collect(),
+    ))
 }
 
 /// Builds one deterministic sparse payload without materializing implicit zeros.

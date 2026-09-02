@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Reusable row-major tensor layout and coordinate conversion.
 
 use super::errors::{TensorResult, checked_num_elements, ensure_coordinate_rank};

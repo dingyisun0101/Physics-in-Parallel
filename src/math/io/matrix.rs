@@ -3,9 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::math::io::json::{
-    FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
-};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, SparsePayload, ensure_finite};
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::matrix::{Matrix, MatrixBackend, RankNDense, RankNSparse};
 
@@ -42,7 +40,7 @@ where
         D: Deserializer<'de>,
     {
         let payload = FlatPayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+        dense_matrix_from_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
@@ -55,79 +53,44 @@ where
         D: Deserializer<'de>,
     {
         let payload = SparsePayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+        sparse_matrix_from_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
-impl<T> ToJsonPayload for Matrix<T, RankNDense<T>>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = FlatPayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        logical_dense_matrix_payload(self)
-            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
-    }
-}
-
-impl<T> ToJsonPayload for Matrix<T, RankNSparse<T>>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = SparsePayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        sparse_matrix_payload(
-            self.shape(),
-            self.backend()
-                .sparse_entries()
-                .expect("rank-N sparse backend exposes sparse entries"),
-        )
-        .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
-    }
-}
-
-impl<T> FromJsonPayload for Matrix<T, RankNDense<T>>
+fn dense_matrix_from_payload<T>(payload: FlatPayload<T>) -> Result<Matrix<T, RankNDense<T>>, String>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = FlatPayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        let (rows, cols, data) = matrix_payload_parts(payload)?;
-        Ok(Self::from_vec(rows, cols, data))
-    }
+    let (rows, cols, data) = matrix_payload_parts(payload)?;
+    Ok(Matrix::from_vec(rows, cols, data))
 }
 
-impl<T> FromJsonPayload for Matrix<T, RankNSparse<T>>
+fn sparse_matrix_from_payload<T>(
+    payload: SparsePayload<T>,
+) -> Result<Matrix<T, RankNSparse<T>>, String>
 where
     T: Scalar + DeserializeOwned,
 {
-    type Payload = SparsePayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        let (shape, indices, values) = payload.into_validated_parts("matrix_sparse")?;
-        if shape.len() != 2 {
-            return Err(format!(
-                "matrix_sparse shape rank mismatch: expected 2, got {}",
-                shape.len()
-            ));
-        }
-        ensure_finite(&values, "matrix_sparse")?;
-        if let Some(position) = values.iter().position(|value| *value == T::zero()) {
-            return Err(format!(
-                "matrix_sparse contains an explicit zero at sparse position {position}"
-            ));
-        }
-        let rows = shape[0];
-        let cols = shape[1];
-        let triplets = indices
-            .into_iter()
-            .zip(values)
-            .map(|(index, value)| (index / cols, index % cols, value));
-        Ok(Self::from_triplets(rows, cols, triplets))
+    let (shape, indices, values) = payload.into_validated_parts("matrix_sparse")?;
+    if shape.len() != 2 {
+        return Err(format!(
+            "matrix_sparse shape rank mismatch: expected 2, got {}",
+            shape.len()
+        ));
     }
+    ensure_finite(&values, "matrix_sparse")?;
+    if let Some(position) = values.iter().position(|value| *value == T::zero()) {
+        return Err(format!(
+            "matrix_sparse contains an explicit zero at sparse position {position}"
+        ));
+    }
+    let rows = shape[0];
+    let cols = shape[1];
+    let triplets = indices
+        .into_iter()
+        .zip(values)
+        .map(|(index, value)| (index / cols, index % cols, value));
+    Ok(Matrix::from_triplets(rows, cols, triplets))
 }
 
 fn matrix_payload_parts<T: Scalar>(

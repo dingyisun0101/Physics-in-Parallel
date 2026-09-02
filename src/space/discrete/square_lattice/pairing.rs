@@ -33,7 +33,7 @@ use super::random::{
     DOMAIN_HAAR_COMPONENT, DOMAIN_INDEPENDENT_SOURCE_SITE, DOMAIN_INDEPENDENT_TARGET_SITE,
     DOMAIN_SOURCE_COORDINATE,
 };
-use crate::rng::{ResolvedRng, RngError};
+use crate::rng::{ResolvedRng, RngError, RngMethod};
 
 /// Rule for selecting each pair's source coordinate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -200,6 +200,7 @@ impl PairGenerator {
         num_pairs: usize,
         rng: ResolvedRng,
     ) -> Result<Self, PairGenerationError> {
+        let rng = rng.ensure_supported("PairGenerator", &[RngMethod::IndexedSplitMix64])?;
         let layout = validate_layout(shape)?;
         if num_pairs == 0 {
             return Err(PairGenerationError::ZeroPairs);

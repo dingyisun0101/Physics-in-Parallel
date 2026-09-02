@@ -338,14 +338,6 @@ impl<T: Scalar> VectorList<T> {
         })
     }
 
-    pub(crate) fn dense_values(&self) -> Option<&[T]> {
-        self.tensor.dense_values()
-    }
-
-    pub(crate) fn dense_values_mut(&mut self) -> Option<&mut [T]> {
-        self.tensor.dense_values_mut()
-    }
-
     pub(crate) fn replace_values(&mut self, values: Vec<T>) {
         let kind = self.storage_kind();
         self.tensor = match kind {

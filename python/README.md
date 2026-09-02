@@ -1,168 +1,22 @@
-# PiP Python Helpers
+# PiP NumPy Helper
 
-`numpy_support.py` provides one public loader:
+`numpy_support.py` reads JSON produced by direct PiP 4.0 Serde:
 
 ```python
 from numpy_support import to_ndarray
+
+array = to_ndarray("tensor.json")
 ```
 
-## Public API
+It supports universal `Tensor`, `Matrix`, and `VectorList` documents in both
+dense and sparse representations, plus `SquareLattice` documents. Sparse
+values are materialized as a NumPy array at this external analysis boundary.
 
-```python
-to_ndarray(path) -> numpy.ndarray
-```
+The helper intentionally has no pre-4.0 compatibility paths. It validates
+schema version, scalar type, shape, canonical sparse indices, and finite
+numeric values.
 
-`path` must point to a JSON file produced by PiP.
-
-## Current PiP Flat Schema
-
-PiP now serializes numeric payloads as:
-
-```json
-{
-  "kind": "...",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [...],
-  "data": [...]
-}
-```
-
-`to_ndarray(path)` reshapes `data` using `shape` (NumPy convention, row-major/C order).
-The stable `scalar` tag restores the intended NumPy dtype, including complex
-PiP scalars. `i128` and `u128` use NumPy object arrays because NumPy has no
-native 128-bit integer dtype. The loader rejects non-finite floats, integer
-values outside the declared scalar range, and values that would require a
-lossy integer conversion.
-
-## Supported Kinds
-
-### Dense tensor
-
-```json
-{
-  "kind": "tensor",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [2, 2],
-  "data": [1.0, 2.0, 3.0, 4.0]
-}
-```
-
-Output:
-
-```python
-arr.shape == (2, 2)
-```
-
-### Sparse tensor
-
-```json
-{
-  "kind": "tensor_sparse",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [2, 3],
-  "indices": [1, 5],
-  "values": [2.0, 5.0]
-}
-```
-
-Output:
-
-```python
-arr.shape == (2, 3)
-```
-
-Sparse matrices use the same representation with `kind: "matrix_sparse"`.
-Indices are strictly increasing row-major flat positions. The Python helper
-materializes the requested NumPy array only during readback.
-
-### Tensor2D / Matrix
-
-```json
-{
-  "kind": "matrix",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [2, 3],
-  "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-}
-```
-
-Output:
-
-```python
-arr.shape == (2, 3)
-```
-
-### VectorList
-
-Current VectorList convention is `[n, dim]`.
-
-```json
-{
-  "kind": "vector_list",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [2, 3],
-  "data": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-}
-```
-
-Output:
-
-```python
-arr.shape == (2, 3)
-```
-
-### Square lattice
-
-`kind` indicates boundary mode:
-- `square_lattice_periodic`
-- `square_lattice_reflective`
-
-Shape follows ndarray axes directly (e.g. 2D side length 4 is `[4, 4]`).
-
-```json
-{
-  "kind": "square_lattice_periodic",
-  "version": 1,
-  "scalar": "f64",
-  "shape": [4, 4],
-  "data": [...]
-}
-```
-
-Output:
-
-```python
-arr.shape == (4, 4)
-```
-
-## Composite Outputs
-
-Some PiP JSON outputs, such as `PhysObj`, are not one homogeneous numeric array.
-For those, `to_ndarray(path)` returns a 0-D object array containing recursively
-converted Python data.
-
-Example:
-
-```python
-arr = to_ndarray("phys_obj.json")
-payload = arr[()]
-```
-
-## Legacy Compatibility
-
-`to_ndarray()` still accepts older PiP payloads with fields like `storage`,
-`sparse.entries`, and compact grid metadata (`shape = [d, l]`).
-
-## Requirements
-
-`numpy_support.py` requires `numpy` to be installed in the Python environment.
-
-Run its schema tests with:
+Run the tests with:
 
 ```bash
 python -m unittest python/test_numpy_support.py

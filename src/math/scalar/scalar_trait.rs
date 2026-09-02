@@ -33,8 +33,6 @@ use core::fmt::{Debug, Display};
 use core::iter::{Product, Sum};
 
 use num_traits::{Num, NumCast, One, Zero};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 /// Internal sealing so only this crate can implement scalar traits.
 pub(crate) mod scalar_sealed {
@@ -273,13 +271,3 @@ pub trait Scalar:
     ///	- (none): Operates on the scalar value passed as `self`.
     fn is_finite(self) -> bool;
 }
-
-/**
-    Serialization-capable scalar extension trait.
-
-    This extends compute `Scalar` with serde capabilities, while keeping numeric
-    kernel bounds minimal.
-*/
-pub trait ScalarSerde: Scalar + Serialize + DeserializeOwned {}
-
-impl<T> ScalarSerde for T where T: Scalar + Serialize + DeserializeOwned {}

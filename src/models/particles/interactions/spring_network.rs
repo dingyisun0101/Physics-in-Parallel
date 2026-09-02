@@ -266,9 +266,10 @@ impl SpringNetwork {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ((usize, usize), &Spring)> + '_ {
-        self.springs.iter().filter_map(|(_, nodes, law)| {
-            (nodes.nodes.len() == 2).then(|| ((nodes.nodes[0], nodes.nodes[1]), law))
-        })
+        self.springs
+            .iter()
+            .filter(|(_, nodes, _)| nodes.nodes.len() == 2)
+            .map(|(_, nodes, law)| ((nodes.nodes[0], nodes.nodes[1]), law))
     }
 
     pub fn clear(&mut self) {

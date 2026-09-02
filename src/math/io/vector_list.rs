@@ -3,9 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::math::io::json::{
-    FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
-};
+use crate::math::io::json::{FlatPayload, FlatPayloadRef, ensure_finite};
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_2::vector_list::VectorList;
 
@@ -32,46 +30,25 @@ where
         D: Deserializer<'de>,
     {
         let payload = FlatPayload::<T>::deserialize(deserializer)?;
-        <Self as FromJsonPayload>::from_json_payload(payload).map_err(serde::de::Error::custom)
+        vector_list_from_payload(payload).map_err(serde::de::Error::custom)
     }
 }
 
-impl<T> ToJsonPayload for VectorList<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    type Payload = FlatPayload<T>;
-
-    fn to_json_payload(&self) -> Result<Self::Payload, serde_json::Error> {
-        ensure_finite(self.as_tensor().data(), "vector_list")
-            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
-        Ok(FlatPayload::new(
-            "vector_list",
-            vec![self.num_vectors(), self.dim()],
-            self.as_tensor().data().to_vec(),
-        ))
-    }
-}
-
-impl<T> FromJsonPayload for VectorList<T>
+fn vector_list_from_payload<T>(payload: FlatPayload<T>) -> Result<VectorList<T>, String>
 where
     T: Scalar + DeserializeOwned + Copy,
 {
-    type Payload = FlatPayload<T>;
-
-    fn from_json_payload(payload: Self::Payload) -> Result<Self, String> {
-        payload.validate_dense("vector_list")?;
-        ensure_finite(&payload.data, "vector_list")?;
-        if payload.shape.len() != 2 {
-            return Err(format!(
-                "vector_list shape rank mismatch: expected 2, got {}",
-                payload.shape.len()
-            ));
-        }
-        Ok(Self::from_vec(
-            payload.shape[1],
-            payload.shape[0],
-            payload.data,
-        ))
+    payload.validate_dense("vector_list")?;
+    ensure_finite(&payload.data, "vector_list")?;
+    if payload.shape.len() != 2 {
+        return Err(format!(
+            "vector_list shape rank mismatch: expected 2, got {}",
+            payload.shape.len()
+        ));
     }
+    Ok(VectorList::from_vec(
+        payload.shape[1],
+        payload.shape[0],
+        payload.data,
+    ))
 }

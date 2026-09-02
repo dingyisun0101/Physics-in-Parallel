@@ -28,39 +28,14 @@ use crate::rng::ResolvedRng;
 use super::VectorList;
 
 // ============================================================================
-// ------------------------------- Common Trait -------------------------------
-// ============================================================================
-
-/// Minimal interface for random vector-list generators.
-pub trait VectorListRand {
-    type Elem;
-
-    /// Allocate output storage and rank-N random-fill buffers.
-    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError>
-    where
-        Self: Sized;
-
-    /// Refill the internal `VectorList` in-place, keeping shape `[n, dim]`.
-    fn refresh(&mut self);
-}
-
-// ============================================================================
 // -------------------------- Haar-random unit vectors ------------------------
 // ============================================================================
 #[derive(Debug, Clone)]
 pub struct HaarVectors {
     pub vl: VectorList<f64>,
     pub dim: usize,
-    pub n: usize,
     filler: TensorRandFiller,
-    mode: FillMode,
     workspace: HaarWorkspace,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum FillMode {
-    Stateful,
-    Indexed,
 }
 
 #[derive(Debug, Clone)]
@@ -71,31 +46,12 @@ enum HaarWorkspace {
     Gaussian,
 }
 
-impl VectorListRand for HaarVectors {
-    type Elem = f64;
-
-    /// Allocate a vector list and a rank-N normal random filler.
-    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError> {
-        assert!(dim > 0, "HaarVectors::new: dim must be > 0");
-        assert!(n > 0, "HaarVectors::new: n must be > 0");
-
-        Self::try_with_mode(dim, n, rng, FillMode::Stateful)
-    }
-
-    #[inline]
-    /// Refresh the dense buffer with rank-N normal random values and normalize rows.
-    fn refresh(&mut self) {
-        self.try_refresh_stateful()
-            .expect("invalid stateful Haar-vector refresh")
-    }
-}
-
 impl HaarVectors {
-    fn try_with_mode(
+    /// Constructs schedule-independent Haar vectors for explicit scientific steps.
+    pub fn try_new_indexed(
         dim: usize,
         n: usize,
         rng: ResolvedRng,
-        mode: FillMode,
     ) -> Result<Self, TensorRandError> {
         assert!(dim > 0, "HaarVectors::new: dim must be > 0");
         assert!(n > 0, "HaarVectors::new: n must be > 0");
@@ -132,34 +88,17 @@ impl HaarVectors {
                 HaarWorkspace::Gaussian,
             ),
         };
-        let filler = match mode {
-            FillMode::Stateful => TensorRandFiller::new(kind, rng)?,
-            FillMode::Indexed => TensorRandFiller::new(kind, rng)?,
-        };
+        let filler = TensorRandFiller::new(kind, rng)?;
         Ok(Self {
             vl: VectorList::empty(dim, n),
             dim,
-            n,
             filler,
-            mode,
             workspace,
         })
     }
 
-    /// Constructs schedule-independent Haar vectors for explicit scientific steps.
-    pub fn try_new_indexed(
-        dim: usize,
-        n: usize,
-        rng: ResolvedRng,
-    ) -> Result<Self, TensorRandError> {
-        Self::try_with_mode(dim, n, rng, FillMode::Indexed)
-    }
-
     /// Refreshes schedule-independent Haar vectors for an explicit step and domain.
     pub fn try_refresh_at(&mut self, step: u64, domain: u64) -> Result<(), TensorRandError> {
-        if self.mode != FillMode::Indexed {
-            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
-        }
         match &mut self.workspace {
             HaarWorkspace::Sign { codes } => {
                 self.filler
@@ -186,37 +125,6 @@ impl HaarVectors {
             }
         }
         Ok(())
-    }
-
-    fn try_refresh_stateful(&mut self) -> Result<(), TensorRandError> {
-        if self.mode != FillMode::Stateful {
-            return Err(TensorRandError::IndexedStepRequired);
-        }
-        match &mut self.workspace {
-            HaarWorkspace::Sign { codes } => {
-                self.filler.try_refresh_dense(codes)?;
-                write_signs(codes.data(), self.vl.as_tensor_mut().data_mut());
-            }
-            HaarWorkspace::Plane { units } => {
-                self.filler.try_fill_slice(units)?;
-                write_plane(units, self.vl.as_tensor_mut().data_mut());
-            }
-            HaarWorkspace::Sphere { units } => {
-                self.filler.try_fill_slice(units)?;
-                write_sphere(units, self.vl.as_tensor_mut().data_mut());
-            }
-            HaarWorkspace::Gaussian => {
-                self.filler
-                    .try_fill_slice(self.vl.as_tensor_mut().data_mut())?;
-                self.vl.normalize();
-            }
-        }
-        Ok(())
-    }
-
-    /// Returns the fully resolved random configuration used by this generator.
-    pub fn resolved_rng(&self) -> ResolvedRng {
-        self.filler.resolved_rng()
     }
 }
 
@@ -265,53 +173,8 @@ fn write_sphere(units: &[f64], output: &mut [f64]) {
 pub struct NNVectors {
     pub vl: VectorList<isize>, // shape [n, dim], entries in {-1, 0, +1}
     pub dim: usize,
-    pub n: usize,
     code_buf: Tensor<usize>,       // shape [n], holds codes in [0, 2*dim)
     code_filler: TensorRandFiller, // RandType::UniformInt over code range
-    mode: FillMode,
-}
-
-impl VectorListRand for NNVectors {
-    type Elem = isize;
-
-    /// Allocate output rows and a rank-N integer-code random filler.
-    fn new(dim: usize, n: usize, rng: ResolvedRng) -> Result<Self, TensorRandError> {
-        assert!(dim > 0, "NNVectors::new: dim must be > 0");
-        assert!(n > 0, "NNVectors::new: n must be > 0");
-
-        let vl = VectorList::<isize>::empty(dim, n);
-        let code_buf = Tensor::<usize>::empty(vec![n].as_slice());
-
-        let code_filler = TensorRandFiller::new(
-            RandType::UniformInt {
-                low: 0,
-                high: (2 * dim) as i64 - 1,
-            },
-            rng,
-        )?;
-
-        Ok(Self {
-            vl,
-            dim,
-            n,
-            code_buf,
-            code_filler,
-            mode: FillMode::Stateful,
-        })
-    }
-
-    #[inline]
-    /// Refresh rank-N integer codes and decode them into vector-list rows.
-    fn refresh(&mut self) {
-        self.code_filler
-            .try_refresh_dense(&mut self.code_buf)
-            .expect("validated nearest-neighbor random fill");
-        decode_nearest_neighbor_codes(
-            self.code_buf.data(),
-            self.dim,
-            self.vl.as_tensor_mut().data_mut(),
-        );
-    }
 }
 
 #[inline]
@@ -347,7 +210,6 @@ impl NNVectors {
         Ok(Self {
             vl: VectorList::empty(dim, n),
             dim,
-            n,
             code_buf: Tensor::empty(&[n]),
             code_filler: TensorRandFiller::new(
                 RandType::UniformInt {
@@ -356,15 +218,11 @@ impl NNVectors {
                 },
                 rng,
             )?,
-            mode: FillMode::Indexed,
         })
     }
 
     /// Refreshes schedule-independent nearest-neighbor vectors.
     pub fn try_refresh_at(&mut self, step: u64, domain: u64) -> Result<(), TensorRandError> {
-        if self.mode != FillMode::Indexed {
-            return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
-        }
         self.code_filler.try_fill_indices_at(
             self.code_buf.data_mut(),
             self.dim * 2,
@@ -377,10 +235,5 @@ impl NNVectors {
             self.vl.as_tensor_mut().data_mut(),
         );
         Ok(())
-    }
-
-    /// Returns the fully resolved random configuration used by this generator.
-    pub fn resolved_rng(&self) -> ResolvedRng {
-        self.code_filler.resolved_rng()
     }
 }
