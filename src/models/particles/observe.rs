@@ -89,7 +89,7 @@ fn gather_kinetic_context(
 ) -> Result<KineticContext, ObserveError> {
     let (dim, n, v_data) = {
         let v = objects.core.get::<f64>(ATTR_V)?;
-        (v.dim(), v.num_vectors(), v.as_tensor().data.clone())
+        (v.dim(), v.num_vectors(), v.logical_values())
     };
 
     Ok(KineticContext {

@@ -19,8 +19,7 @@ Canonical template attributes:
 
 use core::fmt;
 
-use crate::math::tensor::rank_2::vector_list::VectorList;
-use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
+use crate::math::{RandType, TensorRandError, TensorRandFiller, VectorList};
 use crate::rng::ResolvedRng;
 use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
@@ -137,19 +136,23 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Mass
     core.allocate::<f64>(ATTR_A, dim, num_particles)?;
 
     // Scalar-valued fields represented as dim=1 vector-lists.
-    let mut m = VectorList::<f64>::empty(1, num_particles);
+    let mut m = VectorList::<f64>::filled(1, num_particles, 0.0)
+        .expect("validated particle dimensions form a vector list");
     m.fill(1.0);
     core.insert(ATTR_M, m)?;
 
-    let mut m_inv = VectorList::<f64>::empty(1, num_particles);
+    let mut m_inv = VectorList::<f64>::filled(1, num_particles, 0.0)
+        .expect("validated particle dimensions form a vector list");
     m_inv.fill(1.0);
     core.insert(ATTR_M_INV, m_inv)?;
 
-    let mut alive = VectorList::<u8>::empty(1, num_particles);
+    let mut alive = VectorList::<u8>::filled(1, num_particles, 0)
+        .expect("validated particle dimensions form a vector list");
     alive.fill(ALIVE_TRUE);
     core.insert(ATTR_ALIVE, alive)?;
 
-    let mut rigid = VectorList::<u8>::empty(1, num_particles);
+    let mut rigid = VectorList::<u8>::filled(1, num_particles, 0)
+        .expect("validated particle dimensions form a vector list");
     rigid.fill(RIGID_FALSE);
     core.insert(ATTR_RIGID, rigid)?;
 
@@ -163,7 +166,7 @@ pub fn randomize_r(
     phys_obj: &mut PhysObj,
     method: VectorSamplingMethod<'_>,
     rng: ResolvedRng,
-) -> Result<ResolvedRng, MassiveParticlesError> {
+) -> Result<(), MassiveParticlesError> {
     let r = phys_obj.core.get_mut::<f64>(ATTR_R)?;
     sample_vectors(r, method, rng).map_err(Into::into)
 }
@@ -189,7 +192,7 @@ pub fn randomize_v(
     phys_obj: &mut PhysObj,
     method: VelocitySamplingMethod<'_>,
     rng: ResolvedRng,
-) -> Result<ResolvedRng, MassiveParticlesError> {
+) -> Result<(), MassiveParticlesError> {
     match method {
         VelocitySamplingMethod::Uniform { low, high } => {
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
@@ -221,6 +224,7 @@ pub fn randomize_v(
             }
 
             let v = phys_obj.core.get_mut::<f64>(ATTR_V)?;
+            let mut values = vec![0.0; n * dim];
             let mut filler = TensorRandFiller::new(
                 RandType::Normal {
                     mean: 0.0,
@@ -230,16 +234,14 @@ pub fn randomize_v(
             )
             .map_err(MassiveParticlesError::Rng)?;
             if tau == 0.0 {
-                v.as_tensor_mut().data.par_iter_mut().for_each(|x| *x = 0.0);
-                return Ok(filler.resolved_rng());
+                v.fill(0.0);
+                return Ok(());
             }
 
             filler
-                .try_refresh_dense(v.as_tensor_mut())
+                .try_fill_slice(&mut values)
                 .map_err(MassiveParticlesError::Rng)?;
-
-            v.as_tensor_mut()
-                .data
+            values
                 .par_chunks_mut(dim)
                 .zip(m_inv_values.par_iter())
                 .for_each(|(row, &m_inv_i)| {
@@ -255,8 +257,8 @@ pub fn randomize_v(
                         *x *= sigma;
                     }
                 });
-
-            Ok(filler.resolved_rng())
+            v.replace_values(values);
+            Ok(())
         }
     }
 }

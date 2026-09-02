@@ -311,7 +311,7 @@ impl PowerLawNetwork {
             (
                 positions.dim(),
                 positions.num_vectors(),
-                positions.as_tensor().data.clone(),
+                positions.logical_values(),
             )
         };
         validate_vector_attr_f64(objects, ATTR_A, dim, particle_count)?;
@@ -372,10 +372,11 @@ impl PowerLawNetwork {
             .core
             .get_mut::<f64>(ATTR_A)
             .map_err(ParticleStateError::from)?;
-        for (destination, contribution) in output.as_tensor_mut().data.iter_mut().zip(acceleration)
-        {
-            *destination += contribution;
-        }
+        output.edit_values(|values| {
+            for (destination, contribution) in values.iter_mut().zip(acceleration) {
+                *destination += contribution;
+            }
+        });
         Ok(())
     }
 

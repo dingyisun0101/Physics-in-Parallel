@@ -13,5 +13,5 @@ pub(crate) mod neighbor_list;
 pub(crate) mod phys_obj;
 
 // Canonical SoA exports.
-pub(crate) use interaction::{Interaction, InteractionError, InteractionId};
+pub(crate) use interaction::{Interaction, InteractionError};
 pub use neighbor_list::{NeighborList, NeighborListError};

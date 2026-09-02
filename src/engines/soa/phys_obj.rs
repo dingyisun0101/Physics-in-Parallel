@@ -31,10 +31,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
 use crate::math::io::json::JSON_SCHEMA_VERSION;
-use crate::math::{
-    scalar::Scalar,
-    tensor::rank_2::vector_list::{DynVectorList, VectorList},
-};
+use crate::math::tensor::rank_2::vector_list::DynVectorList;
+use crate::math::{Scalar, VectorList};
 
 pub type AttrId = usize;
 
@@ -140,6 +138,110 @@ impl fmt::Display for AttrsError {
 }
 
 impl std::error::Error for AttrsError {}
+
+/// Invalid canonical particle state exposed by `PhysObj` semantic accessors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParticleStateError {
+    MissingAttribute {
+        label: String,
+    },
+    WrongScalarType {
+        label: String,
+        expected: String,
+        actual: String,
+    },
+    InvalidAttrShape {
+        label: &'static str,
+        expected_dim: usize,
+        got_dim: usize,
+    },
+    InconsistentParticleCount {
+        label: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    ParticleOutOfBounds {
+        label: String,
+        particle: usize,
+        particle_count: usize,
+    },
+    InvalidAttributeStorage {
+        message: String,
+    },
+}
+
+impl From<AttrsError> for ParticleStateError {
+    fn from(value: AttrsError) -> Self {
+        match value {
+            AttrsError::UnknownLabel { label } => Self::MissingAttribute { label },
+            AttrsError::WrongType {
+                label,
+                expected,
+                got,
+            } => Self::WrongScalarType {
+                label,
+                expected,
+                actual: got,
+            },
+            AttrsError::ObjOutOfBounds { label, obj, n } => Self::ParticleOutOfBounds {
+                label,
+                particle: obj,
+                particle_count: n,
+            },
+            error => Self::InvalidAttributeStorage {
+                message: error.to_string(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for ParticleStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingAttribute { label } => {
+                write!(formatter, "particle state is missing attribute `{label}`")
+            }
+            Self::WrongScalarType {
+                label,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "particle attribute `{label}` has scalar type `{actual}`; expected `{expected}`"
+            ),
+            Self::InvalidAttrShape {
+                label,
+                expected_dim,
+                got_dim,
+            } => write!(
+                formatter,
+                "particle attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
+            ),
+            Self::InconsistentParticleCount {
+                label,
+                expected,
+                got,
+            } => write!(
+                formatter,
+                "particle attribute `{label}` has {got} rows; expected {expected}"
+            ),
+            Self::ParticleOutOfBounds {
+                label,
+                particle,
+                particle_count,
+            } => write!(
+                formatter,
+                "particle {particle} is outside attribute `{label}` with {particle_count} rows"
+            ),
+            Self::InvalidAttributeStorage { message } => {
+                write!(formatter, "invalid particle attribute storage: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParticleStateError {}
 
 #[derive(Debug, Clone)]
 struct AttrEntry {
@@ -250,7 +352,11 @@ impl AttrsCore {
         if dim == 0 || n == 0 {
             return Err(AttrsError::InvalidVectorShape { dim, n });
         }
-        self.insert(label, VectorList::<T>::empty(dim, n))
+        self.insert(
+            label,
+            VectorList::<T>::filled(dim, n, T::zero())
+                .expect("validated attribute dimensions form a vector list"),
+        )
     }
 
     pub fn remove(&mut self, label: &str) -> Result<(), AttrsError> {
@@ -420,7 +526,7 @@ impl AttrsCore {
             })
     }
 
-    pub fn vector_of<T>(&self, label: &str, obj: usize) -> Result<&[T], AttrsError>
+    pub fn vector_of<T>(&self, label: &str, obj: usize) -> Result<Vec<T>, AttrsError>
     where
         T: Scalar + Copy + 'static,
     {
@@ -433,23 +539,9 @@ impl AttrsCore {
                 n,
             });
         }
-        Ok(col.vector(obj as isize))
-    }
-
-    pub fn vector_of_mut<T>(&mut self, label: &str, obj: usize) -> Result<&mut [T], AttrsError>
-    where
-        T: Scalar + Copy + 'static,
-    {
-        let col = self.get_mut::<T>(label)?;
-        let n = col.num_vectors();
-        if obj >= n {
-            return Err(AttrsError::ObjOutOfBounds {
-                label: label.to_string(),
-                obj,
-                n,
-            });
-        }
-        Ok(col.vector_mut(obj as isize))
+        Ok(col
+            .vector(obj)
+            .expect("validated particle coordinate is in bounds"))
     }
 
     pub fn set_vector_of<T>(
@@ -476,8 +568,11 @@ impl AttrsCore {
                 got: value.len(),
             });
         }
-        col.set_vector(obj as isize, value);
-        Ok(())
+        col.set_vector(obj, value)
+            .map_err(|_| AttrsError::WrongVectorLen {
+                expected: col.dim(),
+                got: value.len(),
+            })
     }
 
     pub fn dim_of(&self, label: &str) -> Result<usize, AttrsError> {
@@ -782,8 +877,8 @@ impl PhysObj {
     pub fn attribute<T: Scalar + 'static>(
         &self,
         label: &str,
-    ) -> Result<&VectorList<T>, AttrsError> {
-        self.core.get(label)
+    ) -> Result<&VectorList<T>, ParticleStateError> {
+        self.core.get(label).map_err(Into::into)
     }
 
     /// Mutably borrows one typed attribute column by canonical label.
@@ -791,8 +886,8 @@ impl PhysObj {
     pub fn attribute_mut<T: Scalar + 'static>(
         &mut self,
         label: &str,
-    ) -> Result<&mut VectorList<T>, AttrsError> {
-        self.core.get_mut(label)
+    ) -> Result<&mut VectorList<T>, ParticleStateError> {
+        self.core.get_mut(label).map_err(Into::into)
     }
 
     /// Borrows one object's vector from a named typed attribute.
@@ -801,18 +896,8 @@ impl PhysObj {
         &self,
         label: &str,
         object: usize,
-    ) -> Result<&[T], AttrsError> {
-        self.core.vector_of(label, object)
-    }
-
-    /// Mutably borrows one object's vector from a named typed attribute.
-    #[inline]
-    pub fn attribute_vector_mut<T: Scalar + 'static>(
-        &mut self,
-        label: &str,
-        object: usize,
-    ) -> Result<&mut [T], AttrsError> {
-        self.core.vector_of_mut(label, object)
+    ) -> Result<Vec<T>, ParticleStateError> {
+        self.core.vector_of(label, object).map_err(Into::into)
     }
 
     /// Replaces one object's vector in a named typed attribute.
@@ -822,8 +907,10 @@ impl PhysObj {
         label: &str,
         object: usize,
         values: &[T],
-    ) -> Result<(), AttrsError> {
-        self.core.set_vector_of(label, object, values)
+    ) -> Result<(), ParticleStateError> {
+        self.core
+            .set_vector_of(label, object, values)
+            .map_err(Into::into)
     }
 }
 

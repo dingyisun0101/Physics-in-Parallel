@@ -5,7 +5,6 @@ Core space abstractions and utilities.
 pub mod continuous;
 pub mod discrete;
 pub(crate) mod io;
-pub(crate) mod space_trait;
 
 pub use continuous::boundary::{
     BoundaryError, ClampBox, ContinuousBoundary, PeriodicBox, ReflectBox,

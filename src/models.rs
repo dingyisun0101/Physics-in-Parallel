@@ -11,6 +11,7 @@ and canonical massive-particle state.
 pub mod laws;
 pub mod particles;
 
+pub use crate::engines::soa::phys_obj::ParticleStateError;
 pub use laws::{PowerLawDecay, PowerLawError, PowerLawRange, Spring, SpringCutoff, SpringLawError};
 pub use particles::attrs::{
     ATTR_A, ATTR_ALIVE, ATTR_M, ATTR_M_INV, ATTR_R, ATTR_RIGID, ATTR_V, ParticleSelection,
@@ -26,7 +27,6 @@ pub use particles::interactions::{
     SpringNetwork, SpringNetworkError,
 };
 pub use particles::observe::{KineticEnergyObserver, ObserveError, Observer, TemperatureObserver};
-pub use particles::state::ParticleStateError;
 pub use particles::thermostat::{LangevinThermostat, Thermostat, ThermostatError};
 
-pub use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
+pub use crate::engines::soa::phys_obj::PhysObj;

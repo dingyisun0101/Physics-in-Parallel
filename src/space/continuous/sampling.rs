@@ -17,8 +17,7 @@ use core::fmt;
 
 use rayon::prelude::*;
 
-use crate::math::tensor::rank_2::vector_list::VectorList;
-use crate::math::tensor::{RandType, TensorRandError, TensorRandFiller};
+use crate::math::{RandType, TensorRandError, TensorRandFiller, VectorList};
 use crate::rng::ResolvedRng;
 use crate::threading::parallel_chunk_len;
 
@@ -111,29 +110,25 @@ pub fn sample_vectors(
     vectors: &mut VectorList<f64>,
     method: VectorSamplingMethod<'_>,
     rng: ResolvedRng,
-) -> Result<ResolvedRng, VectorSamplingError> {
+) -> Result<(), VectorSamplingError> {
     let dim = vectors.dim();
     let n = vectors.num_vectors();
+    let mut values = vec![0.0; dim * n];
 
-    let resolved = match method {
+    match method {
         VectorSamplingMethod::Uniform { low, high } => {
             if !low.is_finite() || !high.is_finite() || low >= high {
                 return Err(VectorSamplingError::InvalidUniformBounds { low, high });
             }
-
             let mut filler = TensorRandFiller::new(RandType::Uniform { low, high }, rng)
                 .map_err(VectorSamplingError::Rng)?;
-            if dim > 0 && n > 0 {
-                filler
-                    .try_refresh_dense(vectors.as_tensor_mut())
-                    .map_err(VectorSamplingError::Rng)?;
-            }
-            filler.resolved_rng()
+            filler
+                .try_fill_slice(&mut values)
+                .map_err(VectorSamplingError::Rng)?;
         }
         VectorSamplingMethod::UniformCentered { box_size } => {
             validate_len("box_size", box_size.len(), dim)?;
             validate_finite_nonnegative("box_size", box_size)?;
-
             let mut filler = TensorRandFiller::new(
                 RandType::Uniform {
                     low: 0.0,
@@ -142,26 +137,18 @@ pub fn sample_vectors(
                 rng,
             )
             .map_err(VectorSamplingError::Rng)?;
-            if dim > 0 && n > 0 {
-                filler
-                    .try_refresh_dense(vectors.as_tensor_mut())
-                    .map_err(VectorSamplingError::Rng)?;
-            }
-
-            if dim > 0 && n > 0 {
-                vectors
-                    .as_tensor_mut()
-                    .data
-                    .par_chunks_mut(dim)
-                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
-                    .for_each(|row| {
-                        for k in 0..dim {
-                            let half_span = 0.5 * box_size[k];
-                            row[k] = (2.0 * row[k] - 1.0) * half_span;
-                        }
-                    });
-            }
-            filler.resolved_rng()
+            filler
+                .try_fill_slice(&mut values)
+                .map_err(VectorSamplingError::Rng)?;
+            values
+                .par_chunks_mut(dim)
+                .with_min_len(parallel_chunk_len(n).unwrap_or(1))
+                .for_each(|row| {
+                    for k in 0..dim {
+                        let half_span = 0.5 * box_size[k];
+                        row[k] = (2.0 * row[k] - 1.0) * half_span;
+                    }
+                });
         }
         VectorSamplingMethod::GaussianPerAxis { mean, std } => {
             validate_len("mean", mean.len(), dim)?;
@@ -177,25 +164,17 @@ pub fn sample_vectors(
                 rng,
             )
             .map_err(VectorSamplingError::Rng)?;
-            if dim > 0 && n > 0 {
-                filler
-                    .try_refresh_dense(vectors.as_tensor_mut())
-                    .map_err(VectorSamplingError::Rng)?;
-            }
-
-            if dim > 0 && n > 0 {
-                vectors
-                    .as_tensor_mut()
-                    .data
-                    .par_chunks_mut(dim)
-                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
-                    .for_each(|row| {
-                        for k in 0..dim {
-                            row[k] = mean[k] + row[k] * std[k];
-                        }
-                    });
-            }
-            filler.resolved_rng()
+            filler
+                .try_fill_slice(&mut values)
+                .map_err(VectorSamplingError::Rng)?;
+            values
+                .par_chunks_mut(dim)
+                .with_min_len(parallel_chunk_len(n).unwrap_or(1))
+                .for_each(|row| {
+                    for k in 0..dim {
+                        row[k] = mean[k] + row[k] * std[k];
+                    }
+                });
         }
         VectorSamplingMethod::JitteredLattice { spacings, sigmas } => {
             validate_len("spacings", spacings.len(), dim)?;
@@ -211,35 +190,28 @@ pub fn sample_vectors(
                 rng,
             )
             .map_err(VectorSamplingError::Rng)?;
-            if dim > 0 && n > 0 {
-                filler
-                    .try_refresh_dense(vectors.as_tensor_mut())
-                    .map_err(VectorSamplingError::Rng)?;
-            }
-
-            if dim > 0 && n > 0 {
-                let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
-                vectors
-                    .as_tensor_mut()
-                    .data
-                    .par_chunks_mut(dim)
-                    .with_min_len(parallel_chunk_len(n).unwrap_or(1))
-                    .enumerate()
-                    .for_each(|(vector_idx, row)| {
-                        let mut lattice_idx = vector_idx;
-                        for k in 0..dim {
-                            let grid_coord = lattice_idx % side;
-                            lattice_idx /= side;
-                            let base = grid_coord as f64 * spacings[k];
-                            row[k] = base + row[k] * sigmas[k];
-                        }
-                    });
-            }
-            filler.resolved_rng()
+            filler
+                .try_fill_slice(&mut values)
+                .map_err(VectorSamplingError::Rng)?;
+            let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
+            values
+                .par_chunks_mut(dim)
+                .with_min_len(parallel_chunk_len(n).unwrap_or(1))
+                .enumerate()
+                .for_each(|(vector_idx, row)| {
+                    let mut lattice_idx = vector_idx;
+                    for k in 0..dim {
+                        let grid_coord = lattice_idx % side;
+                        lattice_idx /= side;
+                        let base = grid_coord as f64 * spacings[k];
+                        row[k] = base + row[k] * sigmas[k];
+                    }
+                });
         }
-    };
+    }
 
-    Ok(resolved)
+    vectors.replace_values(values);
+    Ok(())
 }
 
 fn validate_len(

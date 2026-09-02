@@ -5,9 +5,11 @@ use core::fmt;
 use num_traits::Zero;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
 
+use super::rank_2::vector_list::generic::DynVectorList;
 use super::rank_n::errors::TensorError;
 use super::universal::{StorageKind, Tensor, Values};
 
@@ -361,6 +363,17 @@ impl<T: Scalar> VectorList<T> {
         };
     }
 
+    pub(crate) fn logical_values(&self) -> Vec<T> {
+        self.values().collect()
+    }
+
+    pub(crate) fn edit_values<R>(&mut self, edit: impl FnOnce(&mut [T]) -> R) -> R {
+        let mut values = self.logical_values();
+        let result = edit(&mut values);
+        self.replace_values(values);
+        result
+    }
+
     pub(crate) fn tensor(&self) -> &Tensor<T> {
         &self.tensor
     }
@@ -379,6 +392,47 @@ impl<T: Scalar> VectorList<T> {
             .into());
         }
         Ok(Self { tensor })
+    }
+}
+
+impl<T> DynVectorList for VectorList<T>
+where
+    T: Scalar + Serialize + Copy + 'static,
+{
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn dim(&self) -> usize {
+        self.dim()
+    }
+
+    fn num_vectors(&self) -> usize {
+        self.num_vectors()
+    }
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
+    }
+
+    fn scalar_kind(&self) -> &'static str {
+        crate::math::io::json::scalar_kind::<T>()
+    }
+
+    fn clone_box(&self) -> Box<dyn DynVectorList> {
+        Box::new(self.clone())
+    }
+
+    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
+        serde_json::to_value(self)
+    }
+
+    fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
 }
 

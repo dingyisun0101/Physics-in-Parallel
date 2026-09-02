@@ -527,7 +527,7 @@ impl<T: Scalar> Tensor<T> {
         Ok(())
     }
 
-    fn replace_with_values(&mut self, values: Vec<T>) {
+    pub(crate) fn replace_with_values(&mut self, values: Vec<T>) {
         self.storage =
             Self::storage_from_values_unchecked(self.shape(), self.storage_kind(), values);
     }

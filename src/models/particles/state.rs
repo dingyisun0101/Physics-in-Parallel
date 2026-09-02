@@ -8,117 +8,13 @@ alive and rigid masks, and reads inverse-mass values. Higher-level modules keep
 their own public error types and convert from `ParticleStateError`.
 */
 
-use core::fmt;
-
 use rayon::prelude::*;
 
-use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
+pub use crate::engines::soa::phys_obj::ParticleStateError;
+use crate::engines::soa::phys_obj::PhysObj;
 use crate::models::particles::attrs::{
     ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ParticleSelection, is_alive_value, is_rigid_value,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ParticleStateError {
-    MissingAttribute {
-        label: String,
-    },
-    WrongScalarType {
-        label: String,
-        expected: String,
-        actual: String,
-    },
-    InvalidAttrShape {
-        label: &'static str,
-        expected_dim: usize,
-        got_dim: usize,
-    },
-    InconsistentParticleCount {
-        label: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    ParticleOutOfBounds {
-        label: String,
-        particle: usize,
-        particle_count: usize,
-    },
-    InvalidAttributeStorage {
-        message: String,
-    },
-}
-
-impl From<AttrsError> for ParticleStateError {
-    fn from(value: AttrsError) -> Self {
-        match value {
-            AttrsError::UnknownLabel { label } => Self::MissingAttribute { label },
-            AttrsError::WrongType {
-                label,
-                expected,
-                got,
-            } => Self::WrongScalarType {
-                label,
-                expected,
-                actual: got,
-            },
-            AttrsError::ObjOutOfBounds { label, obj, n } => Self::ParticleOutOfBounds {
-                label,
-                particle: obj,
-                particle_count: n,
-            },
-            error => Self::InvalidAttributeStorage {
-                message: error.to_string(),
-            },
-        }
-    }
-}
-
-impl fmt::Display for ParticleStateError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingAttribute { label } => {
-                write!(formatter, "particle state is missing attribute `{label}`")
-            }
-            Self::WrongScalarType {
-                label,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "particle attribute `{label}` has scalar type `{actual}`; expected `{expected}`"
-            ),
-            Self::InvalidAttrShape {
-                label,
-                expected_dim,
-                got_dim,
-            } => write!(
-                formatter,
-                "particle attribute `{label}` has dimension {got_dim}; expected {expected_dim}"
-            ),
-            Self::InconsistentParticleCount {
-                label,
-                expected,
-                got,
-            } => write!(
-                formatter,
-                "particle attribute `{label}` has {got} rows; expected {expected}"
-            ),
-            Self::ParticleOutOfBounds {
-                label,
-                particle,
-                particle_count,
-            } => write!(
-                formatter,
-                "particle {particle} is outside attribute `{label}` with {particle_count} rows"
-            ),
-            Self::InvalidAttributeStorage { message } => {
-                write!(formatter, "invalid particle attribute storage: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ParticleStateError {}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ParticleMasks {
@@ -177,7 +73,9 @@ pub(crate) fn gather_inverse_mass(
 ) -> Result<Vec<f64>, ParticleStateError> {
     let m_inv = objects.core.get::<f64>(ATTR_M_INV)?;
     validate_scalar_shape(ATTR_M_INV, m_inv.dim(), m_inv.num_vectors(), n)?;
-    Ok((0..n).map(|i| m_inv.get(i as isize, 0)).collect())
+    Ok((0..n)
+        .map(|i| m_inv.get(i, 0).expect("validated scalar coordinates"))
+        .collect())
 }
 
 pub(crate) fn gather_alive_flags(
@@ -193,7 +91,7 @@ pub(crate) fn gather_alive_flags(
     validate_scalar_shape(ATTR_ALIVE, alive.dim(), alive.num_vectors(), n)?;
     Ok(Some(
         (0..n)
-            .map(|i| is_alive_value(alive.get(i as isize, 0)))
+            .map(|i| is_alive_value(alive.get(i, 0).expect("validated scalar coordinates")))
             .collect(),
     ))
 }
@@ -210,7 +108,7 @@ pub(crate) fn gather_rigid_flags(
     validate_scalar_shape(ATTR_RIGID, rigid.dim(), rigid.num_vectors(), n)?;
     Ok(Some(
         (0..n)
-            .map(|i| is_rigid_value(rigid.get(i as isize, 0)))
+            .map(|i| is_rigid_value(rigid.get(i, 0).expect("validated scalar coordinates")))
             .collect(),
     ))
 }

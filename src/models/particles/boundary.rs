@@ -100,37 +100,39 @@ where
 
         {
             let r = objects.core.get_mut::<f64>(ATTR_R)?;
-            r.as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .zip(flip_mask.par_chunks_mut(dim))
-                .enumerate()
-                .try_for_each(|(i, (r_row, mask_row))| {
-                    if masks.should_skip(i) {
-                        return Ok(());
-                    }
-                    self.apply_position_with_velocity_flip_mask(r_row, mask_row)
-                })?;
+            r.edit_values(|values| {
+                values
+                    .par_chunks_mut(dim)
+                    .zip(flip_mask.par_chunks_mut(dim))
+                    .enumerate()
+                    .try_for_each(|(i, (r_row, mask_row))| {
+                        if masks.should_skip(i) {
+                            return Ok(());
+                        }
+                        self.apply_position_with_velocity_flip_mask(r_row, mask_row)
+                    })
+            })?;
         }
 
         {
             let v = objects.core.get_mut::<f64>(ATTR_V)?;
-            v.as_tensor_mut()
-                .data
-                .par_chunks_mut(dim)
-                .zip(flip_mask.par_chunks(dim))
-                .enumerate()
-                .for_each(|(i, (v_row, mask_row))| {
-                    if masks.should_skip(i) {
-                        return;
-                    }
-
-                    for d in 0..dim {
-                        if mask_row[d] == 1 {
-                            v_row[d] = -v_row[d];
+            v.edit_values(|values| {
+                values
+                    .par_chunks_mut(dim)
+                    .zip(flip_mask.par_chunks(dim))
+                    .enumerate()
+                    .for_each(|(i, (v_row, mask_row))| {
+                        if masks.should_skip(i) {
+                            return;
                         }
-                    }
-                });
+
+                        for d in 0..dim {
+                            if mask_row[d] == 1 {
+                                v_row[d] = -v_row[d];
+                            }
+                        }
+                    });
+            });
         }
 
         Ok(())

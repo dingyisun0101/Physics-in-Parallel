@@ -198,43 +198,43 @@ impl Thermostat for LangevinThermostat {
         let tau_target = self.tau_target;
 
         let v = objects.core.get_mut::<f64>(ATTR_V)?;
-        v.as_tensor_mut()
-            .data
-            .par_chunks_mut(dim)
-            .enumerate()
-            .try_for_each(|(i, row)| -> Result<(), ThermostatError> {
-                if masks.should_skip(i) {
-                    return Ok(());
-                }
+        v.edit_values(|values| {
+            values.par_chunks_mut(dim).enumerate().try_for_each(
+                |(i, row)| -> Result<(), ThermostatError> {
+                    if masks.should_skip(i) {
+                        return Ok(());
+                    }
 
-                let m_inv = m_inv_values[i];
-                if !m_inv.is_finite() || m_inv <= 0.0 {
-                    return Err(ThermostatError::InvalidParam {
-                        field: ATTR_M_INV,
-                        value: m_inv,
-                    });
-                }
+                    let m_inv = m_inv_values[i];
+                    if !m_inv.is_finite() || m_inv <= 0.0 {
+                        return Err(ThermostatError::InvalidParam {
+                            field: ATTR_M_INV,
+                            value: m_inv,
+                        });
+                    }
 
-                let sigma = (tau_target * m_inv * one_minus_c2).sqrt();
-                if !sigma.is_finite() {
-                    return Err(ThermostatError::InvalidParam {
-                        field: "sigma",
-                        value: sigma,
-                    });
-                }
+                    let sigma = (tau_target * m_inv * one_minus_c2).sqrt();
+                    if !sigma.is_finite() {
+                        return Err(ThermostatError::InvalidParam {
+                            field: "sigma",
+                            value: sigma,
+                        });
+                    }
 
-                for (component, vd) in row.iter_mut().enumerate() {
-                    let z = rng.standard_normal(
-                        step,
-                        DOMAIN_LANGEVIN_NORMAL,
-                        i as u64,
-                        component as u64,
-                    );
-                    *vd = c * *vd + sigma * z;
-                }
+                    for (component, vd) in row.iter_mut().enumerate() {
+                        let z = rng.standard_normal(
+                            step,
+                            DOMAIN_LANGEVIN_NORMAL,
+                            i as u64,
+                            component as u64,
+                        );
+                        *vd = c * *vd + sigma * z;
+                    }
 
-                Ok(())
-            })?;
+                    Ok(())
+                },
+            )
+        })?;
 
         self.step_counter = self.step_counter.wrapping_add(1);
         Ok(())

@@ -9,7 +9,7 @@ pub use crate::engines::soa::interaction::{
     InteractionTopology, ObjId,
 };
 pub use crate::engines::soa::neighbor_list::{NeighborList, NeighborListError};
-pub use crate::engines::soa::phys_obj::{AttrId, AttrsCore, AttrsMeta};
+pub use crate::engines::soa::phys_obj::{AttrId, AttrsCore, AttrsError, AttrsMeta};
 pub use crate::math::tensor::rank_2::matrix::{
     AntiSymmetricMatrix, DiagonalMatrix, LowerTriangularMatrix, StrictLowerTriangularMatrix,
     StrictUpperTriangularMatrix, SymmetricMatrix, UpperTriangularMatrix,

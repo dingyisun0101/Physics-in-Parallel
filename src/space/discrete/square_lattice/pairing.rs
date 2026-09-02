@@ -19,11 +19,13 @@ use std::fmt;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::math::tensor::rank_2::vector_list::{HaarVectors, NNVectors, VectorList};
+use crate::math::tensor::rank_2::vector_list::{
+    HaarVectors, NNVectors, VectorList as DenseVectorList,
+};
 use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
 use crate::math::tensor::rank_n::layout::RowMajorLayout;
 use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
-use crate::math::{RandType, TensorError, TensorRandError, TensorRandFiller};
+use crate::math::{RandType, TensorError, TensorRandError, TensorRandFiller, VectorList};
 use crate::threading::parallel_chunk_len;
 
 use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
@@ -261,9 +263,12 @@ impl PairGenerator {
             random_filler,
             workspace,
             generated_sweep: None,
-            source_coords_cache: VectorList::empty(rank, num_pairs),
-            displacement_coords_cache: VectorList::empty(rank, num_pairs),
-            target_coords_cache: VectorList::empty(rank, num_pairs),
+            source_coords_cache: VectorList::filled(rank, num_pairs, 0)
+                .expect("validated pair-buffer dimensions"),
+            displacement_coords_cache: VectorList::filled(rank, num_pairs, 0)
+                .expect("validated pair-buffer dimensions"),
+            target_coords_cache: VectorList::filled(rank, num_pairs, 0)
+                .expect("validated pair-buffer dimensions"),
         })
     }
 
@@ -275,13 +280,12 @@ impl PairGenerator {
         match &mut self.workspace {
             PairingWorkspace::IndependentUniform => {
                 let rank = self.layout.shape().len();
+                let mut sources = vec![0; self.num_pairs() * rank];
+                let mut targets = vec![0; self.num_pairs() * rank];
+                let mut displacements = vec![0; self.num_pairs() * rank];
                 self.random_filler
                     .try_fill_index_pairs_with(
-                        (
-                            self.source_coords_cache.as_tensor_mut().data_mut(),
-                            self.target_coords_cache.as_tensor_mut().data_mut(),
-                            self.displacement_coords_cache.as_tensor_mut().data_mut(),
-                        ),
+                        (&mut sources, &mut targets, &mut displacements),
                         rank,
                         self.layout.size(),
                         sweep,
@@ -302,6 +306,9 @@ impl PairGenerator {
                         },
                     )
                     .expect("validated indexed independent-uniform filler");
+                self.source_coords_cache.replace_values(sources);
+                self.target_coords_cache.replace_values(targets);
+                self.displacement_coords_cache.replace_values(displacements);
             }
             PairingWorkspace::Kernel {
                 source_sites,
@@ -392,20 +399,6 @@ impl PairGenerator {
     pub fn targets(&self) -> &VectorList<isize> {
         &self.target_coords_cache
     }
-
-    pub fn source(&self, index: isize) -> &[isize] {
-        self.source_coords_cache.vector(index)
-    }
-
-    /// Returns the raw displacement for one pair.
-    pub fn displacement(&self, index: isize) -> &[isize] {
-        self.displacement_coords_cache.vector(index)
-    }
-
-    /// Returns a raw target coordinate. Pass it to boundary-aware space accessors.
-    pub fn target(&self, index: isize) -> &[isize] {
-        self.target_coords_cache.vector(index)
-    }
 }
 
 fn validate_layout(shape: &[usize]) -> Result<RowMajorLayout, PairGenerationError> {
@@ -456,40 +449,31 @@ fn refresh_kernel_sources(
         .expect("validated indexed source-site filler");
     let rank = layout.shape().len();
     let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
-    sources
-        .as_tensor_mut()
-        .data_mut()
-        .par_chunks_exact_mut(rank)
-        .zip(sites.data().par_iter())
-        .with_min_len(min_pairs_per_job)
-        .for_each(|(row, site)| layout.coordinate_into(*site, row));
+    sources.edit_values(|values| {
+        values
+            .par_chunks_exact_mut(rank)
+            .zip(sites.data().par_iter())
+            .with_min_len(min_pairs_per_job)
+            .for_each(|(row, site)| layout.coordinate_into(*site, row));
+    });
 }
 
 fn assemble_nearest_neighbor(
     sources: &VectorList<isize>,
-    directions: &VectorList<isize>,
+    directions: &DenseVectorList<isize>,
     displacements: &mut VectorList<isize>,
     targets: &mut VectorList<isize>,
 ) {
     let rank = sources.dim();
     let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
-    sources
-        .as_tensor()
-        .data()
+    let source_values = sources.logical_values();
+    let mut displacement_values = vec![0; source_values.len()];
+    let mut target_values = vec![0; source_values.len()];
+    source_values
         .par_chunks_exact(rank)
         .zip(directions.as_tensor().data().par_chunks_exact(rank))
-        .zip(
-            displacements
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
-        .zip(
-            targets
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
+        .zip(displacement_values.par_chunks_exact_mut(rank))
+        .zip(target_values.par_chunks_exact_mut(rank))
         .with_min_len(min_pairs_per_job)
         .for_each(|(((source, direction), displacement), target)| {
             for (((displacement, target), &source), &direction) in displacement
@@ -502,11 +486,13 @@ fn assemble_nearest_neighbor(
                 *target = source + direction;
             }
         });
+    displacements.replace_values(displacement_values);
+    targets.replace_values(target_values);
 }
 
 fn assemble_radial(
     sources: &VectorList<isize>,
-    directions: &VectorList<f64>,
+    directions: &DenseVectorList<f64>,
     length_units: &[f64],
     kernel: &BuiltinKernel,
     displacements: &mut VectorList<isize>,
@@ -514,24 +500,15 @@ fn assemble_radial(
 ) {
     let rank = sources.dim();
     let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
-    sources
-        .as_tensor()
-        .data()
+    let source_values = sources.logical_values();
+    let mut displacement_values = vec![0; source_values.len()];
+    let mut target_values = vec![0; source_values.len()];
+    source_values
         .par_chunks_exact(rank)
         .zip(directions.as_tensor().data().par_chunks_exact(rank))
         .zip(length_units.par_iter())
-        .zip(
-            displacements
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
-        .zip(
-            targets
-                .as_tensor_mut()
-                .data_mut()
-                .par_chunks_exact_mut(rank),
-        )
+        .zip(displacement_values.par_chunks_exact_mut(rank))
+        .zip(target_values.par_chunks_exact_mut(rank))
         .with_min_len(min_pairs_per_job)
         .for_each(|((((source, direction), unit), displacement), target)| {
             let length = kernel.sample_unit(*unit);
@@ -546,4 +523,6 @@ fn assemble_radial(
                 *target = source + component;
             }
         });
+    displacements.replace_values(displacement_values);
+    targets.replace_values(target_values);
 }

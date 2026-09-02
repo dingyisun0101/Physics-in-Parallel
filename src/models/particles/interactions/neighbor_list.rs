@@ -108,7 +108,7 @@ impl ParticleNeighborList {
         let r = objects.core.get::<f64>(ATTR_R)?;
         self.validate_position_dim(r.dim())?;
         self.candidates
-            .rebuild(r.as_tensor().data.as_slice(), r.num_vectors())?;
+            .rebuild(&r.logical_values(), r.num_vectors())?;
         Ok(())
     }
 
@@ -127,7 +127,7 @@ impl ParticleNeighborList {
         self.validate_position_dim(r.dim())?;
         let dim = r.dim();
         let n = r.num_vectors();
-        let r_data = r.as_tensor().data.as_slice();
+        let r_data = r.logical_values();
 
         let alive_flags = gather_alive_flags(objects, n, selection)?;
         let cutoff_sq = self.cutoff * self.cutoff;

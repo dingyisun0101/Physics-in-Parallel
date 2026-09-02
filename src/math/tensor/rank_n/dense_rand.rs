@@ -32,9 +32,9 @@ use rand_distr::{Bernoulli, Distribution, Normal, Uniform};
 use rand_pcg::{Pcg64, Pcg64Mcg};
 use rayon::prelude::*;
 
+use crate::math::Tensor as UniversalTensor;
 use crate::math::scalar::Scalar;
 use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
-use crate::math::tensor::rank_n::generic::{Dense, Tensor};
 use crate::rng::{IndexedRng, ResolvedRng, RngError, RngMethod};
 use crate::threading::{parallel_chunk_len, random_lanes_per_job};
 
@@ -259,14 +259,17 @@ impl TensorRandFiller {
 
     /// Refreshes tensor values in place.
     #[inline]
-    pub fn refresh<T: TensorRandElement>(
+    pub fn fill<T: TensorRandElement>(
         &mut self,
-        tensor: &mut Tensor<T, Dense>,
+        tensor: &mut UniversalTensor<T>,
     ) -> Result<(), TensorRandError> {
         if self.indexed.is_some() {
             return Err(TensorRandError::IndexedStepRequired);
         }
-        T::try_fill(self, tensor.storage_mut())
+        let mut values = tensor.values().collect::<Vec<_>>();
+        T::try_fill_slice(self, &mut values)?;
+        tensor.replace_with_values(values);
+        Ok(())
     }
 
     pub(crate) fn try_refresh_dense<T: TensorRandElement>(
@@ -284,7 +287,7 @@ impl TensorRandFiller {
     /// This uses the same distribution, RNG state, and parallel chunking as
     /// [`Self::refresh`] without requiring a tensor wrapper.
     #[inline]
-    pub fn try_fill_slice<T: TensorRandElement>(
+    pub(crate) fn try_fill_slice<T: TensorRandElement>(
         &mut self,
         values: &mut [T],
     ) -> Result<(), TensorRandError> {
@@ -297,7 +300,7 @@ impl TensorRandFiller {
     /// Fills a slice reproducibly for an explicit step and random domain.
     ///
     /// Results do not depend on Rayon scheduling or this filler's worker limit.
-    pub fn try_fill_slice_at<T: TensorRandElement>(
+    pub(crate) fn try_fill_slice_at<T: TensorRandElement>(
         &self,
         values: &mut [T],
         step: u64,
@@ -310,7 +313,7 @@ impl TensorRandFiller {
     }
 
     /// Fills row-major values using `(row, component)` random coordinates.
-    pub fn try_fill_slice_at_layout<T: TensorRandElement>(
+    pub(crate) fn try_fill_slice_at_layout<T: TensorRandElement>(
         &self,
         values: &mut [T],
         components: usize,
@@ -329,7 +332,7 @@ impl TensorRandFiller {
     /// Sampling uses indexed Lemire rejection and is independent of Rayon
     /// scheduling. This operation is available only on indexed fillers and
     /// does not depend on the filler's scalar distribution.
-    pub fn try_fill_indices_at(
+    pub(crate) fn try_fill_indices_at(
         &self,
         values: &mut [usize],
         upper: usize,
