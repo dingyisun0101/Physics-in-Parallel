@@ -1,9 +1,10 @@
 # PiP Public API Review
 
 This document records the public API exposed by PiP on the `tmp` branch after
-Stage 4, identifies overlapping routes, and audits communication across module
-boundaries. It is a review document, not an accepted redesign. Stage 5 should
-not begin until the open choices here are resolved.
+Stage 4, the clean-slate public contract approved during the API review, and
+the required communication boundaries between modules. The current inventory
+is retained as migration evidence; **Approved target contract** is normative
+for Stage 5 and later work. No backward compatibility is required.
 
 ## Scope and source of truth
 
@@ -321,7 +322,261 @@ inherent JSON support. `Space` exposes storage, shape, coordinate access,
 mutation, filling, and file persistence. `SquareLatticeAdvanced` exposes
 downsampling.
 
-## Public error surface
+## Approved target contract
+
+### Canonical exports and API tiers
+
+Domain roots are the authoritative public paths. For example, math types come
+from `physics_in_parallel::math`, RNG types from
+`physics_in_parallel::rng`, and particle models from
+`physics_in_parallel::models`.
+
+`prelude::basic` is a small convenience set containing the normal
+backend-agnostic numerical API. Advanced APIs require an explicit advanced
+import. Internal implementation APIs are not externally reachable. Legacy and
+overlapping re-export paths are removed.
+
+PiP itself uses another domain's basic facade first. It may cross into an
+advanced API only for missing coverage or a demonstrated efficiency need, and
+may use a private cross-domain API only as a documented last resort.
+
+### Backend-agnostic tensor family
+
+The purpose of PiP's tensor unit is a backend-agnostic user experience with
+optimized dense and sparse execution behind one interface. The canonical
+basic types are:
+
+```rust
+Tensor<T>
+Matrix<T>
+VectorList<T>
+```
+
+Dense and sparse are both fundamental basic capabilities, but they are not
+different mathematical Rust types. Each canonical container owns a private
+tagged dense-or-sparse representation. Public backend implementation traits
+and backend marker type parameters are removed. Downstream custom backends are
+not supported; PiP may add another built-in representation without changing
+ordinary function signatures.
+
+Users choose the initial representation through structurally distinct
+constructors. Dense values and sparse entries must not be forced through one
+weakly typed constructor:
+
+```rust
+let dense: Tensor<f64> = Tensor::from_dense(shape, values)?;
+let sparse: Tensor<f64> = Tensor::from_sparse_entries(shape, entries)?;
+```
+
+Constructors with a natural representation choose it deterministically:
+
+- zero and identity construction use sparse storage
+- filled and function-generated construction use dense storage
+- no constructor guesses from a runtime density threshold
+
+The basic `StorageKind` enum contains `Dense` and `Sparse`. `storage_kind`,
+`make_dense`, and `make_sparse` are basic controls. PiP never silently changes
+an existing value's representation. An allocating operation preserves its
+receiver's representation, including for mixed-representation inputs. An
+`*_into` operation writes into the caller-selected representation of its
+output. Operand order can therefore affect storage and performance but must
+never affect mathematical values. Direct Serde preserves the selected
+representation and validated deserialization restores it without conversion.
+
+Every allocating operation must contain a prominent `# Result storage`
+section. Every potentially representation-sensitive operation must contain a
+`# Complexity` section that states dense, sparse, and mixed costs. Operations
+that can produce dense occupancy in sparse storage must place that warning
+near the method summary as well as in the detailed complexity section.
+
+### Arithmetic, access, and traversal
+
+Named fallible methods are the sole arithmetic API. Use names such as `add`,
+`multiply`, `matmul`, and their justified `*_into` forms. Remove overlapping
+arithmetic operator implementations because operators hide allocation,
+representation choice, validation failures, and complexity.
+
+Basic element access is semantic and container-specific:
+
+- `Tensor` accepts multidimensional coordinates
+- `Matrix` accepts row and column coordinates
+- `VectorList` accepts vector and component coordinates
+
+`get` returns a scalar value rather than a storage reference, and `set` is
+fallible. Raw accessors remain advanced. Terminology is strict throughout
+code, errors, and documentation: **coordinates** identify a multidimensional
+logical location; **index** means only a flattened storage position used by a
+raw accessor. Matrix `row` and `column`, and vector-list `vector` and
+`component`, are coordinate names rather than flat indices.
+
+Basic `values()` traverses every logical element in coordinate order and
+yields scalar values for both representations. Its sparse complexity is
+`O(total logical elements)`, not `O(stored elements)`, and must be stated next
+to the method. Advanced, explicitly named stored-entry traversal supplies the
+`O(stored elements)` route. Contiguous slices, sparse entry mutation, flat
+indexing, and other storage-native views are advanced.
+
+### Parallel execution
+
+Built-in mathematical and physical operations select sequential or parallel
+kernels internally. PiP does not publish duplicate `foo` and `par_foo`
+operations. Explicit parallel traversal is advanced and exists only for
+custom callbacks that the semantic API cannot express.
+
+PiP uses the active Rayon pool and never owns a public pool wrapper. Remove
+`ComputePool`, `ComputePoolError`, and `with_threads`. Callers must configure a
+shared Rayon pool themselves or let scientific-workflow coordinate it. The
+crate startup documentation and every potentially parallel API must warn that
+independent pools can oversubscribe the machine.
+
+A process-wide PiP limit controls the maximum worker participation requested
+by one operation:
+
+```rust
+pub fn set_max_threads(limit: Option<usize>) -> Result<(), ParallelismError>;
+pub fn max_threads() -> Option<usize>;
+```
+
+`None`, which is the default, means no PiP-specific cap; the active Rayon pool
+and useful work still bound execution. `Some(0)` is invalid. Each operation
+snapshots the setting when it begins, and nested kernels share that operation's
+budget. The setting does not create, resize, or reserve a Rayon pool. Remove
+per-struct maximum-thread controls and `DEFAULT_RANDOM_MAX_THREADS`. Normal
+applications call the setter once during startup before concurrent work begins.
+
+### Randomness
+
+PiP owns one resolved RNG value:
+
+```rust
+pub struct ResolvedRng {
+    seed: u64,
+    method: RngMethod,
+}
+```
+
+`ResolvedRng::new(seed, method)` is deterministic. Entropy requires an
+explicit `ResolvedRng::from_entropy(method)` call. There are no optional seed
+or method fields, hidden defaults, entropy fallbacks, or public `RngConfig`.
+Every public stochastic PiP API accepts `ResolvedRng`; no stochastic API takes
+a raw seed and method as separate arguments.
+
+Components validate supported methods once, retain `ResolvedRng` for
+inspection and serialization where state is independently meaningful, and
+lower it internally to indexed or stateful generators. One-shot operations do
+not return the resolved input again. Long-lived stochastic state stores the
+resolved RNG plus the indexed counter or stateful cursor required to resume
+exactly.
+
+PiP remains unaware of scientific-workflow. A downstream adapter, owned by
+OmniFluid in this project, combines a Workflow purpose-derived `u64` seed with
+an OmniFluid-selected `RngMethod` to construct `ResolvedRng`.
+
+### Domain values and configuration ownership
+
+PiP constructors accept ordinary semantic values, not serialization DTOs.
+Remove `PairGeneratorConfig`; `PairGenerator::new` accepts shape, pairing
+method, pair count, and `ResolvedRng` directly. Keep `PairingMethod`,
+`KernelType`, and `SourceMode` because they are domain concepts.
+
+Rename and reframe `SquareLatticeConfig` as an independently useful geometry
+value such as `SquareLatticeGeometry`. It owns shape, spacing, boundary,
+layout, coordinate, and neighbor geometry. The live `SquareLattice<T>` owns
+cells and initialization provenance. It is not a downstream configuration DTO.
+
+PiP does not define a config struct for every runtime type. OmniFluid and other
+downstream crates own grouped, serializable configuration and feed validated
+values through PiP accessors and constructors.
+
+### Laws and interaction networks
+
+`Spring` and `PowerLawDecay` have private fields, validated constructors, and
+read-only accessors. Network APIs never expose mutable law references; changing
+a law uses validated whole-value replacement.
+
+Particle pairs `(usize, usize)` are the public identity of model interactions.
+`InteractionId` and backend slot identities are not part of model APIs.
+Networks are sparse edge collections and do not own a fixed particle count:
+
+- `new()` creates an empty unbounded network
+- `with_capacity(edge_capacity)` reserves edges only
+- valid insertion automatically grows the minimum required particle bound
+- insertion validates the complete request before mutation
+- applying a network validates every endpoint against the actual `PhysObj`
+
+The old `num_particles` concept is removed. A read-only
+`minimum_particle_count` may expose the greatest required endpoint bound.
+Self-pairs, invalid laws, arithmetic overflow, malformed batches, and
+out-of-range application are model-owned errors.
+
+Duplicate runtime insertion is an upsert:
+
+```rust
+fn insert(
+    &mut self,
+    pair: (usize, usize),
+    law: Law,
+) -> Result<Option<Law>, NetworkError>;
+```
+
+`None` means a new edge and `Some(previous)` means replacement. Bulk insertion
+is transactional. Deserialization is stricter and rejects duplicate pairs so
+persisted input cannot depend on record ordering.
+
+Direct validated Serde is the sole network interchange route. Record DTOs are
+private implementation details; remove public `SpringRecord`,
+`PowerLawRecord`, `records`, and `from_records`. Ordinary borrowed iteration
+provides inspection. Remove public `interaction`, `interaction_mut`, and all
+generic-backend exposure from model networks.
+
+`ParticleNeighborList` likewise hides `NeighborList` and exposes only
+particle-level construction, rebuild, and pair traversal. Keep one name for
+cutoff-filtered pair collection.
+
+### Serialization and downstream responsibilities
+
+Direct validated Serde is the only conversion contract. Remove bespoke string,
+JSON, payload, and file persistence helpers. Payload DTOs remain private unless
+they gain an independent computational purpose. Paths, formats, recording
+cadence, observation aggregation, and filesystem policy belong downstream.
+
+Remove `Reducer` and `MeanReducer`; aggregation belongs to
+scientific-workflow or an analysis layer. PiP state may implement Serde where
+serialization is independently meaningful, but PiP does not know Workflow's
+schema or persistence types.
+
+For every user-controlled value there is one fallible construction or
+conversion route. Remove competing panicking/fallible pairs such as
+`new`/`try_new`, `from_vec`/`try_from_vec`, and `cast_to`/`try_cast_to`.
+Conventional names may return `Result`. An operation is infallible only when
+failure is impossible for every accepted input.
+
+### Error and trait contracts
+
+`ParticleStateError` is the authoritative public error for invalid canonical
+`PhysObj` state: missing attributes, wrong scalar types, invalid shapes,
+object-count mismatches, and particle-coordinate bounds. Each model still has
+its own public error type and wraps `ParticleStateError` as a source when a
+state failure is discovered. Integrators, boundaries, thermostats, observers,
+networks, and neighbor lists retain their genuinely domain-specific variants.
+
+Model errors expose only model and particle-state concepts. Tensor storage,
+attribute storage, generic interaction, and generic neighbor errors are
+translated at the model boundary. A broken internal assumption becomes an
+explicit model-owned invariant error rather than a leaked backend enum or an
+unexplained panic.
+
+All public errors implement `std::error::Error + Send + Sync + 'static` and
+preserve meaningful source chains. Parameter validation uses specific variants
+and values rather than catch-all strings.
+
+Mutable behavior traits such as `Integrator` and `Thermostat` require `Send`.
+Immutable behavior traits require `Send + Sync` only when PiP may share them
+across workers. Public concrete values generally implement `Debug` and
+`Clone`; small immutable values may implement `Copy`. Persistable state uses
+direct Serde. Behavior traits do not require `Default`, `Clone`, or Serde.
+
+## Current public error surface
 
 The current normal API exposes these errors:
 
@@ -338,23 +593,22 @@ The current normal API exposes these errors:
 The advanced API additionally exposes `InteractionError`, `NeighborListError`,
 and `DynamicWeightedIndexError`.
 
-Particle shape and count failures are duplicated across most model error enums.
-Backend errors are also embedded in model error variants, which makes advanced
-types part of the effective model contract. A shared public particle-state
-error could remove repetition. Model wrappers should translate backend errors
-that are meaningful at the model boundary and treat impossible backend failures
-as invariant violations rather than exposing the backend enum wholesale.
+Particle shape and count failures are duplicated across most current model
+error enums. Backend errors are also embedded in model error variants, which
+makes advanced types part of the effective model contract. The approved target
+replaces this duplication with `ParticleStateError` and model-owned error
+translation as specified above.
 
 `ThermostatError::InvalidParam` currently combines non-negative constructor
 parameters, strictly positive inverse mass, and finite derived sigma under one
 message. These should be separate errors or carry an explicit validation rule.
 
-## Exact overlaps to remove
+## Approved removals and consolidations
 
 1. `ParticleNeighborList::collect_pairs_within_cutoff` is an exact alias for
    `collect_pairs`; keep only one.
-2. `DEFAULT_RANDOM_MAX_THREADS` is exported by both basic and advanced; assign
-   it to one tier.
+2. Remove `DEFAULT_RANDOM_MAX_THREADS` and all per-struct thread limits in
+   favor of process-wide `set_max_threads` and `max_threads`.
 3. Observer selection is both a public field and an accessor; make the field
    private.
 4. `new`/`try_new`, `from_vec`/`try_from_vec`, and
@@ -377,10 +631,15 @@ message. These should be separate errors or carry an explicit validation rule.
 10. `ParticleNeighborList::candidates` and `candidates_mut` expose the generic
     neighbor engine beneath the model API. Remove both and expose particle-level
     traversal if it is needed.
-11. `DenseMatrix<T>` is exactly the default `Matrix<T>` specialization; one
-    public name is sufficient.
-12. `VectorList` exposes named elementwise operations and equivalent operator
-    implementations. Choose one notation for each operation.
+11. Remove `DenseMatrix`, `SparseMatrix`, backend marker parameters, and public
+    backend implementation traits. `Matrix<T>` is the universal type.
+12. Remove arithmetic operator implementations from `Tensor`, `Matrix`, and
+    `VectorList`; named fallible operations are canonical.
+13. Remove public flat indexing and raw storage access from the basic API.
+    Coordinate-based value access is basic and raw access is advanced.
+14. Remove `RngConfig`; every stochastic API accepts `ResolvedRng`.
+15. Remove sequential/parallel operation pairs. Built-in operations select a
+    kernel internally and custom explicit parallel traversal is advanced.
 
 ## Responsibilities that belong downstream
 
@@ -395,12 +654,10 @@ should be removed or moved out of the normal PiP surface:
 - `ComputePool` and `with_threads`: outer execution scheduling belongs to the
   workflow. PiP may continue using the caller's current Rayon pool internally.
 
-`PairGeneratorConfig` is a pure constructor DTO and conflicts with the decision
-that downstream crates own configuration. `SquareLatticeConfig` should either
-become an independently meaningful geometry value with a domain name or be
-replaced by ordinary constructor parameters. `RngConfig` requires a separate
-decision because it currently represents both an unresolved request and
-resolved reproducibility state.
+`PairGeneratorConfig` is a pure constructor DTO and is removed because
+downstream crates own configuration. `SquareLatticeConfig` becomes an
+independently meaningful geometry value. `RngConfig` is replaced by the fully
+specified `ResolvedRng` domain value.
 
 ## Non-overlapping ownership target
 
@@ -409,10 +666,12 @@ index access, for example, naturally occur on several containers. The target
 should instead be one authoritative construction, mutation, traversal, and
 serialization route per abstraction layer:
 
-- `Tensor` owns N-dimensional storage and tensor algebra.
-- `Matrix` owns rank-two linear algebra, not duplicate tensor algebra.
-- `VectorList` owns batched geometric-vector operations.
-- `Interaction<T>` owns generic topology and payload storage.
+- `Tensor` owns backend-agnostic N-dimensional storage and tensor algebra.
+- `Matrix` owns backend-agnostic rank-two linear algebra, not duplicate tensor
+  algebra.
+- `VectorList` owns backend-agnostic batched geometric-vector operations.
+- Private or advanced interaction storage owns generic topology and payload
+  layout.
 - Physical networks own validated laws and do not reveal `Interaction<T>`.
 - `ContinuousBoundary` owns geometric boundary operations.
 - `ParticleBoundary` adapts a boundary to canonical particle state.
