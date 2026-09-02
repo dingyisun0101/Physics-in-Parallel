@@ -41,7 +41,7 @@ impl RngMethod {
         match self {
             Self::IndexedSplitMix64 => "1",
             Self::Pcg64 | Self::Pcg64Mcg => "rand_pcg-0.10.2",
-            Self::SmallRng => "rand-0.10.1",
+            Self::SmallRng => "rand-0.10.2",
             Self::ChaCha8 | Self::ChaCha12 | Self::ChaCha20 => "rand_chacha-0.10",
         }
     }
