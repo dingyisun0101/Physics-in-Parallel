@@ -292,7 +292,7 @@ impl TensorRandFiller {
     /// Fallibly fills a caller-owned contiguous slice in place.
     ///
     /// This uses the same distribution, RNG state, and parallel chunking as
-    /// [`Self::refresh`] without requiring a tensor wrapper.
+    /// [`Self::fill`] without requiring a tensor wrapper.
     #[inline]
     pub(crate) fn try_fill_slice<T: TensorRandElement>(
         &mut self,

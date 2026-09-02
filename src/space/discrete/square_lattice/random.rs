@@ -7,7 +7,7 @@ across Rayon workers in any way without changing the generated pair batch.
 
 The generator is intended for reproducible simulation, not cryptography.
 Changing its mapping is a scientific format change and requires updating
-[`RngMethod::version`].
+[`RngMethod::version`](crate::rng::RngMethod::version).
 */
 
 pub(crate) use crate::rng::IndexedRng;
