@@ -1,61 +1,62 @@
-# PiP Workflow Compatibility Updates
+# PiP Downstream API Updates
 
 ## Purpose
 
-OmniFluid will be refactored as a `scientific-workflow` execution unit that
-uses PiP model types directly. This document lists PiP updates needed so
-downstream workflow crates can use the `models` API without wrappers,
-conversion glue, or ad hoc snapshots.
+OmniFluid uses PiP as a general physics library. This checklist records changes
+that improve PiP's independent public API while allowing configuration-driven
+downstream crates to construct, execute, inspect, and record PiP models.
 
-Assumptions:
+PiP does not know about `scientific-workflow`. OmniFluid owns its complete
+experiment schema and translates validated values into ordinary PiP
+constructors.
 
-- PiP and `scientific-workflow` will be co-developed until their public APIs fit
-  together cleanly.
-- PiP should remain independent of Workflow policy. It should not own studies,
-  phases, persistence cadence, output directories, or terminal UI.
-- PiP model types should be usable as Workflow constants, live execution-unit
-  internals, and recorded state payloads where that is semantically correct.
-- Workflow payloads require `Serialize + Clone + Send + 'static`.
-- Workflow execution-unit errors flow through `Box<dyn Error + Send + Sync>`,
-  so PiP public errors should implement `std::error::Error`.
+## Ownership Boundary
 
-## Current Good Fit
+PiP owns:
 
-The `models` surface already exposes the core pieces OmniFluid wants:
+- physical laws and validated law values
+- particle state and canonical particle operations
+- interaction topology and model networks
+- integrators, thermostats, boundaries, and observers
+- deterministic random-number primitives used by its operations
+- errors, constructors, accessors, and snapshots for those concepts
+
+Downstream crates own:
+
+- configuration DTOs and file formats
+- Serde-tagged selectors for choosing PiP implementations
+- defaults, aliases, and cross-component policy
+- construction order and translation into PiP calls
+- workflow orchestration, persistence cadence, and provenance policy
+
+Adding a PiP config type is not part of this work. Serde belongs on a PiP type
+only when the type itself is meaningful physical state or a stable physical
+value, not merely because a downstream application wants to deserialize input.
+
+## Current Public Surface
+
+The model API already exposes the principal pieces OmniFluid needs:
 
 - `PhysObj`
-- `SpringNetwork`
-- `PowerLawNetwork`
+- `SpringNetwork` and `PowerLawNetwork`
 - `ParticleNeighborList`
-- `ExplicitEuler`
-- `SemiImplicitEuler`
+- `ExplicitEuler` and `SemiImplicitEuler`
 - `LangevinThermostat`
 - `ParticleBoundary`
-- `KineticEnergyObserver`
-- `TemperatureObserver`
-- `Spring`
-- `PowerLawDecay`
-- `RngConfig`
-- `IndexedRng`
+- kinetic-energy and temperature observers
+- validated `Spring` and `PowerLawDecay` laws
+- `RngConfig` and `IndexedRng`
 
-`PhysObj` is already `Clone + Serialize + Deserialize`, which makes it a good
-candidate for direct Workflow state payloads.
+`PhysObj`, `RngConfig`, and `IndexedRng` already support Serde. PiP also uses
+the ambient Rayon pool in model operations, so a downstream runtime can own the
+thread budget without PiP creating hidden pools.
 
-`RngConfig` and `IndexedRng` are already `Clone + Copy + Serialize +
-Deserialize`, and the indexed design is good for deterministic Workflow seed
-derivation because random values do not depend on Rayon scheduling order.
+## Stage 2: Error Ergonomics
 
-PiP also already avoids owning global workflow policy. Internal parallelism uses
-the current Rayon pool, which fits Workflow's role as the higher-level runtime
-and resource coordinator.
+Goal: every public model operation returns an error that composes naturally in
+ordinary Rust applications.
 
-## Priority 1: Complete Model Error Traits
-
-Problem: many public model errors are `Debug + Clone + PartialEq` but do not
-implement `Display` or `std::error::Error`. Downstream Workflow execution units
-should be able to use `?` on PiP operations inside `UnitResult`.
-
-Known public errors needing `Display` and `Error`:
+Public model errors needing `Display` and `std::error::Error`:
 
 - `MassiveParticlesError`
 - `IntegratorError`
@@ -66,293 +67,112 @@ Known public errors needing `Display` and `Error`:
 - `SpringNetworkError`
 - `PowerLawNetworkError`
 
-Related lower-layer errors used by model errors should also implement
-`Display` and `Error`, otherwise source chains cannot be exposed cleanly:
+Public lower-layer errors reached through those models need the same treatment:
 
 - `AttrsError`
 - `InteractionError`
 - `NeighborListError`
 - `BoundaryError`
 - `VectorSamplingError`
-- `TensorRandError`
-- `SquareLatticeConfigError`
-- `PairGenerationError`
-- `KernelError`
-- `ScalarCastError` already implements `Error` but should be checked for
-  consistent `Display`
 
-Recommended approach:
+Implementation rules:
 
-1. Add hand-written `Display` impls for all public errors.
-2. Add `impl std::error::Error` for all public errors.
-3. Where an error wraps another public error, implement `source()`.
-4. Add tests that coerce each public model error into
-   `Box<dyn std::error::Error + Send + Sync>`.
+1. Write concise, contextual `Display` messages containing relevant labels,
+   dimensions, indices, and invalid values.
+2. Return wrapped errors from `source()` instead of flattening them into debug
+   strings.
+3. Preserve the existing typed variants unless source preservation requires a
+   clearer variant.
+4. Verify all exported errors are `Send + Sync + std::error::Error + 'static`.
+5. Test representative display text and complete source chains.
 
-Exit criteria:
+No error should mention Workflow or a downstream configuration format.
 
-- downstream code can write `pip_call()?` inside a Workflow `UnitResult`
-- errors preserve useful context and source chains
-- no Workflow execution unit needs to stringify PiP errors manually
+## Stage 3: Serializable Model State
 
-## Priority 2: Serialize Model Laws And Networks
+Goal: serialize physical values and model state through validated, deterministic
+representations.
 
-Problem: Workflow can record `PhysObj` directly, but model laws and interaction
-networks are not yet serializable as public payloads. OmniFluid can work around
-that with its own `Vec<SpringPair>` snapshot, but the clean goal is to record
-PiP-owned model state directly where PiP owns the model type.
+Planned public values:
 
-Types that should derive or implement Serde:
-
-- `Spring`
-- `PowerLawDecay`
-- `InteractionOrder`
-- `InteractionNodes`
-- `InteractionTopology`
-- `Interaction<T>` where `T: Serialize + DeserializeOwned`
-- `SpringNetwork`
-- `PowerLawNetwork`
-- `NeighborList`
-- `ParticleNeighborList`
-- `ParticleSelection`
-- integrator selector/config types introduced in a later step
-- thermostat selector/config types introduced in a later step
-
-Recommended serialization policy:
-
-- Use versioned payloads for persistent model state where format stability
-  matters.
-- Keep topology and payload storage synchronized during deserialization.
-- Validate spring and power-law payloads while deserializing networks.
-- Reject malformed node lists, invalid object ids, invalid arity, duplicate
-  unordered pairs, and invalid payload values.
-- Preserve deterministic iteration order in serialized output where possible.
-
-Exit criteria:
-
-- `SpringNetwork` can be inserted into Workflow `SystemState` directly when a
-  simulation wants to record topology and spring parameters.
-- `PowerLawNetwork` has the same capability.
-- Tests round-trip non-empty networks and reject malformed serialized networks.
-
-## Priority 3: Add Stable Snapshot And Iteration APIs
-
-Problem: even with Serde, downstream crates often need lightweight diagnostic
-views without depending on engine internals. Current accessors expose
-`Interaction<T>`, but Workflow integrations should have stable model-level
-export APIs.
-
-Recommended additions:
-
+- Serde-enabled `Spring`, `SpringCutoff`, `PowerLawDecay`, and `PowerLawRange`
 - `SpringRecord { i, j, spring }`
 - `PowerLawRecord { i, j, law }`
-- `SpringNetwork::records() -> Vec<SpringRecord>`
-- `SpringNetwork::from_records(num_particles, records) -> Result<Self, ...>`
-- `PowerLawNetwork::records() -> Vec<PowerLawRecord>`
-- `PowerLawNetwork::from_records(num_particles, records) -> Result<Self, ...>`
-- optional borrowed iterators over `(i, j, &Spring)` and
-  `(i, j, &PowerLawDecay)`
+- deterministic record iterators or exports on both network types
+- validated `from_records` constructors
+- custom Serde for `SpringNetwork` and `PowerLawNetwork` through their records
 
-These records should be `Clone + Debug + PartialEq + Serialize + Deserialize`.
+Serialization rules:
 
-Exit criteria:
+1. Serialize only active interactions, never hash-map layout, spare capacity,
+   free-list order, or another implementation detail.
+2. Emit records in stable interaction-id order.
+3. Include the particle bound independently of the largest active endpoint so
+   empty networks and unused particles round-trip correctly.
+4. Reconstruct through public validation paths.
+5. Reject self-pairs, out-of-bound endpoints, duplicate unordered pairs, and
+   invalid law values with typed network errors.
+6. Keep configuration selectors and construction policy downstream.
 
-- downstream crates can record compact interaction views without touching
-  `Interaction<T>` internals
-- network reconstruction is validated and deterministic
-- OmniFluid can choose between direct network payloads and compact records
+Direct Serde for generic engine topology is optional. It should be added only
+if it has an independently useful, validated representation; model networks do
+not need to expose engine internals to become recordable.
 
-## Priority 4: Owned Config Types For Workflow Constants
+## Stage 4: Construction And Inspection APIs
 
-Problem: some PiP user-facing configuration enums borrow slices, which is good
-for low-allocation execution calls but not suitable as Workflow constants,
-because Workflow constants must be owned and `DeserializeOwned + 'static`.
+Goal: downstream crates can translate their own validated configuration into
+PiP models and inspect those models without private implementation knowledge.
 
-Borrowed examples:
+Audit targets:
 
-- `VectorSamplingMethod<'a>`
-- `VelocitySamplingMethod<'a>`
+- canonical particle template construction
+- spring and power-law network bounds, records, and iteration
+- continuous and particle boundary constructors and geometry accessors
+- direct integrator construction and execution
+- thermostat construction, state inspection, and deterministic restoration
+- observer construction and selection inspection
 
-Recommended additions:
+Implementation rules:
 
-- `VectorSamplingConfig`
-- `VelocitySamplingConfig`
-- conversion methods such as `as_method()` or direct `sample_*_config` helpers
-- serde support with `deny_unknown_fields`
+1. Constructors accept direct semantic parameters or existing PiP domain
+   values, not configuration DTOs.
+2. Accessors expose stable physical meaning, not backing-container layout.
+3. Restore constructors validate the same invariants as fresh constructors.
+4. Borrowed sampling APIs remain borrowed; downstream owned configs can lend
+   slices when invoking them.
+5. Add API-surface tests that construct and inspect models as an external crate
+   would through `prelude::models`.
 
-Example direction:
+Stage 4 deliberately does not add integrator selectors, thermostat selectors,
+boundary configs, particle configs, or Workflow examples.
 
-```rust
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum VelocitySamplingConfig {
-    Uniform { low: f64, high: f64 },
-    MaxwellBoltzmann { tau: f64 },
-    GaussianPerAxis { mean: Vec<f64>, std: Vec<f64> },
-}
-```
+## Deferred Work
 
-Exit criteria:
+The following work starts only after the Stage 4 public API and error review:
 
-- Workflow `parameters.json` can express PiP sampling choices directly
-- downstream crates do not need to invent duplicate owned config enums
-- borrowed low-level methods can remain for allocation-sensitive internal calls
+- higher-level particle construction helpers that preserve physical invariants
+- additional PiP integrators
+- thermostat checkpoint semantics beyond the current model
+- boundary and neighbor-list improvements discovered by OmniFluid integration
+- ambient-threading contract tests and documentation
+- generic host-integration examples
 
-## Priority 5: Configurable Integrators And Thermostats
+Each deferred change must pass the same test: it should improve PiP as an
+independent physics crate even if OmniFluid and `scientific-workflow` did not
+exist.
 
-Problem: PiP exposes concrete integrator and thermostat types, but downstream
-Workflow projects need serializable configuration selectors for choosing them
-from JSON.
+## Expected OmniFluid Use
 
-Recommended additions:
+After Stages 2 through 4, OmniFluid can:
 
-- `IntegratorConfig`
-- `IntegratorKind`
-- `IntegratorConfig::build() -> Box<dyn Integrator + Send>`
-- `ThermostatConfig`
-- `ThermostatKind`
-- `ThermostatConfig::build(selection) -> Result<Box<dyn Thermostat + Send>, ...>`
+- deserialize its own grouped experiment configuration
+- validate and resolve that configuration through OmniFluid accessors
+- call PiP constructors with direct physical parameters
+- store live particles and spring networks as PiP types
+- choose integrators and thermostats using OmniFluid-owned enums
+- pass borrowed slices from owned OmniFluid sampling configs
+- record PiP physical state directly where its state representation is stable
+- propagate PiP errors without string conversion
 
-Initial integrator kinds:
-
-- `explicit_euler`
-- `semi_implicit_euler`
-
-Future PiP integrators can be added as new variants. Because PiP is pre-1.0,
-breaking enum changes are acceptable when scientifically justified, but versioned
-or non-exhaustive config patterns should be considered.
-
-Exit criteria:
-
-- Workflow constants can select PiP integrators without OmniFluid-specific
-  wrappers
-- future PiP integrators can be consumed by OmniFluid through configuration
-- thermostat configuration records resolved RNG provenance
-
-## Priority 6: Make Langevin Thermostat Fully Recordable
-
-Problem: `LangevinThermostat` is deterministic and exposes its resolved
-`RngConfig` and `step_counter`, but it is not currently serializable. Workflow
-recordings and restart-like downstream workflows may need to record the
-thermostat state alongside particle state.
-
-Recommended additions:
-
-- derive or implement `Serialize + Deserialize` for `LangevinThermostat`
-- ensure `ParticleSelection` is serializable first
-- validate `tau_target`, `gamma`, RNG config, and step counter during
-  deserialization
-- consider a public constructor for restoring from resolved state
-
-Exit criteria:
-
-- a stochastic thermostat can be recorded and reconstructed without losing RNG
-  position/provenance
-- serialized state is sufficient to continue the same stochastic sequence
-
-## Priority 7: Public Particle Initialization Helpers
-
-Problem: `create_template`, `randomize_r`, and `randomize_v` are useful pieces,
-but downstream model crates still commonly need a higher-level, serializable
-particle-initialization config that composes template creation, position
-sampling, velocity sampling, mass assignment, alive/rigid defaults, and RNG
-provenance.
-
-Recommended additions:
-
-- `MassiveParticlesConfig`
-- `MassDistributionConfig`
-- `create_particles(config, rngs) -> Result<PhysObj, MassiveParticlesError>`
-- optional helpers for setting all masses and inverse masses consistently
-- optional helper for adding custom attributes with model-level validation
-
-Exit criteria:
-
-- OmniFluid can build PiP particle state from Workflow constants without its own
-  particle wrapper
-- mass assignment is a PiP model concern rather than a downstream reimplementation
-- all resolved randomness can be returned for provenance
-
-## Priority 8: Boundary Config Compatibility
-
-Problem: particle boundary behavior composes with `ContinuousBoundary`, but
-Workflow constants need owned, serializable boundary config. The concrete
-continuous boundary structs also do not currently derive Serde.
-
-Recommended additions:
-
-- serde support for `PeriodicBox`, `ClampBox`, and `ReflectBox`
-- `BoundaryConfig` or `ContinuousBoundaryConfig`
-- builder methods returning boxed or enum-owned boundary values
-- `ParticleBoundaryConfig` if particle-specific selection/mask behavior grows
-
-Exit criteria:
-
-- Workflow constants can configure PiP boundary behavior directly
-- downstream crates do not need their own duplicate boundary enums
-
-## Priority 9: Threading Contract Tests
-
-Problem: Workflow owns the runtime compute budget. PiP should continue using the
-ambient Rayon pool and should not create hidden global pools in model code.
-
-Recommended additions:
-
-- tests or documentation confirming model operations use ambient Rayon
-- avoid environment-variable-driven model behavior that bypasses Workflow
-  scheduling
-- keep `ComputePool` as explicit opt-in convenience, not a hidden model default
-
-Exit criteria:
-
-- Workflow can coordinate PiP model execution without oversubscription surprises
-
-## Priority 10: Workflow-Facing Examples
-
-Problem: once the above compatibility items exist, PiP should prove them through
-small examples that mirror downstream Workflow use without depending on
-OmniFluid.
-
-Recommended additions:
-
-- example that creates a `PhysObj`, `SpringNetwork`, integrator, thermostat, and
-  observer from serializable configs
-- example that serializes and deserializes full particle and network state
-- example that uses an externally supplied seed as the only stochastic input
-- optional dev-only example showing insertion of PiP payloads into a
-  `scientific-workflow::SystemState`
-
-Exit criteria:
-
-- downstream crates have a clear reference for PiP-native Workflow integration
-- PiP remains policy-free while demonstrating compatibility
-
-## Suggested Implementation Order
-
-1. Complete `Display` and `Error` impls for all public model and model-adjacent
-   errors.
-2. Add Serde to law payloads and simple enums.
-3. Add serializable record types for spring and power-law networks.
-4. Add validated Serde for `Interaction<T>`, `SpringNetwork`, and
-   `PowerLawNetwork`.
-5. Add owned sampling config types.
-6. Add integrator and thermostat config selectors.
-7. Add serializable Langevin thermostat state.
-8. Add high-level particle initialization config and helpers.
-9. Add serializable boundary config.
-10. Add Workflow-facing examples/tests.
-
-## Expected OmniFluid Impact
-
-After these PiP updates, OmniFluid can:
-
-- store live particles as PiP `PhysObj`
-- store live springs as PiP `SpringNetwork`
-- select PiP integrators from Workflow constants
-- select PiP thermostats from Workflow constants
-- use Workflow-derived seeds through PiP `RngConfig`
-- record PiP model state directly when appropriate
-- avoid particle and spring wrapper types whose only job is filling gaps in PiP
-
-OmniFluid will still own mask semantics, noise semantics, topology policies,
-Workflow execution-unit composition, and scientific analysis meaning.
+OmniFluid continues to own mask semantics, noise semantics, topology policy,
+workflow integration, and scientific interpretation.
