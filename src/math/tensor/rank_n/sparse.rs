@@ -51,7 +51,7 @@ use crate::math::scalar::{Scalar, ScalarCastError};
 /// # Invariants
 /// - `shape.len() >= 1`.
 /// - `data` contains no zeros (`T::zero()` is pruned on insert/ops).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tensor<T: Scalar> {
     shape: Vec<usize>,
     data: AHashMap<usize, T>, // flat index -> value (non-zero)

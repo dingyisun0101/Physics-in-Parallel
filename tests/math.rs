@@ -1,28 +1,4 @@
-#[path = "math/matrix_basic.rs"]
-mod matrix_basic;
-#[path = "math/matrix_io.rs"]
-mod matrix_io;
-#[path = "math/matrix_ops.rs"]
-mod matrix_ops;
-#[path = "math/matrix_structured.rs"]
-mod matrix_structured;
-#[path = "math/matrix_support.rs"]
-mod matrix_support;
 #[path = "math/scalar_algebra.rs"]
 mod scalar_algebra;
-#[path = "math/tensor_access.rs"]
-mod tensor_access;
-#[path = "math/tensor_basic.rs"]
-mod tensor_basic;
-#[path = "math/tensor_io.rs"]
-mod tensor_io;
-#[path = "math/tensor_linalg.rs"]
-mod tensor_linalg;
-#[path = "math/tensor_rand.rs"]
-mod tensor_rand;
-#[path = "math/vector_list_basic.rs"]
-mod vector_list_basic;
-#[path = "math/vector_list_ops.rs"]
-mod vector_list_ops;
-#[path = "math/vector_list_rand.rs"]
-mod vector_list_rand;
+#[path = "math/universal_containers.rs"]
+mod universal_containers;

@@ -29,9 +29,9 @@ use std::{error::Error, fmt};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::math::TensorError;
 use crate::math::scalar::{Scalar, ScalarSerde};
-use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout};
-use crate::math::{Tensor, TensorError};
+use crate::math::tensor::rank_n::{Dense as DenseBackend, RowMajorLayout, Tensor};
 use crate::sampling::shuffle_slice_indexed;
 use crate::space::space_trait::Space;
 use crate::threading::parallel_chunk_len;

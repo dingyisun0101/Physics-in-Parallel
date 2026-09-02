@@ -23,16 +23,30 @@ pub enum TensorError {
     ShapeMismatch { lhs: Vec<usize>, rhs: Vec<usize> },
     /// Dense row-major data did not match the shape's logical element count.
     DataLengthMismatch { expected: usize, actual: usize },
-    /// An index has the wrong rank for the tensor shape.
+    /// Coordinates have the wrong rank for the tensor shape.
     RankMismatch {
         shape: Vec<usize>,
-        index_rank: usize,
+        coordinate_rank: usize,
     },
+    /// A coordinate component is outside its axis extent.
+    CoordinateOutOfBounds {
+        axis: usize,
+        coordinate: usize,
+        extent: usize,
+    },
+    /// Sparse construction specified one logical coordinate more than once.
+    DuplicateCoordinate { coordinates: Vec<usize> },
     /// An operation expected a particular tensor rank.
     ExpectedRank {
         operation: &'static str,
         expected: usize,
         actual: usize,
+    },
+    /// Two axes that must agree for an operation have different extents.
+    DimensionMismatch {
+        operation: &'static str,
+        lhs: usize,
+        rhs: usize,
     },
     /// Scalar conversion failed while casting tensor elements.
     ScalarCast(ScalarCastError),
@@ -68,11 +82,28 @@ impl fmt::Display for TensorError {
                 f,
                 "tensor data length mismatch: expected {expected}, got {actual}"
             ),
-            Self::RankMismatch { shape, index_rank } => {
+            Self::RankMismatch {
+                shape,
+                coordinate_rank,
+            } => {
                 write!(
                     f,
-                    "tensor index rank mismatch: shape rank={}, index rank={index_rank}",
+                    "tensor coordinate rank mismatch: shape rank={}, coordinate rank={coordinate_rank}",
                     shape.len()
+                )
+            }
+            Self::CoordinateOutOfBounds {
+                axis,
+                coordinate,
+                extent,
+            } => write!(
+                f,
+                "tensor coordinate {coordinate} is outside axis {axis} with extent {extent}"
+            ),
+            Self::DuplicateCoordinate { coordinates } => {
+                write!(
+                    f,
+                    "tensor coordinate {coordinates:?} appears more than once"
                 )
             }
             Self::ExpectedRank {
@@ -85,6 +116,14 @@ impl fmt::Display for TensorError {
                     "{operation} requires rank {expected}, but tensor rank is {actual}"
                 )
             }
+            Self::DimensionMismatch {
+                operation,
+                lhs,
+                rhs,
+            } => write!(
+                f,
+                "{operation} dimension mismatch: left extent {lhs}, right extent {rhs}"
+            ),
             Self::ScalarCast(error) => write!(f, "tensor scalar cast failed: {error}"),
         }
     }
@@ -143,13 +182,13 @@ pub fn ensure_same_shape(lhs: &[usize], rhs: &[usize]) -> TensorResult<()> {
     Ok(())
 }
 
-/// Validate that an index has the same rank as a shape.
+/// Validate that coordinates have the same rank as a shape.
 #[inline]
-pub fn ensure_index_rank(shape: &[usize], index_rank: usize) -> TensorResult<()> {
-    if shape.len() != index_rank {
+pub fn ensure_coordinate_rank(shape: &[usize], coordinate_rank: usize) -> TensorResult<()> {
+    if shape.len() != coordinate_rank {
         return Err(TensorError::RankMismatch {
             shape: shape.to_vec(),
-            index_rank,
+            coordinate_rank,
         });
     }
     Ok(())

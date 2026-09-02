@@ -1,11 +1,11 @@
 //! Reusable row-major tensor layout and coordinate conversion.
 
-use super::errors::{TensorResult, checked_num_elements, ensure_index_rank};
+use super::errors::{TensorResult, checked_num_elements, ensure_coordinate_rank};
 
 /// Converts a signed coordinate to a row-major flat index with periodic
 /// normalization, without constructing a cached layout.
 pub fn flat_index_wrapped(shape: &[usize], coordinate: &[isize]) -> TensorResult<usize> {
-    ensure_index_rank(shape, coordinate.len())?;
+    ensure_coordinate_rank(shape, coordinate.len())?;
     let mut flat = 0usize;
     let mut stride = 1usize;
     for (&extent, &component) in shape.iter().rev().zip(coordinate.iter().rev()) {
@@ -65,7 +65,7 @@ impl RowMajorLayout {
     /// Converts a signed coordinate to a row-major flat index with periodic
     /// normalization on each axis.
     pub fn flat_index_wrapped(&self, coordinate: &[isize]) -> TensorResult<usize> {
-        ensure_index_rank(&self.shape, coordinate.len())?;
+        ensure_coordinate_rank(&self.shape, coordinate.len())?;
         Ok(self
             .shape
             .iter()

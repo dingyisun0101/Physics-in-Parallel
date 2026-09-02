@@ -17,13 +17,13 @@ The crate-wide prelude separates foundational, model-level, and advanced APIs:
 `use physics_in_parallel::prelude::basic::*;`
 */
 
-pub(crate) mod advanced;
+pub mod advanced;
 pub(crate) mod engines;
-pub(crate) mod math;
-pub(crate) mod models;
+pub mod math;
+pub mod models;
 pub mod prelude;
-pub(crate) mod rng;
+pub mod rng;
 pub(crate) mod sampling;
-pub(crate) mod space;
+pub mod space;
 #[path = "parallel.rs"]
 pub mod threading;
