@@ -21,6 +21,11 @@ use crate::math::{RandType, TensorRandError, TensorRandFiller, VectorList};
 use crate::rng::ResolvedRng;
 use crate::threading::parallel_chunk_len;
 
+const DOMAIN_UNIFORM_COMPONENT: u64 = 0x6f42_8f31_98f7_067a;
+const DOMAIN_UNIFORM_CENTERED_COMPONENT: u64 = 0xb4ac_a77c_e8df_b5f1;
+const DOMAIN_GAUSSIAN_COMPONENT: u64 = 0x15eb_0cc7_aac5_7548;
+const DOMAIN_JITTER_COMPONENT: u64 = 0xcbef_a4d0_a194_0f13;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum VectorSamplingMethod<'a> {
     /// Uniform components in `[low, high)`.
@@ -123,7 +128,7 @@ pub fn sample_vectors(
             let mut filler = TensorRandFiller::new(RandType::Uniform { low, high }, rng)
                 .map_err(VectorSamplingError::Rng)?;
             filler
-                .try_fill_slice(&mut values)
+                .try_fill_slice_once(&mut values, dim, DOMAIN_UNIFORM_COMPONENT)
                 .map_err(VectorSamplingError::Rng)?;
         }
         VectorSamplingMethod::UniformCentered { box_size } => {
@@ -138,7 +143,7 @@ pub fn sample_vectors(
             )
             .map_err(VectorSamplingError::Rng)?;
             filler
-                .try_fill_slice(&mut values)
+                .try_fill_slice_once(&mut values, dim, DOMAIN_UNIFORM_CENTERED_COMPONENT)
                 .map_err(VectorSamplingError::Rng)?;
             values
                 .par_chunks_mut(dim)
@@ -165,7 +170,7 @@ pub fn sample_vectors(
             )
             .map_err(VectorSamplingError::Rng)?;
             filler
-                .try_fill_slice(&mut values)
+                .try_fill_slice_once(&mut values, dim, DOMAIN_GAUSSIAN_COMPONENT)
                 .map_err(VectorSamplingError::Rng)?;
             values
                 .par_chunks_mut(dim)
@@ -191,7 +196,7 @@ pub fn sample_vectors(
             )
             .map_err(VectorSamplingError::Rng)?;
             filler
-                .try_fill_slice(&mut values)
+                .try_fill_slice_once(&mut values, dim, DOMAIN_JITTER_COMPONENT)
                 .map_err(VectorSamplingError::Rng)?;
             let side = ((n as f64).powf(1.0 / dim as f64).ceil() as usize).max(1);
             values

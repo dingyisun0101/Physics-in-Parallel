@@ -272,6 +272,23 @@ impl TensorRandFiller {
         Ok(())
     }
 
+    /// Fills a tensor reproducibly for an explicit indexed step and domain.
+    ///
+    /// This operation is available when the filler was constructed with
+    /// [`RngMethod::IndexedSplitMix64`]. It retains the tensor's selected
+    /// storage representation.
+    pub fn fill_at<T: TensorRandElement>(
+        &self,
+        tensor: &mut UniversalTensor<T>,
+        step: u64,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        let mut values = tensor.values().collect::<Vec<_>>();
+        self.try_fill_slice_at(&mut values, step, domain)?;
+        tensor.replace_with_values(values);
+        Ok(())
+    }
+
     pub(crate) fn try_refresh_dense<T: TensorRandElement>(
         &mut self,
         tensor: &mut DenseTensor<T>,
@@ -325,6 +342,21 @@ impl TensorRandFiller {
             return Err(TensorRandError::StatefulMethodDoesNotSupportIndexedFill);
         };
         T::try_fill_slice_indexed(self, key, values, step, domain, components)
+    }
+
+    /// Fills one short-lived operation with either its stateful stream or the
+    /// supplied indexed domain at step zero.
+    pub(crate) fn try_fill_slice_once<T: TensorRandElement>(
+        &mut self,
+        values: &mut [T],
+        components: usize,
+        domain: u64,
+    ) -> Result<(), TensorRandError> {
+        if self.indexed.is_some() {
+            self.try_fill_slice_at_layout(values, components, 0, domain)
+        } else {
+            self.try_fill_slice(values)
+        }
     }
 
     /// Fills exact uniform indices from `0..upper` for an explicit step.

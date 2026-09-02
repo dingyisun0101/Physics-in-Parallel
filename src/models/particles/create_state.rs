@@ -32,6 +32,8 @@ use crate::models::particles::attrs::{
 };
 use crate::models::particles::state::{ParticleStateError, gather_inverse_mass};
 
+const DOMAIN_MAXWELL_BOLTZMANN_COMPONENT: u64 = 0xf4d4_b301_9eab_6342;
+
 /// Errors returned by massive-particle construction and randomization helpers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MassiveParticlesError {
@@ -239,7 +241,7 @@ pub fn randomize_v(
             }
 
             filler
-                .try_fill_slice(&mut values)
+                .try_fill_slice_once(&mut values, dim, DOMAIN_MAXWELL_BOLTZMANN_COMPONENT)
                 .map_err(MassiveParticlesError::Rng)?;
             values
                 .par_chunks_mut(dim)
