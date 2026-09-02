@@ -1,5 +1,5 @@
 use physics_in_parallel::prelude::advanced::PhysObjAdvanced;
-use physics_in_parallel::prelude::basic::{RngConfig, VectorList};
+use physics_in_parallel::prelude::basic::{RngConfig, RngConfigError, VectorList};
 use physics_in_parallel::prelude::models::*;
 
 fn rng(seed: u64) -> RngConfig {
@@ -34,6 +34,61 @@ fn langevin_deterministic_for_same_seed_and_state() {
             b.attribute_vector::<f64>(ATTR_V, i).unwrap()
         );
     }
+}
+
+#[test]
+fn langevin_restores_the_exact_next_random_step() {
+    let mut original_particles = create_template(2, 2).unwrap();
+    original_particles
+        .set_attribute_vector::<f64>(ATTR_V, 0, &[1.0, -1.0])
+        .unwrap();
+    original_particles
+        .set_attribute_vector::<f64>(ATTR_V, 1, &[0.5, 2.0])
+        .unwrap();
+
+    let mut original = LangevinThermostat::new(1.5, 0.4, rng(77), ParticleSelection::All).unwrap();
+    original.apply(&mut original_particles, 0.05).unwrap();
+
+    let mut restored_particles = original_particles.clone();
+    let mut restored = LangevinThermostat::from_state(
+        original.tau_target(),
+        original.gamma(),
+        original.rng_config(),
+        original.step_counter(),
+        original.selection(),
+    )
+    .unwrap();
+
+    original.apply(&mut original_particles, 0.05).unwrap();
+    restored.apply(&mut restored_particles, 0.05).unwrap();
+
+    assert_eq!(restored.step_counter(), original.step_counter());
+    for particle in 0..2 {
+        assert_eq!(
+            restored_particles
+                .attribute_vector::<f64>(ATTR_V, particle)
+                .unwrap(),
+            original_particles
+                .attribute_vector::<f64>(ATTR_V, particle)
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn langevin_restore_requires_resolved_rng_state() {
+    assert!(matches!(
+        LangevinThermostat::from_state(
+            1.0,
+            0.5,
+            RngConfig::default(),
+            4,
+            ParticleSelection::AliveOnly,
+        ),
+        Err(ThermostatError::RngConfig(
+            RngConfigError::MissingSeed { .. }
+        ))
+    ));
 }
 
 #[test]

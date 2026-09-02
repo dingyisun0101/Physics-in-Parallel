@@ -306,23 +306,35 @@ impl SpringNetwork {
 
     /// Exports active springs in stable interaction-id order.
     pub fn records(&self) -> Result<Vec<SpringRecord>, SpringNetworkError> {
-        self.springs
-            .iter()
-            .map(|(id, nodes, spring)| {
-                if nodes.arity() != 2 {
-                    return Err(SpringNetworkError::InvalidSpringArity {
-                        id,
-                        arity: nodes.arity(),
-                    });
-                }
-                spring.validate()?;
+        self.iter_springs()
+            .map(|entry| {
+                let (i, j, spring) = entry?;
                 Ok(SpringRecord {
-                    i: nodes.nodes[0],
-                    j: nodes.nodes[1],
+                    i,
+                    j,
                     spring: *spring,
                 })
             })
             .collect()
+    }
+
+    /// Iterates active springs in stable interaction-id order.
+    ///
+    /// Each item remains fallible because advanced mutable backend access can
+    /// violate the pair arity or law invariants enforced by normal model APIs.
+    pub fn iter_springs(
+        &self,
+    ) -> impl Iterator<Item = Result<(usize, usize, &Spring), SpringNetworkError>> + '_ {
+        self.springs.iter().map(|(id, nodes, spring)| {
+            if nodes.arity() != 2 {
+                return Err(SpringNetworkError::InvalidSpringArity {
+                    id,
+                    arity: nodes.arity(),
+                });
+            }
+            spring.validate()?;
+            Ok((nodes.nodes[0], nodes.nodes[1], spring))
+        })
     }
 
     /// Number of active springs.

@@ -177,6 +177,31 @@ impl LangevinThermostat {
         })
     }
 
+    /// Restores a Langevin thermostat from resolved deterministic state.
+    ///
+    /// Unlike [`Self::new`], this constructor never fills missing RNG values
+    /// from defaults or host entropy. `rng` must contain both a seed and the
+    /// indexed SplitMix64 method previously returned by [`Self::rng_config`].
+    pub fn from_state(
+        tau_target: f64,
+        gamma: f64,
+        rng: RngConfig,
+        step_counter: u64,
+        selection: ParticleSelection,
+    ) -> Result<Self, ThermostatError> {
+        validate_nonnegative("tau_target", tau_target)?;
+        validate_nonnegative("gamma", gamma)?;
+        let rng = IndexedRng::try_from_resolved(rng).map_err(ThermostatError::RngConfig)?;
+
+        Ok(Self {
+            tau_target,
+            gamma,
+            rng,
+            step_counter,
+            selection,
+        })
+    }
+
     #[inline]
     pub fn tau_target(&self) -> f64 {
         self.tau_target

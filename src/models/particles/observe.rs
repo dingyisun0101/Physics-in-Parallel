@@ -212,6 +212,11 @@ impl KineticEnergyObserver {
     pub fn new(selection: ParticleSelection) -> Self {
         Self { selection }
     }
+
+    /// Returns the particle subset included by this observer.
+    pub fn selection(&self) -> ParticleSelection {
+        self.selection
+    }
 }
 
 impl Default for KineticEnergyObserver {
@@ -242,6 +247,11 @@ impl TemperatureObserver {
     /// Builds a temperature observer with explicit particle-selection policy.
     pub fn new(selection: ParticleSelection) -> Self {
         Self { selection }
+    }
+
+    /// Returns the particle subset included by this observer.
+    pub fn selection(&self) -> ParticleSelection {
+        self.selection
     }
 }
 

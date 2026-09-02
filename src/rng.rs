@@ -122,6 +122,12 @@ impl RngConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RngConfigError {
+    MissingSeed {
+        component: &'static str,
+    },
+    MissingMethod {
+        component: &'static str,
+    },
     UnsupportedMethod {
         component: &'static str,
         method: RngMethod,
@@ -149,9 +155,29 @@ impl IndexedRng {
         .map(Self)
     }
 
-    /// Builds an indexed key from a configuration already resolved by a
-    /// lower-level stochastic component.
-    pub(crate) fn from_resolved(rng: RngConfig) -> Self {
+    /// Restores an indexed key from a fully resolved configuration.
+    pub fn try_from_resolved(rng: RngConfig) -> Result<Self, RngConfigError> {
+        if rng.seed().is_none() {
+            return Err(RngConfigError::MissingSeed {
+                component: "IndexedRng",
+            });
+        }
+        let Some(method) = rng.method() else {
+            return Err(RngConfigError::MissingMethod {
+                component: "IndexedRng",
+            });
+        };
+        if method != RngMethod::IndexedSplitMix64 {
+            return Err(RngConfigError::UnsupportedMethod {
+                component: "IndexedRng",
+                method,
+            });
+        }
+        Ok(Self(rng))
+    }
+
+    /// Builds an indexed key after an internal caller has resolved it.
+    pub(crate) fn from_resolved_unchecked(rng: RngConfig) -> Self {
         debug_assert_eq!(rng.method(), Some(RngMethod::IndexedSplitMix64));
         debug_assert!(rng.seed().is_some());
         Self(rng)
@@ -233,6 +259,16 @@ const fn splitmix64(mut value: u64) -> u64 {
 impl fmt::Display for RngConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingSeed { component } => {
+                write!(
+                    formatter,
+                    "resolved RNG configuration for {component} is missing a seed"
+                )
+            }
+            Self::MissingMethod { component } => write!(
+                formatter,
+                "resolved RNG configuration for {component} is missing a method"
+            ),
             Self::UnsupportedMethod { component, method } => write!(
                 formatter,
                 "RNG method `{}` is not supported by {component}",
@@ -267,5 +303,27 @@ mod tests {
             .resolve_for("test", RngMethod::SmallRng, &[RngMethod::SmallRng])
             .unwrap_err();
         assert!(matches!(error, RngConfigError::UnsupportedMethod { .. }));
+    }
+
+    #[test]
+    fn indexed_rng_restoration_requires_fully_resolved_state() {
+        assert!(matches!(
+            IndexedRng::try_from_resolved(RngConfig::default()),
+            Err(RngConfigError::MissingSeed { .. })
+        ));
+        assert!(matches!(
+            IndexedRng::try_from_resolved(RngConfig::new(Some(3), None)),
+            Err(RngConfigError::MissingMethod { .. })
+        ));
+
+        let resolved = IndexedRng::new(RngConfig::new(Some(3), None))
+            .unwrap()
+            .rng_config();
+        assert_eq!(
+            IndexedRng::try_from_resolved(resolved)
+                .unwrap()
+                .rng_config(),
+            resolved
+        );
     }
 }

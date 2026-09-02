@@ -127,6 +127,8 @@ the serialized representation.
 
 ## Stage 4: Construction And Inspection APIs
 
+Status: completed on `tmp`; public API review required before Stage 5.
+
 Goal: downstream crates can translate their own validated configuration into
 PiP models and inspect those models without private implementation knowledge.
 
@@ -152,6 +154,21 @@ Implementation rules:
 
 Stage 4 deliberately does not add integrator selectors, thermostat selectors,
 boundary configs, particle configs, or Workflow examples.
+
+Audit result:
+
+- canonical particle templates and borrowed sampling calls already accept
+  direct semantic inputs
+- continuous boundaries and particle neighbor lists already have complete
+  constructors and geometry accessors
+- unit integrators need no additional construction object
+- networks now expose particle bounds, strict restoration, owned records, and
+  fallible borrowed iteration
+- Langevin state can be restored exactly from its resolved RNG configuration
+  and step counter
+- observers expose their particle selection uniformly
+- an external-style test constructs and inspects this surface through the
+  public preludes
 
 ## Deferred Work
 

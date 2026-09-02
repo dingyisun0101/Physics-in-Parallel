@@ -44,6 +44,10 @@ fn temperature_uses_active_particle_degrees_of_freedom() {
         .observe(&obj)
         .unwrap();
     assert_eq!(temp_all, 2.0 * 2.5 / 4.0);
+    assert_eq!(
+        TemperatureObserver::new(ParticleSelection::All).selection(),
+        ParticleSelection::All
+    );
 }
 
 #[test]

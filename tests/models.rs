@@ -16,6 +16,8 @@ mod particle_neighbor_list;
 mod power_law;
 #[path = "models/prelude.rs"]
 mod prelude;
+#[path = "models/public_api.rs"]
+mod public_api;
 #[path = "models/spring_network.rs"]
 mod spring_network;
 #[path = "models/thermostat.rs"]

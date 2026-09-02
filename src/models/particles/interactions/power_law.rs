@@ -300,23 +300,32 @@ impl PowerLawNetwork {
 
     /// Exports active interactions in stable interaction-id order.
     pub fn records(&self) -> Result<Vec<PowerLawRecord>, PowerLawNetworkError> {
-        self.interactions
-            .iter()
-            .map(|(id, nodes, law)| {
-                if nodes.arity() != 2 {
-                    return Err(PowerLawNetworkError::InvalidPowerLawArity {
-                        id,
-                        arity: nodes.arity(),
-                    });
-                }
-                law.validate()?;
-                Ok(PowerLawRecord {
-                    i: nodes.nodes[0],
-                    j: nodes.nodes[1],
-                    law: *law,
-                })
+        self.iter_power_laws()
+            .map(|entry| {
+                let (i, j, law) = entry?;
+                Ok(PowerLawRecord { i, j, law: *law })
             })
             .collect()
+    }
+
+    /// Iterates active laws in stable interaction-id order.
+    ///
+    /// Each item remains fallible because advanced mutable backend access can
+    /// violate the pair arity or law invariants enforced by normal model APIs.
+    pub fn iter_power_laws(
+        &self,
+    ) -> impl Iterator<Item = Result<(usize, usize, &PowerLawDecay), PowerLawNetworkError>> + '_
+    {
+        self.interactions.iter().map(|(id, nodes, law)| {
+            if nodes.arity() != 2 {
+                return Err(PowerLawNetworkError::InvalidPowerLawArity {
+                    id,
+                    arity: nodes.arity(),
+                });
+            }
+            law.validate()?;
+            Ok((nodes.nodes[0], nodes.nodes[1], law))
+        })
     }
 
     /// Number of unordered all-to-all pairs for `num_particles`.

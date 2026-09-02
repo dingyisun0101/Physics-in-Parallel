@@ -244,7 +244,7 @@ impl TensorRandFiller {
             num_rngs: NUM_RNGS,
             max_threads: DEFAULT_RANDOM_MAX_THREADS,
             rngs: Vec::new(),
-            indexed: Some(IndexedRng::from_resolved(rng)),
+            indexed: Some(IndexedRng::from_resolved_unchecked(rng)),
         })
     }
 
