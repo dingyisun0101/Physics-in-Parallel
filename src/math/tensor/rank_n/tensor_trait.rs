@@ -123,9 +123,6 @@ pub trait TensorTrait<T: Scalar>: Send + Sync + Clone {
     where
         T: Copy + Send + Sync;
 
-    /// Print a human-readable representation.
-    fn print(&self);
-
     // ---------------------------------------------------------------------
     // Self-contained user-facing helpers
     // ---------------------------------------------------------------------

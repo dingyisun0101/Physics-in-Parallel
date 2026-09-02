@@ -7,4 +7,4 @@ Purpose:
     geometry-specific kernels for one discrete-space family.
 */
 
-pub mod square_lattice;
+pub(crate) mod square_lattice;

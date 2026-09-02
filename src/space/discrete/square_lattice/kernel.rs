@@ -31,7 +31,7 @@ pub enum KernelType {
         c: f64,
     },
     NearestNeighbor {
-        d: usize,
+        dimension: usize,
     },
 }
 
@@ -245,7 +245,7 @@ impl NearestNeighborKernel {
             .filter(|count| *count > 0)
             .ok_or(KernelError::InvalidNearestNeighborDimension { dimension: d })?;
         Ok(Self {
-            kind: KernelType::NearestNeighbor { d },
+            kind: KernelType::NearestNeighbor { dimension: d },
             num_neighbors,
         })
     }
@@ -380,8 +380,8 @@ pub(crate) fn try_create_builtin_kernel(
         KernelType::UniformDistance { l, c } => Ok(BuiltinKernel::UniformDistance(
             UniformDistanceKernel::try_new(l, c)?,
         )),
-        KernelType::NearestNeighbor { d } => Ok(BuiltinKernel::NearestNeighbor(
-            NearestNeighborKernel::try_new(d)?,
+        KernelType::NearestNeighbor { dimension } => Ok(BuiltinKernel::NearestNeighbor(
+            NearestNeighborKernel::try_new(dimension)?,
         )),
     }
 }

@@ -2,7 +2,6 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
@@ -187,20 +186,4 @@ where
         indices,
         values,
     ))
-}
-
-impl<T, B> Matrix<T, B>
-where
-    T: Scalar + Serialize + Copy,
-    B: MatrixBackend<T>,
-{
-    #[inline]
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        serde_json::to_value(self)
-    }
-
-    #[inline]
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
 }

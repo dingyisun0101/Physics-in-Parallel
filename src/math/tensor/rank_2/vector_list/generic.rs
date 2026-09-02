@@ -35,15 +35,12 @@ Parallelism:
 
 use std::any::Any;
 
-use num_traits::Zero;
-use rayon::prelude::*;
-use serde::Serialize;
-use serde_json::Value;
-
 use crate::math::tensor::rank_n::dense::Tensor as DenseStorage;
 use crate::math::tensor::rank_n::{Dense, Tensor};
 use crate::math::{Scalar, ScalarCastError};
 use crate::threading::parallel_chunk_len;
+use num_traits::Zero;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct VectorList<T: Scalar> {
@@ -58,8 +55,6 @@ pub trait DynVectorList: std::fmt::Debug + Send + Sync + erased_serde::Serialize
     fn type_name(&self) -> &'static str;
     fn scalar_kind(&self) -> &'static str;
     fn clone_box(&self) -> Box<dyn DynVectorList>;
-    fn serialize_value(&self) -> Result<Value, serde_json::Error>;
-    fn serialize(&self) -> Result<String, serde_json::Error>;
 }
 
 erased_serde::serialize_trait_object!(DynVectorList);
@@ -67,47 +62,6 @@ erased_serde::serialize_trait_object!(DynVectorList);
 impl Clone for Box<dyn DynVectorList> {
     fn clone(&self) -> Self {
         self.clone_box()
-    }
-}
-
-impl<T> DynVectorList for VectorList<T>
-where
-    T: Scalar + Serialize + Copy + 'static,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn dim(&self) -> usize {
-        self.dim()
-    }
-
-    fn num_vectors(&self) -> usize {
-        self.num_vectors()
-    }
-
-    fn type_name(&self) -> &'static str {
-        std::any::type_name::<T>()
-    }
-
-    fn scalar_kind(&self) -> &'static str {
-        crate::math::io::json::scalar_kind::<T>()
-    }
-
-    fn clone_box(&self) -> Box<dyn DynVectorList> {
-        Box::new(self.clone())
-    }
-
-    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        VectorList::<T>::serialize_value(self)
-    }
-
-    fn serialize(&self) -> Result<String, serde_json::Error> {
-        VectorList::<T>::serialize(self)
     }
 }
 
@@ -277,15 +231,6 @@ impl<T: Scalar> VectorList<T> {
         T: Copy + Send + Sync,
     {
         self.tensor.fill(value);
-    }
-
-    pub fn print(&self)
-    where
-        T: Copy,
-    {
-        for i in 0..self.num_vectors() {
-            println!("{:?}", self.vector(i as isize));
-        }
     }
 
     pub fn par_for_each_vector<F>(&self, f: F)

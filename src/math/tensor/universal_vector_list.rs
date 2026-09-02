@@ -5,7 +5,6 @@ use core::fmt;
 use num_traits::Zero;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 
 use crate::math::scalar::{Scalar, ScalarCastError};
 
@@ -425,14 +424,6 @@ where
 
     fn clone_box(&self) -> Box<dyn DynVectorList> {
         Box::new(self.clone())
-    }
-
-    fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        serde_json::to_value(self)
-    }
-
-    fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
     }
 }
 

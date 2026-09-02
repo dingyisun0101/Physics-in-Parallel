@@ -2,7 +2,6 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, ToJsonPayload, ensure_finite,
@@ -74,20 +73,5 @@ where
             payload.shape[0],
             payload.data,
         ))
-    }
-}
-
-impl<T> VectorList<T>
-where
-    T: Scalar + Serialize + Copy,
-{
-    #[inline]
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.to_json_value()
-    }
-
-    #[inline]
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.to_json_string()
     }
 }

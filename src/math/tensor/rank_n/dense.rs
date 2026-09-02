@@ -37,7 +37,6 @@ Goals:
 
 */
 
-use std::fmt::Display;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use crate::threading::{parallel_chunk_len, should_parallelize_elements};
@@ -343,15 +342,6 @@ where
     {
         Tensor::<T>::try_cast_to::<U>(self)
     }
-
-    /// Details:
-    /// - Purpose: Satisfies the tensor trait printing contract by delegating to
-    ///   the dense tensor's inherent rank-aware terminal printer.
-    /// - Parameters:
-    ///   - (none): Reads this tensor without modifying it.
-    fn print(&self) {
-        Tensor::<T>::print(self);
-    }
 }
 
 //===================================================================
@@ -523,50 +513,5 @@ impl<T: Scalar> Tensor<T> {
         }
 
         Self { shape, data }
-    }
-}
-
-//===================================================================
-// -------------------------- Utilities -----------------------------
-//===================================================================
-
-impl<T: Scalar + Display + Copy> Tensor<T> {
-    /// Quick-and-dirty printer for 1D/2D tensors to stdout.
-    ///
-    /// # Panics
-    /// Panics if `rank > 2`.
-    /// Details:
-    /// - Purpose: Prints a compact terminal representation chosen by rank:
-    ///   one-line output for rank 1, table output for rank 2, and structured
-    ///   nested output for higher ranks.
-    /// - Parameters:
-    ///   - (none): Reads this tensor without modifying it.
-    pub fn print(&self) {
-        match self.shape.len() {
-            1 => {
-                for i in 0..self.shape[0] {
-                    print!("{:<8} ", self.get(&[i as isize]));
-                }
-                println!();
-            }
-            2 => {
-                let rows = self.shape[0];
-                let cols = self.shape[1];
-                for i in 0..rows {
-                    for j in 0..cols {
-                        print!("{:<8} ", self.get(&[i as isize, j as isize]));
-                    }
-                    println!();
-                }
-            }
-            _ => {
-                println!(
-                    "Tensor shape {:?}, {} elements",
-                    self.shape,
-                    self.data.len()
-                );
-                println!("{}", crate::math::io::string::format_dense_storage(self));
-            }
-        }
     }
 }

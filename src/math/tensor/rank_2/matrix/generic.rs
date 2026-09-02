@@ -394,19 +394,6 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         self.backend.fill(value);
     }
 
-    /// Print a compact matrix table.
-    pub fn print(&self)
-    where
-        T: Copy,
-    {
-        for row in 0..self.rows() {
-            for col in 0..self.cols() {
-                print!("{}\t", self.get(row as isize, col as isize));
-            }
-            println!();
-        }
-    }
-
     fn to_dense_rank_n_tensor(&self) -> Tensor<T, Dense>
     where
         T: Copy,

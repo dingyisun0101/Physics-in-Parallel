@@ -2,7 +2,6 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
 
 use crate::math::io::json::{
     FlatPayload, FlatPayloadRef, FromJsonPayload, SparsePayload, ToJsonPayload, ensure_finite,
@@ -205,31 +204,5 @@ where
     {
         let inner = SparseStorage::<T>::deserialize(deserializer)?;
         Ok(Self::from_storage(inner))
-    }
-}
-
-impl<T> Tensor<T, Dense>
-where
-    T: Scalar + Serialize + Copy,
-{
-    pub fn to_json_value(&self) -> Result<Value, serde_json::Error> {
-        self.storage().to_json_value()
-    }
-
-    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
-        self.storage().to_json_string()
-    }
-}
-
-impl<T> Tensor<T, Sparse>
-where
-    T: Scalar + Serialize + Copy,
-{
-    pub fn to_json_value(&self) -> Result<Value, serde_json::Error> {
-        self.storage().to_json_value()
-    }
-
-    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
-        self.storage().to_json_string()
     }
 }

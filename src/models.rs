@@ -8,8 +8,8 @@ storage or geometry rules. Current ready pieces cover validated law payloads
 and canonical massive-particle state.
 */
 
-pub mod laws;
-pub mod particles;
+pub(crate) mod laws;
+pub(crate) mod particles;
 
 pub use crate::engines::soa::phys_obj::ParticleStateError;
 pub use laws::{PowerLawDecay, PowerLawError, PowerLawRange, Spring, SpringCutoff, SpringLawError};

@@ -531,39 +531,6 @@ impl<T: Scalar> Tensor<T> {
 
         Self::from_flat_pairs(shape, pairs)
     }
-
-    /// Print a compact sparse summary and stored entries for direct sanity checks.
-    pub fn print(&self) {
-        println!(
-            "Sparse tensor: shape={:?}, dense_size={}, nnz={}",
-            self.shape,
-            self.len_dense(),
-            self.nnz()
-        );
-
-        if self.data.is_empty() {
-            println!("  all entries are implicit zero");
-            return;
-        }
-
-        let mut entries: Vec<(usize, T)> = self.data.iter().map(|(&k, &v)| (k, v)).collect();
-        entries.sort_unstable_by_key(|&(k, _)| k);
-
-        let shown = entries.len().min(32);
-        let layout = RowMajorLayout::new(&self.shape);
-        for (k, value) in entries.iter().take(shown) {
-            println!(
-                "  [{:?}] flat={} value={}",
-                layout.coordinate(*k).expect("stored flat index is valid"),
-                k,
-                value
-            );
-        }
-
-        if entries.len() > shown {
-            println!("  ... {} more stored entries", entries.len() - shown);
-        }
-    }
 }
 
 // ===================================================================
@@ -786,15 +753,6 @@ where
         T: Copy + Send + Sync,
     {
         Tensor::<T>::try_cast_to::<U>(self)
-    }
-
-    /// Details:
-    /// - Purpose: Prints a sparse summary including shape, logical dense size,
-    ///   explicit nonzero count, and a bounded list of stored entries.
-    /// - Parameters:
-    ///   - (none): Reads this sparse tensor without modifying it.
-    fn print(&self) {
-        Tensor::<T>::print(self);
     }
 }
 

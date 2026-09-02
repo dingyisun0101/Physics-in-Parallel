@@ -366,16 +366,6 @@ where
     {
         Self::from_storage(self.inner.matmul(&other.inner))
     }
-
-    #[inline]
-    /// Details:
-    /// - Purpose: Delegates to the backend's terminal printer so users can
-    ///   quickly inspect tensor shape and representative values.
-    /// - Parameters:
-    ///   - (none): Reads this tensor without modifying it.
-    pub fn print(&self) {
-        self.inner.print();
-    }
 }
 
 impl<T: Scalar> Tensor<T, Dense> {

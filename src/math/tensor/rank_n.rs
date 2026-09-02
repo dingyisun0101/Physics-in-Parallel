@@ -8,5 +8,5 @@ pub(crate) mod sparse;
 pub(crate) mod tensor_trait;
 
 pub use errors::{TensorError, TensorResult};
-pub use generic::{Backend, Dense, Sparse, Tensor};
+pub use generic::{Dense, Sparse, Tensor};
 pub use layout::RowMajorLayout;

@@ -48,7 +48,7 @@ fn pair_generation_uses_resolved_rng_and_universal_outputs() {
     assert_eq!(pairs.method(), method);
 
     let kernel_method = PairingMethod::Kernel {
-        kernel: physics_in_parallel::prelude::basic::KernelType::NearestNeighbor { d: 2 },
+        kernel: physics_in_parallel::prelude::basic::KernelType::NearestNeighbor { dimension: 2 },
         sources: SourceMode::Origin,
     };
     assert!(PairGenerator::new(&[4, 5], kernel_method, 8, indexed_rng(12)).is_ok());

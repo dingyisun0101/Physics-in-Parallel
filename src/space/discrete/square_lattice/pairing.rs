@@ -418,11 +418,11 @@ fn validate_layout(shape: &[usize]) -> Result<RowMajorLayout, PairGenerationErro
 }
 
 fn validate_kernel_rank(kernel_type: KernelType, rank: usize) -> Result<(), PairGenerationError> {
-    if let KernelType::NearestNeighbor { d } = kernel_type
-        && d != rank
+    if let KernelType::NearestNeighbor { dimension } = kernel_type
+        && dimension != rank
     {
         return Err(PairGenerationError::KernelRankMismatch {
-            kernel_dimension: d,
+            kernel_dimension: dimension,
             rank,
         });
     }

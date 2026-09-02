@@ -2,8 +2,8 @@
 Core space abstractions and utilities.
 */
 
-pub mod continuous;
-pub mod discrete;
+pub(crate) mod continuous;
+pub(crate) mod discrete;
 pub(crate) mod io;
 
 pub use continuous::boundary::{

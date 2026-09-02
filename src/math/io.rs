@@ -11,6 +11,5 @@
 
 pub(crate) mod json;
 pub(crate) mod matrix;
-pub(crate) mod string;
 pub(crate) mod tensor;
 pub(crate) mod vector_list;

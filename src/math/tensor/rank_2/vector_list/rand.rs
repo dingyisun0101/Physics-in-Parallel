@@ -19,7 +19,6 @@ Design:
 */
 use crate::threading::parallel_chunk_len;
 use rayon::prelude::*;
-use serde_json::Value;
 
 use crate::math::tensor::rank_n::dense::Tensor;
 use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
@@ -219,18 +218,6 @@ impl HaarVectors {
     pub fn resolved_rng(&self) -> ResolvedRng {
         self.filler.resolved_rng()
     }
-
-    #[inline]
-    /// Convert this Haar vector batch into a structured JSON value.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.vl.serialize_value()
-    }
-
-    #[inline]
-    /// Convert this Haar vector batch into pretty JSON text.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.vl.serialize()
-    }
 }
 
 fn write_signs(codes: &[usize], output: &mut [f64]) {
@@ -395,17 +382,5 @@ impl NNVectors {
     /// Returns the fully resolved random configuration used by this generator.
     pub fn resolved_rng(&self) -> ResolvedRng {
         self.code_filler.resolved_rng()
-    }
-
-    #[inline]
-    /// Convert this nearest-neighbor vector batch into a structured JSON value.
-    pub fn serialize_value(&self) -> Result<Value, serde_json::Error> {
-        self.vl.serialize_value()
-    }
-
-    #[inline]
-    /// Convert this nearest-neighbor vector batch into pretty JSON text.
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        self.vl.serialize()
     }
 }
