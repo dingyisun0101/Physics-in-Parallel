@@ -32,7 +32,7 @@ use serde_json::value::RawValue;
 
 use crate::math::io::json::JSON_SCHEMA_VERSION;
 use crate::math::tensor::rank_2::vector_list::DynVectorList;
-use crate::math::{Scalar, VectorList};
+use crate::math::{Backend, Scalar, VectorList};
 
 pub type AttrId = usize;
 
@@ -354,7 +354,7 @@ impl AttrsCore {
         }
         self.insert(
             label,
-            VectorList::<T>::filled(dim, n, T::zero())
+            VectorList::<T>::filled(dim, n, Backend::Dense, T::zero())
                 .expect("validated attribute dimensions form a vector list"),
         )
     }

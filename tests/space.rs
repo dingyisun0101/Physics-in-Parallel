@@ -1,6 +1,6 @@
 use physics_in_parallel::prelude::basic::{
-    PairGenerator, PairingMethod, ResolvedRng, RngMethod, SourceMode, SquareLattice,
-    SquareLatticeGeometry, SquareLatticeInitMethod, StorageKind, VectorList, VectorSamplingMethod,
+    Backend, PairGenerator, PairingMethod, ResolvedRng, RngMethod, SourceMode, SquareLattice,
+    SquareLatticeGeometry, SquareLatticeInitMethod, VectorList, VectorSamplingMethod,
     sample_vectors,
 };
 
@@ -44,7 +44,7 @@ fn pair_generation_uses_resolved_rng_and_universal_outputs() {
     assert_eq!(pairs.generated_sweep(), Some(9));
     assert_eq!(pairs.resolved_rng(), indexed_rng(11));
     assert_eq!(pairs.sources().shape(), [8, 2]);
-    assert_eq!(pairs.sources().storage_kind(), StorageKind::Dense);
+    assert_eq!(pairs.sources().backend(), Backend::Dense);
     assert_eq!(pairs.method(), method);
 
     let kernel_method = PairingMethod::Kernel {
@@ -55,9 +55,9 @@ fn pair_generation_uses_resolved_rng_and_universal_outputs() {
 }
 
 #[test]
-fn sampling_preserves_the_callers_storage_representation() {
-    let mut values = VectorList::<f64>::zeros(2, 4).unwrap();
-    assert_eq!(values.storage_kind(), StorageKind::Sparse);
+fn sampling_preserves_the_callers_backend() {
+    let mut values = VectorList::<f64>::zeros(2, 4, Backend::Sparse).unwrap();
+    assert_eq!(values.backend(), Backend::Sparse);
     sample_vectors(
         &mut values,
         VectorSamplingMethod::Uniform {
@@ -68,6 +68,6 @@ fn sampling_preserves_the_callers_storage_representation() {
     )
     .unwrap();
 
-    assert_eq!(values.storage_kind(), StorageKind::Sparse);
+    assert_eq!(values.backend(), Backend::Sparse);
     assert!(values.values().all(|value| (1.0..2.0).contains(&value)));
 }

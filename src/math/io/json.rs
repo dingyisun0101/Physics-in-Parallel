@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::math::scalar::Scalar;
 
 /// Version shared by the current PiP JSON payload schemas.
-pub const JSON_SCHEMA_VERSION: u32 = 1;
+pub const JSON_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

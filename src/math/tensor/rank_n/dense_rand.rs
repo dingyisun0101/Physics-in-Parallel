@@ -276,7 +276,7 @@ impl TensorRandFiller {
     ///
     /// This operation is available when the filler was constructed with
     /// [`RngMethod::IndexedSplitMix64`]. It retains the tensor's selected
-    /// storage representation.
+    /// backend.
     pub fn fill_at<T: TensorRandElement>(
         &self,
         tensor: &mut UniversalTensor<T>,

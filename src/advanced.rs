@@ -20,7 +20,7 @@ pub use crate::space::discrete::square_lattice::kernel::{
 };
 
 use crate::engines::soa::phys_obj::PhysObj;
-use crate::math::{Matrix, Scalar, StorageKind, Tensor, VectorList};
+use crate::math::{Backend, Matrix, Scalar, Tensor, VectorList};
 use crate::space::SquareLattice;
 
 /// Raw structure-of-arrays access for custom model and interchange code.
@@ -110,9 +110,9 @@ impl<T: Scalar> RawStorage<T> for Tensor<T> {
     }
 
     fn stored_entries(&self) -> Vec<(usize, T)> {
-        match self.storage_kind() {
-            StorageKind::Dense => self.values().enumerate().collect(),
-            StorageKind::Sparse => self
+        match self.backend() {
+            Backend::Dense => self.values().enumerate().collect(),
+            Backend::Sparse => self
                 .sparse_entries()
                 .expect("sparse representation has sparse entries")
                 .collect(),

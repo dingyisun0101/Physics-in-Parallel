@@ -2,7 +2,7 @@
 
 > **ALPHA / BREAKING UPDATE**
 >
-> `4.0.0-alpha.1` is an unstable, clean-slate rewrite. It is not compatible
+> `4.0.0-alpha.2` is an unstable, clean-slate rewrite. It is not compatible
 > with PiP 3.x. Public APIs and serialized representations may change without
 > migration support before 4.0.0. Pin the exact alpha version and do not treat
 > alpha data formats as archival.
@@ -17,7 +17,7 @@ During the alpha, pin the exact release:
 
 ```toml
 [dependencies]
-physics_in_parallel = "=4.0.0-alpha.1"
+physics_in_parallel = "=4.0.0-alpha.2"
 ```
 
 PiP requires Rust 1.97 or newer.
@@ -28,7 +28,8 @@ PiP 4.0 intentionally provides no compatibility aliases, migration wrappers,
 or readers for 3.x data. The main changes are:
 
 - `Tensor<T>`, `Matrix<T>`, and `VectorList<T>` are backend-agnostic public
-  types with explicitly selected dense or sparse storage.
+  types. Every constructor receives an explicit `Backend::Dense` or
+  `Backend::Sparse` selection.
 - Random operations take `ResolvedRng`; optional seeds and implicit entropy
   fallbacks are gone.
 - Numerical foundations and ready-made physical models use independent
@@ -95,23 +96,41 @@ Run the complete example with `cargo run --example basic_particle`.
 ## Universal Containers
 
 `Tensor<T>`, `Matrix<T>`, and `VectorList<T>` each hide a dense or sparse
-representation behind one public mathematical type. Both representations are
-fundamental; callers choose explicitly through dense-value or sparse-entry
-constructors.
+implementation behind one public mathematical type. Both backends are
+fundamental, and every constructor accepts the same explicit `Backend`
+parameter:
 
-- `storage_kind`, `make_dense`, and `make_sparse` control representation.
-- PiP never changes representation implicitly.
-- Allocating operations preserve the receiver's representation.
-- `*_into` operations preserve the caller-selected output representation.
-- Direct Serde preserves representation.
+```rust
+use physics_in_parallel::math::{Backend, Tensor};
+
+fn construct() -> Result<(), Box<dyn std::error::Error>> {
+    let dense = Tensor::<f64>::zeros(&[64, 64], Backend::Dense)?;
+    let sparse = Tensor::<f64>::zeros(&[64, 64], Backend::Sparse)?;
+
+    let mut empty = Tensor::<f64>::empty(&[2], Backend::Dense)?;
+    empty.set(&[0], 1.0)?;
+    empty.set(&[1], 2.0)?;
+    let initialized = empty.finish()?;
+    Ok(())
+}
+```
+
+`empty` returns a safe builder. Dense builders must initialize every logical
+element before `finish`; unwritten sparse coordinates are implicit zeros.
+
+- `backend` reports the current choice and `set_backend` converts explicitly.
+- PiP never changes backend implicitly.
+- Allocating operations preserve the receiver's backend.
+- `*_into` operations preserve the caller-selected output backend.
+- Direct Serde preserves the backend.
 - Basic access uses coordinates and returns values.
 - Flat indices, contiguous slices, and stored-entry traversal require the
   advanced `RawStorage` trait.
 
-Sparse storage does not make every operation sparse-cost. Logical `values()`,
+The sparse backend does not make every operation sparse-cost. Logical `values()`,
 general mapping, and operations that produce many nonzero values can require
 time or memory proportional to the full logical size. Read each method's
-`# Complexity` and `# Result storage` sections before choosing a representation.
+`# Complexity` and `# Result backend` sections before choosing a backend.
 
 ## Randomness
 

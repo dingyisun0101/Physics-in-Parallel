@@ -10,7 +10,7 @@ use crate::math::scalar::{Scalar, ScalarCastError};
 
 use super::rank_2::vector_list::generic::DynVectorList;
 use super::rank_n::errors::TensorError;
-use super::universal::{StorageKind, Tensor, Values};
+use super::universal::{Backend, Tensor, TensorBuilder, Values};
 
 /// Failure while constructing or operating on a vector list.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,57 +57,128 @@ impl std::error::Error for VectorListError {
     }
 }
 
-/// A list of fixed-width vectors with private dense or sparse storage.
+/// A list of fixed-width vectors with either the dense or sparse backend.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VectorList<T: Scalar> {
     tensor: Tensor<T>,
 }
 
+/// Safe construction buffer returned by [`VectorList::empty`].
+pub struct VectorListBuilder<T: Scalar> {
+    builder: TensorBuilder<T>,
+}
+
+impl<T: Scalar> VectorListBuilder<T> {
+    /// Returns the selected backend.
+    pub const fn backend(&self) -> Backend {
+        self.builder.backend()
+    }
+
+    /// Returns `[number of vectors, dimensions]`.
+    pub fn shape(&self) -> [usize; 2] {
+        [self.builder.shape()[0], self.builder.shape()[1]]
+    }
+
+    /// Writes one component into the construction buffer.
+    pub fn set(
+        &mut self,
+        vector: usize,
+        component: usize,
+        value: T,
+    ) -> Result<(), VectorListError> {
+        Ok(self.builder.set(&[vector, component], value)?)
+    }
+
+    /// Writes every component of one vector into the construction buffer.
+    pub fn set_vector(&mut self, vector: usize, values: &[T]) -> Result<(), VectorListError> {
+        let dimensions = self.builder.shape()[1];
+        if values.len() != dimensions {
+            return Err(VectorListError::VectorLength {
+                expected: dimensions,
+                actual: values.len(),
+            });
+        }
+        for (component, &value) in values.iter().enumerate() {
+            self.set(vector, component, value)?;
+        }
+        Ok(())
+    }
+
+    /// Finalizes the vector list after validating backend-specific initialization.
+    pub fn finish(self) -> Result<VectorList<T>, VectorListError> {
+        VectorList::from_tensor(self.builder.finish()?)
+    }
+}
+
 impl<T> Eq for VectorList<T> where T: Scalar + Eq {}
 
 impl<T: Scalar> VectorList<T> {
-    /// Constructs dense row-major vectors.
-    pub fn from_dense(
+    /// Allocates an empty construction buffer for the selected backend.
+    pub fn empty(
         dimensions: usize,
         num_vectors: usize,
-        values: Vec<T>,
-    ) -> Result<Self, VectorListError> {
-        Self::from_tensor(Tensor::from_dense(&[num_vectors, dimensions], values)?)
+        backend: Backend,
+    ) -> Result<VectorListBuilder<T>, VectorListError> {
+        Ok(VectorListBuilder {
+            builder: Tensor::empty(&[num_vectors, dimensions], backend)?,
+        })
     }
 
-    /// Constructs sparse vectors from `(vector, component, value)` entries.
-    pub fn from_sparse_entries(
+    /// Constructs vectors from row-major logical values.
+    pub fn from_values(
         dimensions: usize,
         num_vectors: usize,
+        backend: Backend,
+        values: Vec<T>,
+    ) -> Result<Self, VectorListError> {
+        Self::from_tensor(Tensor::from_values(
+            &[num_vectors, dimensions],
+            backend,
+            values,
+        )?)
+    }
+
+    /// Constructs vectors from `(vector, component, value)` entries.
+    pub fn from_entries(
+        dimensions: usize,
+        num_vectors: usize,
+        backend: Backend,
         entries: impl IntoIterator<Item = (usize, usize, T)>,
     ) -> Result<Self, VectorListError> {
         let entries = entries
             .into_iter()
             .map(|(vector, component, value)| (vec![vector, component], value));
-        Self::from_tensor(Tensor::from_sparse_entries(
+        Self::from_tensor(Tensor::from_entries(
             &[num_vectors, dimensions],
+            backend,
             entries,
         )?)
     }
 
-    /// Constructs all-zero sparse vectors.
-    pub fn zeros(dimensions: usize, num_vectors: usize) -> Result<Self, VectorListError> {
-        Self::from_tensor(Tensor::zeros(&[num_vectors, dimensions])?)
+    /// Constructs all-zero vectors using the selected backend.
+    pub fn zeros(
+        dimensions: usize,
+        num_vectors: usize,
+        backend: Backend,
+    ) -> Result<Self, VectorListError> {
+        Self::from_tensor(Tensor::zeros(&[num_vectors, dimensions], backend)?)
     }
 
-    /// Constructs dense vectors filled with one value.
+    /// Constructs vectors filled with one value using the selected backend.
     pub fn filled(
         dimensions: usize,
         num_vectors: usize,
+        backend: Backend,
         value: T,
     ) -> Result<Self, VectorListError> {
-        Self::from_tensor(Tensor::filled(&[num_vectors, dimensions], value)?)
+        Self::from_tensor(Tensor::filled(&[num_vectors, dimensions], backend, value)?)
     }
 
-    /// Constructs dense vectors from a coordinate function.
+    /// Constructs vectors from a coordinate function using the selected backend.
     pub fn from_fn<F>(
         dimensions: usize,
         num_vectors: usize,
+        backend: Backend,
         mut function: F,
     ) -> Result<Self, VectorListError>
     where
@@ -115,20 +186,19 @@ impl<T: Scalar> VectorList<T> {
     {
         Self::from_tensor(Tensor::from_fn(
             &[num_vectors, dimensions],
+            backend,
             |coordinates| function(coordinates[0], coordinates[1]),
         )?)
     }
 
-    pub const fn storage_kind(&self) -> StorageKind {
-        self.tensor.storage_kind()
+    /// Returns the selected numerical backend.
+    pub const fn backend(&self) -> Backend {
+        self.tensor.backend()
     }
 
-    pub fn make_dense(&mut self) {
-        self.tensor.make_dense();
-    }
-
-    pub fn make_sparse(&mut self) {
-        self.tensor.make_sparse();
+    /// Converts this vector list to the selected backend when necessary.
+    pub fn set_backend(&mut self, backend: Backend) {
+        self.tensor.set_backend(backend);
     }
 
     pub fn dim(&self) -> usize {
@@ -218,7 +288,7 @@ impl<T: Scalar> VectorList<T> {
     ///
     /// # Complexity
     ///
-    /// This is `O(num_vectors * dimensions)` for dense and sparse storage.
+    /// This is `O(num_vectors * dimensions)` for both backends.
     pub fn values(&self) -> Values<'_, T> {
         self.tensor.values()
     }
@@ -305,11 +375,11 @@ impl<T: Scalar> VectorList<T> {
         Ok((norms, units))
     }
 
-    /// Adds two vector lists and preserves the receiver's storage kind.
+    /// Adds two vector lists and preserves the receiver's backend.
     ///
-    /// # Result storage
+    /// # Result backend
     ///
-    /// The result has the same storage kind as `self`.
+    /// The result has the same backend as `self`.
     pub fn add(&self, rhs: &Self) -> Result<Self, VectorListError> {
         Self::from_tensor(self.tensor.add(&rhs.tensor)?)
     }
@@ -339,19 +409,8 @@ impl<T: Scalar> VectorList<T> {
     }
 
     pub(crate) fn replace_values(&mut self, values: Vec<T>) {
-        let kind = self.storage_kind();
-        self.tensor = match kind {
-            StorageKind::Dense => Tensor::from_dense(self.tensor.shape(), values)
-                .expect("existing vector-list shape is valid"),
-            StorageKind::Sparse => Tensor::from_sparse_entries(
-                self.tensor.shape(),
-                values
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, value)| (vec![index / self.dim(), index % self.dim()], value)),
-            )
-            .expect("existing vector-list shape and generated coordinates are valid"),
-        };
+        self.tensor = Tensor::from_values(self.tensor.shape(), self.backend(), values)
+            .expect("existing vector-list shape is valid");
     }
 
     pub(crate) fn logical_values(&self) -> Vec<T> {

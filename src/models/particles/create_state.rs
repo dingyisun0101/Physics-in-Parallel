@@ -19,7 +19,7 @@ Canonical template attributes:
 
 use core::fmt;
 
-use crate::math::{RandType, TensorRandError, TensorRandFiller, VectorList};
+use crate::math::{Backend, RandType, TensorRandError, TensorRandFiller, VectorList};
 use crate::rng::ResolvedRng;
 use crate::space::continuous::sampling::{
     VectorSamplingError, VectorSamplingMethod, sample_vectors,
@@ -138,22 +138,22 @@ pub fn create_template(dim: usize, num_particles: usize) -> Result<PhysObj, Mass
     core.allocate::<f64>(ATTR_A, dim, num_particles)?;
 
     // Scalar-valued fields represented as dim=1 vector-lists.
-    let mut m = VectorList::<f64>::filled(1, num_particles, 0.0)
+    let mut m = VectorList::<f64>::filled(1, num_particles, Backend::Dense, 0.0)
         .expect("validated particle dimensions form a vector list");
     m.fill(1.0);
     core.insert(ATTR_M, m)?;
 
-    let mut m_inv = VectorList::<f64>::filled(1, num_particles, 0.0)
+    let mut m_inv = VectorList::<f64>::filled(1, num_particles, Backend::Dense, 0.0)
         .expect("validated particle dimensions form a vector list");
     m_inv.fill(1.0);
     core.insert(ATTR_M_INV, m_inv)?;
 
-    let mut alive = VectorList::<u8>::filled(1, num_particles, 0)
+    let mut alive = VectorList::<u8>::filled(1, num_particles, Backend::Dense, 0)
         .expect("validated particle dimensions form a vector list");
     alive.fill(ALIVE_TRUE);
     core.insert(ATTR_ALIVE, alive)?;
 
-    let mut rigid = VectorList::<u8>::filled(1, num_particles, 0)
+    let mut rigid = VectorList::<u8>::filled(1, num_particles, Backend::Dense, 0)
         .expect("validated particle dimensions form a vector list");
     rigid.fill(RIGID_FALSE);
     core.insert(ATTR_RIGID, rigid)?;

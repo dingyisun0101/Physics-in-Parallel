@@ -1,8 +1,9 @@
 //! Foundational user API for mathematics, randomness, spaces, and pairing.
 
 pub use crate::math::{
-    Complex, Matrix, MatrixError, RandType, Scalar, ScalarCastError, StorageKind, Tensor,
-    TensorError, TensorRandError, TensorRandFiller, Values, VectorList, VectorListError,
+    Backend, Complex, Matrix, MatrixBuilder, MatrixError, RandType, Scalar, ScalarCastError,
+    Tensor, TensorBuilder, TensorError, TensorRandError, TensorRandFiller, Values, VectorList,
+    VectorListBuilder, VectorListError,
 };
 pub use crate::rng::{IndexedRng, ResolvedRng, RngError, RngMethod};
 pub use crate::space::{

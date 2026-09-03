@@ -6,6 +6,6 @@ mod universal_vector_list;
 
 pub use rank_n::TensorError;
 pub use rank_n::dense_rand::{RandType, TensorRandError, TensorRandFiller};
-pub use universal::{StorageKind, Tensor, Values};
-pub use universal_matrix::{Matrix, MatrixError};
-pub use universal_vector_list::{VectorList, VectorListError};
+pub use universal::{Backend, Tensor, TensorBuilder, Values};
+pub use universal_matrix::{Matrix, MatrixBuilder, MatrixError};
+pub use universal_vector_list::{VectorList, VectorListBuilder, VectorListError};

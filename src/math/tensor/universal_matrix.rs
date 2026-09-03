@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::math::scalar::{Scalar, ScalarCastError};
 
 use super::rank_n::errors::TensorError;
-use super::universal::{StorageKind, Tensor, Values};
+use super::universal::{Backend, Tensor, TensorBuilder, Values};
 
 /// Failure while constructing or operating on a matrix.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,67 +57,119 @@ impl std::error::Error for MatrixError {
     }
 }
 
-/// A rank-two matrix with private dense or sparse storage.
+/// A rank-two matrix with either the dense or sparse backend.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Matrix<T: Scalar> {
     tensor: Tensor<T>,
 }
 
+/// Safe construction buffer returned by [`Matrix::empty`].
+pub struct MatrixBuilder<T: Scalar> {
+    builder: TensorBuilder<T>,
+}
+
+impl<T: Scalar> MatrixBuilder<T> {
+    /// Returns the selected backend.
+    pub const fn backend(&self) -> Backend {
+        self.builder.backend()
+    }
+
+    /// Returns `[rows, columns]`.
+    pub fn shape(&self) -> [usize; 2] {
+        [self.builder.shape()[0], self.builder.shape()[1]]
+    }
+
+    /// Writes one matrix element into the construction buffer.
+    pub fn set(&mut self, row: usize, column: usize, value: T) -> Result<(), MatrixError> {
+        Ok(self.builder.set(&[row, column], value)?)
+    }
+
+    /// Finalizes the matrix after validating backend-specific initialization.
+    pub fn finish(self) -> Result<Matrix<T>, MatrixError> {
+        Matrix::from_tensor(self.builder.finish()?)
+    }
+}
+
 impl<T> Eq for Matrix<T> where T: Scalar + Eq {}
 
 impl<T: Scalar> Matrix<T> {
-    /// Constructs a dense matrix from row-major values.
-    pub fn from_dense(rows: usize, columns: usize, values: Vec<T>) -> Result<Self, MatrixError> {
-        Self::from_tensor(Tensor::from_dense(&[rows, columns], values)?)
-    }
-
-    /// Constructs a sparse matrix from strict `(row, column, value)` entries.
-    pub fn from_sparse_entries(
+    /// Allocates an empty construction buffer for the selected backend.
+    pub fn empty(
         rows: usize,
         columns: usize,
+        backend: Backend,
+    ) -> Result<MatrixBuilder<T>, MatrixError> {
+        Ok(MatrixBuilder {
+            builder: Tensor::empty(&[rows, columns], backend)?,
+        })
+    }
+
+    /// Constructs a matrix from row-major logical values.
+    pub fn from_values(
+        rows: usize,
+        columns: usize,
+        backend: Backend,
+        values: Vec<T>,
+    ) -> Result<Self, MatrixError> {
+        Self::from_tensor(Tensor::from_values(&[rows, columns], backend, values)?)
+    }
+
+    /// Constructs a matrix from strict `(row, column, value)` entries.
+    pub fn from_entries(
+        rows: usize,
+        columns: usize,
+        backend: Backend,
         entries: impl IntoIterator<Item = (usize, usize, T)>,
     ) -> Result<Self, MatrixError> {
         let entries = entries
             .into_iter()
             .map(|(row, column, value)| (vec![row, column], value));
-        Self::from_tensor(Tensor::from_sparse_entries(&[rows, columns], entries)?)
+        Self::from_tensor(Tensor::from_entries(&[rows, columns], backend, entries)?)
     }
 
-    /// Constructs an all-zero sparse matrix.
-    pub fn zeros(rows: usize, columns: usize) -> Result<Self, MatrixError> {
-        Self::from_tensor(Tensor::zeros(&[rows, columns])?)
+    /// Constructs an all-zero matrix using the selected backend.
+    pub fn zeros(rows: usize, columns: usize, backend: Backend) -> Result<Self, MatrixError> {
+        Self::from_tensor(Tensor::zeros(&[rows, columns], backend)?)
     }
 
-    /// Constructs a dense matrix filled with one value.
-    pub fn filled(rows: usize, columns: usize, value: T) -> Result<Self, MatrixError> {
-        Self::from_tensor(Tensor::filled(&[rows, columns], value)?)
+    /// Constructs a matrix filled with one value using the selected backend.
+    pub fn filled(
+        rows: usize,
+        columns: usize,
+        backend: Backend,
+        value: T,
+    ) -> Result<Self, MatrixError> {
+        Self::from_tensor(Tensor::filled(&[rows, columns], backend, value)?)
     }
 
-    /// Constructs a dense matrix from a coordinate function.
-    pub fn from_fn<F>(rows: usize, columns: usize, mut function: F) -> Result<Self, MatrixError>
+    /// Constructs a matrix from a coordinate function using the selected backend.
+    pub fn from_fn<F>(
+        rows: usize,
+        columns: usize,
+        backend: Backend,
+        mut function: F,
+    ) -> Result<Self, MatrixError>
     where
         F: FnMut(usize, usize) -> T,
     {
-        Self::from_tensor(Tensor::from_fn(&[rows, columns], |coordinates| {
+        Self::from_tensor(Tensor::from_fn(&[rows, columns], backend, |coordinates| {
             function(coordinates[0], coordinates[1])
         })?)
     }
 
-    /// Constructs a sparse identity matrix.
-    pub fn identity(size: usize) -> Result<Self, MatrixError> {
-        Self::from_tensor(Tensor::identity(size)?)
+    /// Constructs an identity matrix using the selected backend.
+    pub fn identity(size: usize, backend: Backend) -> Result<Self, MatrixError> {
+        Self::from_tensor(Tensor::identity(size, backend)?)
     }
 
-    pub const fn storage_kind(&self) -> StorageKind {
-        self.tensor.storage_kind()
+    /// Returns the selected numerical backend.
+    pub const fn backend(&self) -> Backend {
+        self.tensor.backend()
     }
 
-    pub fn make_dense(&mut self) {
-        self.tensor.make_dense();
-    }
-
-    pub fn make_sparse(&mut self) {
-        self.tensor.make_sparse();
+    /// Converts this matrix to the selected backend when necessary.
+    pub fn set_backend(&mut self, backend: Backend) {
+        self.tensor.set_backend(backend);
     }
 
     pub fn rows(&self) -> usize {
@@ -148,7 +200,7 @@ impl<T: Scalar> Matrix<T> {
     ///
     /// # Complexity
     ///
-    /// This is `O(rows * columns)` for dense and sparse storage.
+    /// This is `O(rows * columns)` for both backends.
     pub fn values(&self) -> Values<'_, T> {
         self.tensor.values()
     }
@@ -157,11 +209,11 @@ impl<T: Scalar> Matrix<T> {
         self.tensor.fill(value);
     }
 
-    /// Adds two matrices and preserves the receiver's storage kind.
+    /// Adds two matrices and preserves the receiver's backend.
     ///
-    /// # Result storage
+    /// # Result backend
     ///
-    /// The result has the same storage kind as `self`.
+    /// The result has the same backend as `self`.
     pub fn add(&self, rhs: &Self) -> Result<Self, MatrixError> {
         Self::from_tensor(self.tensor.add(&rhs.tensor)?)
     }
@@ -214,11 +266,11 @@ impl<T: Scalar> Matrix<T> {
         Self::from_tensor(self.tensor.hermitian_transpose()?)
     }
 
-    /// Multiplies two matrices and preserves the receiver's storage kind.
+    /// Multiplies two matrices and preserves the receiver's backend.
     ///
-    /// # Result storage
+    /// # Result backend
     ///
-    /// The result has the same storage kind as `self`.
+    /// The result has the same backend as `self`.
     ///
     /// # Complexity
     ///

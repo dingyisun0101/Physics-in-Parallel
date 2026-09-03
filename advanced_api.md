@@ -1,6 +1,6 @@
 # PiP Advanced API
 
-> **Alpha API:** this guide targets `4.0.0-alpha.1`. Advanced interfaces may
+> **Alpha API:** this guide targets `4.0.0-alpha.2`. Advanced interfaces may
 > change between alpha releases and have no compatibility contract with 3.x.
 
 The advanced API is opt-in:
@@ -49,7 +49,7 @@ Sampling and square-lattice extensions:
 and stored-entry extraction for `Tensor<T>`, `Matrix<T>`, and `VectorList<T>`.
 The ordinary coordinate-based methods should be considered first.
 
-Representation matters here:
+Backend choice matters here:
 
 - dense slices exist only for dense storage
 - stored-entry traversal is `O(total elements)` for dense storage

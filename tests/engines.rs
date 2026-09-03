@@ -1,4 +1,4 @@
-use physics_in_parallel::prelude::basic::StorageKind;
+use physics_in_parallel::prelude::basic::Backend;
 use physics_in_parallel::prelude::models::{ATTR_R, ParticleStateError, PhysObj, create_template};
 
 #[test]
@@ -11,7 +11,7 @@ fn particle_state_exposes_universal_attributes() {
         .unwrap();
 
     let positions = particles.attribute::<f64>(ATTR_R).unwrap();
-    assert_eq!(positions.storage_kind(), StorageKind::Dense);
+    assert_eq!(positions.backend(), Backend::Dense);
     assert_eq!(positions.vector(1).unwrap(), vec![3.0, 4.0]);
     assert_eq!(
         particles.attribute_vector::<f64>(ATTR_R, 1).unwrap(),

@@ -2,7 +2,9 @@
 
 use core::fmt;
 
-use ahash::AHashSet;
+use std::mem::MaybeUninit;
+
+use ahash::{AHashMap, AHashSet};
 use num_traits::Zero;
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
@@ -15,10 +17,10 @@ use super::rank_n::errors::{
 };
 use super::rank_n::{Dense, Sparse, Tensor as BackendTensor};
 
-/// Storage representation used by a backend-agnostic tensor.
+/// Numerical backend used by a tensor-family value.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum StorageKind {
+pub enum Backend {
     Dense,
     Sparse,
 }
@@ -29,21 +31,143 @@ enum Storage<T: Scalar> {
     Sparse(BackendTensor<T, Sparse>),
 }
 
-/// An N-dimensional tensor with either dense or sparse private storage.
+/// An N-dimensional tensor with either the dense or sparse backend.
 ///
 /// Dense and sparse tensors share this one public type and mathematical API.
-/// Constructors choose the initial representation, and operations never
+/// Constructors choose the initial backend, and operations never
 /// change it implicitly.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tensor<T: Scalar> {
     storage: Storage<T>,
 }
 
+enum BuilderData<T: Scalar> {
+    Dense {
+        values: Vec<MaybeUninit<T>>,
+        initialized: Vec<bool>,
+        remaining: usize,
+    },
+    Sparse(AHashMap<usize, T>),
+}
+
+/// Safe construction buffer returned by [`Tensor::empty`].
+///
+/// Dense builders must have every logical element written before [`finish`](Self::finish)
+/// succeeds. Unwritten sparse coordinates are implicit zeros.
+pub struct TensorBuilder<T: Scalar> {
+    shape: Vec<usize>,
+    data: BuilderData<T>,
+}
+
+impl<T: Scalar> TensorBuilder<T> {
+    fn new(shape: &[usize], backend: Backend) -> TensorResult<Self> {
+        let size = checked_num_elements(shape)?;
+        let data = match backend {
+            Backend::Dense => BuilderData::Dense {
+                values: std::iter::repeat_with(MaybeUninit::uninit)
+                    .take(size)
+                    .collect(),
+                initialized: vec![false; size],
+                remaining: size,
+            },
+            Backend::Sparse => BuilderData::Sparse(AHashMap::new()),
+        };
+        Ok(Self {
+            shape: shape.to_vec(),
+            data,
+        })
+    }
+
+    /// Returns the selected backend.
+    pub const fn backend(&self) -> Backend {
+        match self.data {
+            BuilderData::Dense { .. } => Backend::Dense,
+            BuilderData::Sparse(_) => Backend::Sparse,
+        }
+    }
+
+    /// Returns the logical axis extents.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    /// Writes one value into the construction buffer.
+    pub fn set(&mut self, coordinates: &[usize], value: T) -> TensorResult<()> {
+        let index = checked_flat_index(&self.shape, coordinates)?;
+        match &mut self.data {
+            BuilderData::Dense {
+                values,
+                initialized,
+                remaining,
+            } => {
+                values[index].write(value);
+                if !initialized[index] {
+                    initialized[index] = true;
+                    *remaining -= 1;
+                }
+            }
+            BuilderData::Sparse(entries) => {
+                if value == T::zero() {
+                    entries.remove(&index);
+                } else {
+                    entries.insert(index, value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalizes the tensor after validating backend-specific initialization.
+    pub fn finish(self) -> TensorResult<Tensor<T>> {
+        match self.data {
+            BuilderData::Dense {
+                values, remaining, ..
+            } => {
+                if remaining != 0 {
+                    return Err(TensorError::IncompleteInitialization { remaining });
+                }
+                let values = values
+                    .into_iter()
+                    // SAFETY: `remaining == 0` means every slot was written.
+                    .map(|value| unsafe { value.assume_init() })
+                    .collect();
+                Ok(Tensor::from_values_unchecked(
+                    &self.shape,
+                    Backend::Dense,
+                    values,
+                ))
+            }
+            BuilderData::Sparse(entries) => Ok(Tensor::from_sparse_flat_entries_unchecked(
+                self.shape,
+                entries.into_iter().collect(),
+            )),
+        }
+    }
+}
+
 impl<T> Eq for Tensor<T> where T: Scalar + Eq {}
 
 impl<T: Scalar> Tensor<T> {
-    /// Constructs a dense tensor from row-major logical values.
-    pub fn from_dense(shape: &[usize], values: Vec<T>) -> TensorResult<Self> {
+    /// Allocates an empty construction buffer for the selected backend.
+    ///
+    /// Dense values remain unreadable until every element is initialized and
+    /// the builder is finalized. Sparse coordinates not written before
+    /// finalization become implicit zeros.
+    ///
+    /// # Complexity
+    ///
+    /// Dense construction allocates space and initialization tracking for
+    /// every logical element without writing a `T`. Sparse construction is
+    /// constant-space until entries are written.
+    pub fn empty(shape: &[usize], backend: Backend) -> TensorResult<TensorBuilder<T>> {
+        TensorBuilder::new(shape, backend)
+    }
+
+    /// Constructs a tensor from row-major logical values using the selected backend.
+    ///
+    /// Both backends consume `O(total logical elements)` input. The sparse
+    /// backend retains only nonzero values after construction.
+    pub fn from_values(shape: &[usize], backend: Backend, values: Vec<T>) -> TensorResult<Self> {
         let expected = checked_num_elements(shape)?;
         if values.len() != expected {
             return Err(TensorError::DataLengthMismatch {
@@ -51,19 +175,20 @@ impl<T: Scalar> Tensor<T> {
                 actual: values.len(),
             });
         }
-        Ok(Self {
-            storage: Storage::Dense(BackendTensor::<T, Dense>::from_storage(
-                super::rank_n::dense::Tensor::from_parts_unchecked(shape.to_vec(), values),
-            )),
-        })
+        Ok(Self::from_values_unchecked(shape, backend, values))
     }
 
-    /// Constructs a sparse tensor from strict logical coordinates.
+    /// Constructs a tensor from strict logical coordinate entries.
     ///
     /// Coordinates must be in bounds and unique. Explicit zeros are accepted
-    /// as input but are not stored.
-    pub fn from_sparse_entries(
+    /// as input. Sparse backends do not store them; dense backends initialize
+    /// unspecified coordinates to zero.
+    ///
+    /// Dense construction costs `O(total logical elements + entries)`. Sparse
+    /// construction costs `O(entries)` aside from coordinate validation.
+    pub fn from_entries(
         shape: &[usize],
+        backend: Backend,
         entries: impl IntoIterator<Item = (Vec<usize>, T)>,
     ) -> TensorResult<Self> {
         let size = checked_num_elements(shape)?;
@@ -74,34 +199,54 @@ impl<T: Scalar> Tensor<T> {
             if !seen.insert(flat) {
                 return Err(TensorError::DuplicateCoordinate { coordinates });
             }
-            if value != T::zero() {
-                flat_entries.push((flat, value));
-            }
+            flat_entries.push((flat, value));
         }
         debug_assert!(flat_entries.iter().all(|(index, _)| *index < size));
-        Ok(Self::from_sparse_flat_entries_unchecked(
-            shape.to_vec(),
-            flat_entries,
-        ))
+        match backend {
+            Backend::Dense => {
+                let mut values = vec![T::zero(); size];
+                for (index, value) in flat_entries {
+                    values[index] = value;
+                }
+                Ok(Self::from_values_unchecked(shape, backend, values))
+            }
+            Backend::Sparse => Ok(Self::from_sparse_flat_entries_unchecked(
+                shape.to_vec(),
+                flat_entries,
+            )),
+        }
     }
 
-    /// Constructs an all-zero sparse tensor.
-    pub fn zeros(shape: &[usize]) -> TensorResult<Self> {
-        checked_num_elements(shape)?;
-        Ok(Self::from_sparse_flat_entries_unchecked(
-            shape.to_vec(),
-            Vec::new(),
-        ))
-    }
-
-    /// Constructs a dense tensor whose logical elements all equal `value`.
-    pub fn filled(shape: &[usize], value: T) -> TensorResult<Self> {
+    /// Constructs an all-zero tensor using the selected backend.
+    ///
+    /// Dense construction initializes every logical element. Sparse
+    /// construction allocates no entries.
+    pub fn zeros(shape: &[usize], backend: Backend) -> TensorResult<Self> {
         let size = checked_num_elements(shape)?;
-        Self::from_dense(shape, vec![value; size])
+        Ok(match backend {
+            Backend::Dense => Self::from_values_unchecked(shape, backend, vec![T::zero(); size]),
+            Backend::Sparse => Self::from_sparse_flat_entries_unchecked(shape.to_vec(), Vec::new()),
+        })
     }
 
-    /// Constructs a dense tensor by evaluating coordinates in row-major order.
-    pub fn from_fn<F>(shape: &[usize], mut function: F) -> TensorResult<Self>
+    /// Constructs a tensor whose logical elements all equal `value`.
+    ///
+    /// This costs `O(total logical elements)` for either backend. A nonzero
+    /// sparse fill stores every logical element.
+    pub fn filled(shape: &[usize], backend: Backend, value: T) -> TensorResult<Self> {
+        let size = checked_num_elements(shape)?;
+        Ok(Self::from_values_unchecked(
+            shape,
+            backend,
+            vec![value; size],
+        ))
+    }
+
+    /// Constructs a tensor by evaluating coordinates in row-major order.
+    ///
+    /// The function is evaluated once for every logical element. The sparse
+    /// backend retains only nonzero results.
+    pub fn from_fn<F>(shape: &[usize], backend: Backend, mut function: F) -> TensorResult<Self>
     where
         F: FnMut(&[usize]) -> T,
     {
@@ -112,38 +257,41 @@ impl<T: Scalar> Tensor<T> {
             coordinates_from_flat(shape, index, &mut coordinates);
             values.push(function(&coordinates));
         }
-        Self::from_dense(shape, values)
+        Ok(Self::from_values_unchecked(shape, backend, values))
     }
 
-    /// Constructs a sparse identity matrix.
-    pub fn identity(size: usize) -> TensorResult<Self> {
+    /// Constructs an identity matrix using the selected backend.
+    ///
+    /// Dense construction costs `O(size^2)`; sparse construction stores
+    /// `O(size)` diagonal entries.
+    pub fn identity(size: usize, backend: Backend) -> TensorResult<Self> {
         let shape = [size, size];
         checked_num_elements(&shape)?;
-        Self::from_sparse_entries(
+        Self::from_entries(
             &shape,
+            backend,
             (0..size).map(|coordinate| (vec![coordinate, coordinate], T::one())),
         )
     }
 
-    /// Returns the selected storage representation.
-    pub const fn storage_kind(&self) -> StorageKind {
+    /// Returns the selected numerical backend.
+    pub const fn backend(&self) -> Backend {
         match self.storage {
-            Storage::Dense(_) => StorageKind::Dense,
-            Storage::Sparse(_) => StorageKind::Sparse,
+            Storage::Dense(_) => Backend::Dense,
+            Storage::Sparse(_) => Backend::Sparse,
         }
     }
 
-    /// Converts this tensor to dense storage when necessary.
-    pub fn make_dense(&mut self) {
-        if let Storage::Sparse(storage) = &self.storage {
-            self.storage = Storage::Dense(storage.to_dense());
-        }
-    }
-
-    /// Converts this tensor to sparse storage when necessary.
-    pub fn make_sparse(&mut self) {
-        if let Storage::Dense(storage) = &self.storage {
-            self.storage = Storage::Sparse(storage.to_sparse());
+    /// Converts this tensor to the selected backend when necessary.
+    pub fn set_backend(&mut self, backend: Backend) {
+        match (backend, &self.storage) {
+            (Backend::Dense, Storage::Sparse(storage)) => {
+                self.storage = Storage::Dense(storage.to_dense());
+            }
+            (Backend::Sparse, Storage::Dense(storage)) => {
+                self.storage = Storage::Sparse(storage.to_sparse());
+            }
+            _ => {}
         }
     }
 
@@ -185,7 +333,7 @@ impl<T: Scalar> Tensor<T> {
     ///
     /// # Complexity
     ///
-    /// This is `O(total logical elements)` for both dense and sparse storage.
+    /// This is `O(total logical elements)` for both backends.
     /// Use advanced stored-entry access when sparse support traversal is
     /// intended.
     pub fn values(&self) -> Values<'_, T> {
@@ -200,37 +348,37 @@ impl<T: Scalar> Tensor<T> {
         self.values().fold(T::zero(), |sum, value| sum + value)
     }
 
-    /// Replaces every logical value while retaining the current storage kind.
+    /// Replaces every logical value while retaining the current backend.
     ///
     /// # Complexity
     ///
-    /// A nonzero fill of sparse storage writes every logical element and can
+    /// A nonzero fill on the sparse backend writes every logical element and can
     /// require dense-scale memory.
     pub fn fill(&mut self, value: T) {
         let values = vec![value; self.size()];
         self.replace_with_values(values);
     }
 
-    /// Maps every logical value while retaining the receiver's storage kind.
+    /// Maps every logical value while retaining the receiver's backend.
     ///
-    /// # Result storage
+    /// # Result backend
     ///
-    /// The result has the same storage kind as `self`.
+    /// The result has the same backend as `self`.
     ///
     /// # Complexity
     ///
-    /// Mapping is `O(total logical elements)` for both representations. A map
+    /// Mapping is `O(total logical elements)` for both backends. A map
     /// for which `f(0)` is nonzero can produce dense occupancy in sparse
-    /// storage.
+    /// representation.
     pub fn map<F>(&self, function: F) -> Self
     where
         F: Fn(T) -> T + Send + Sync,
     {
         let values = self.values().map(function).collect();
-        Self::from_values_unchecked(self.shape(), self.storage_kind(), values)
+        Self::from_values_unchecked(self.shape(), self.backend(), values)
     }
 
-    /// Maps every logical value in place without changing storage kind.
+    /// Maps every logical value in place without changing backend.
     pub fn map_in_place<F>(&mut self, function: F)
     where
         F: Fn(T) -> T + Send + Sync,
@@ -304,7 +452,7 @@ impl<T: Scalar> Tensor<T> {
         self.map(Scalar::sqrt)
     }
 
-    /// Returns the rank-two transpose while preserving storage kind.
+    /// Returns the rank-two transpose while preserving the backend.
     pub fn transpose(&self) -> TensorResult<Self> {
         self.ensure_rank("transpose", 2)?;
         let rows = self.shape()[0];
@@ -318,12 +466,12 @@ impl<T: Scalar> Tensor<T> {
             .collect();
         Ok(Self::from_values_unchecked(
             &[columns, rows],
-            self.storage_kind(),
+            self.backend(),
             values,
         ))
     }
 
-    /// Returns the rank-two Hermitian transpose while preserving storage kind.
+    /// Returns the rank-two Hermitian transpose while preserving the backend.
     pub fn hermitian_transpose(&self) -> TensorResult<Self> {
         Ok(self.transpose()?.conjugate())
     }
@@ -374,7 +522,7 @@ impl<T: Scalar> Tensor<T> {
         ];
         Ok(Self::from_values_unchecked(
             &[3],
-            self.storage_kind(),
+            self.backend(),
             vec![
                 left[1] * right[2] - left[2] * right[1],
                 left[2] * right[0] - left[0] * right[2],
@@ -405,16 +553,16 @@ impl<T: Scalar> Tensor<T> {
             .collect();
         Ok(Self::from_values_unchecked(
             &[size, size],
-            self.storage_kind(),
+            self.backend(),
             values,
         ))
     }
 
     /// Multiplies two rank-two tensors.
     ///
-    /// # Result storage
+    /// # Result backend
     ///
-    /// The result has the same storage kind as `self`.
+    /// The result has the same backend as `self`.
     ///
     /// # Complexity
     ///
@@ -446,12 +594,12 @@ impl<T: Scalar> Tensor<T> {
             .collect();
         Ok(Self::from_values_unchecked(
             &[rows, columns],
-            self.storage_kind(),
+            self.backend(),
             values,
         ))
     }
 
-    /// Casts every logical value while preserving storage kind.
+    /// Casts every logical value while preserving the backend.
     pub fn cast<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
         let values = self
             .values()
@@ -459,7 +607,7 @@ impl<T: Scalar> Tensor<T> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Tensor::<U>::from_values_unchecked(
             self.shape(),
-            self.storage_kind(),
+            self.backend(),
             values,
         ))
     }
@@ -480,7 +628,7 @@ impl<T: Scalar> Tensor<T> {
             .collect();
         Ok(Self::from_values_unchecked(
             self.shape(),
-            self.storage_kind(),
+            self.backend(),
             values,
         ))
     }
@@ -528,26 +676,25 @@ impl<T: Scalar> Tensor<T> {
     }
 
     pub(crate) fn replace_with_values(&mut self, values: Vec<T>) {
-        self.storage =
-            Self::storage_from_values_unchecked(self.shape(), self.storage_kind(), values);
+        self.storage = Self::storage_from_values_unchecked(self.shape(), self.backend(), values);
     }
 
-    fn from_values_unchecked(shape: &[usize], kind: StorageKind, values: Vec<T>) -> Self {
+    fn from_values_unchecked(shape: &[usize], backend: Backend, values: Vec<T>) -> Self {
         Self {
-            storage: Self::storage_from_values_unchecked(shape, kind, values),
+            storage: Self::storage_from_values_unchecked(shape, backend, values),
         }
     }
 
     fn storage_from_values_unchecked(
         shape: &[usize],
-        kind: StorageKind,
+        backend: Backend,
         values: Vec<T>,
     ) -> Storage<T> {
-        match kind {
-            StorageKind::Dense => Storage::Dense(BackendTensor::<T, Dense>::from_storage(
+        match backend {
+            Backend::Dense => Storage::Dense(BackendTensor::<T, Dense>::from_storage(
                 super::rank_n::dense::Tensor::from_parts_unchecked(shape.to_vec(), values),
             )),
-            StorageKind::Sparse => {
+            Backend::Sparse => {
                 let entries = values
                     .into_iter()
                     .enumerate()
@@ -664,14 +811,14 @@ fn coordinates_from_flat(shape: &[usize], mut index: usize, coordinates: &mut [u
 }
 
 #[derive(Serialize)]
-#[serde(tag = "storage", content = "tensor", rename_all = "snake_case")]
+#[serde(tag = "backend", content = "tensor", rename_all = "snake_case")]
 enum StorageRef<'a, T: Scalar + Serialize> {
     Dense(&'a BackendTensor<T, Dense>),
     Sparse(&'a BackendTensor<T, Sparse>),
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "storage", content = "tensor", rename_all = "snake_case")]
+#[serde(tag = "backend", content = "tensor", rename_all = "snake_case")]
 #[serde(bound(deserialize = "T: DeserializeOwned"))]
 enum StorageOwned<T: Scalar> {
     Dense(BackendTensor<T, Dense>),
@@ -709,7 +856,7 @@ where
     }
 }
 
-impl fmt::Display for StorageKind {
+impl fmt::Display for Backend {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dense => formatter.write_str("dense"),

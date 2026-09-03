@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 
-_JSON_SCHEMA_VERSION = 1
+_JSON_SCHEMA_VERSION = 2
 
 
 def to_ndarray(path) -> np.ndarray:
@@ -22,7 +22,7 @@ def _payload_to_ndarray(payload) -> np.ndarray:
     if not isinstance(payload, dict):
         raise ValueError("PiP array document must be a JSON object")
 
-    if set(payload) == {"storage", "tensor"}:
+    if set(payload) == {"backend", "tensor"}:
         return _universal_tensor_to_ndarray(payload)
     if {"geometry", "values", "initialization_rng"}.issubset(payload):
         return _lattice_to_ndarray(payload)
@@ -30,15 +30,15 @@ def _payload_to_ndarray(payload) -> np.ndarray:
 
 
 def _universal_tensor_to_ndarray(payload) -> np.ndarray:
-    storage = payload["storage"]
+    backend = payload["backend"]
     tensor = payload["tensor"]
     if not isinstance(tensor, dict):
         raise ValueError("PiP tensor payload must be a JSON object")
-    if storage == "dense":
+    if backend == "dense":
         return _dense_tensor_to_ndarray(tensor)
-    if storage == "sparse":
+    if backend == "sparse":
         return _sparse_tensor_to_ndarray(tensor)
-    raise ValueError(f"unsupported PiP storage representation: {storage!r}")
+    raise ValueError(f"unsupported PiP tensor backend: {backend!r}")
 
 
 def _dense_tensor_to_ndarray(payload) -> np.ndarray:

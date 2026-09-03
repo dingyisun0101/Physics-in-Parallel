@@ -23,6 +23,8 @@ pub enum TensorError {
     ShapeMismatch { lhs: Vec<usize>, rhs: Vec<usize> },
     /// Dense row-major data did not match the shape's logical element count.
     DataLengthMismatch { expected: usize, actual: usize },
+    /// A dense empty builder was finalized before every element was written.
+    IncompleteInitialization { remaining: usize },
     /// Coordinates have the wrong rank for the tensor shape.
     RankMismatch {
         shape: Vec<usize>,
@@ -81,6 +83,10 @@ impl fmt::Display for TensorError {
             Self::DataLengthMismatch { expected, actual } => write!(
                 f,
                 "tensor data length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::IncompleteInitialization { remaining } => write!(
+                f,
+                "dense tensor initialization is incomplete: {remaining} elements remain"
             ),
             Self::RankMismatch {
                 shape,

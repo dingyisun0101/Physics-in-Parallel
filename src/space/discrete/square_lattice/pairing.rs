@@ -25,7 +25,7 @@ use crate::math::tensor::rank_2::vector_list::{
 use crate::math::tensor::rank_n::dense::Tensor as DenseTensor;
 use crate::math::tensor::rank_n::layout::RowMajorLayout;
 use crate::math::tensor::rank_n::tensor_trait::TensorTrait;
-use crate::math::{RandType, TensorError, TensorRandError, TensorRandFiller, VectorList};
+use crate::math::{Backend, RandType, TensorError, TensorRandError, TensorRandFiller, VectorList};
 use crate::threading::parallel_chunk_len;
 
 use super::kernel::{BuiltinKernel, KernelError, KernelType, try_create_builtin_kernel};
@@ -264,11 +264,11 @@ impl PairGenerator {
             random_filler,
             workspace,
             generated_sweep: None,
-            source_coords_cache: VectorList::filled(rank, num_pairs, 0)
+            source_coords_cache: VectorList::filled(rank, num_pairs, Backend::Dense, 0)
                 .expect("validated pair-buffer dimensions"),
-            displacement_coords_cache: VectorList::filled(rank, num_pairs, 0)
+            displacement_coords_cache: VectorList::filled(rank, num_pairs, Backend::Dense, 0)
                 .expect("validated pair-buffer dimensions"),
-            target_coords_cache: VectorList::filled(rank, num_pairs, 0)
+            target_coords_cache: VectorList::filled(rank, num_pairs, Backend::Dense, 0)
                 .expect("validated pair-buffer dimensions"),
         })
     }

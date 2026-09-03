@@ -1,6 +1,6 @@
 # Examples
 
-These examples target PiP `4.0.0-alpha.1`. They are not compatible with PiP
+These examples target PiP `4.0.0-alpha.2`. They are not compatible with PiP
 3.x and may change between 4.0 alpha releases.
 
 ## Basic Particle Model

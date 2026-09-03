@@ -25,9 +25,9 @@ class NumpySupportTests(unittest.TestCase):
 
     def test_dense_universal_tensor(self) -> None:
         array = self.decode({
-            "storage": "dense",
+            "backend": "dense",
             "tensor": {
-                "kind": "tensor", "version": 1, "scalar": "i64",
+                "kind": "tensor", "version": 2, "scalar": "i64",
                 "shape": [2, 2], "data": [1, 2, 3, 4],
             },
         })
@@ -35,9 +35,9 @@ class NumpySupportTests(unittest.TestCase):
 
     def test_sparse_universal_tensor(self) -> None:
         array = self.decode({
-            "storage": "sparse",
+            "backend": "sparse",
             "tensor": {
-                "kind": "tensor_sparse", "version": 1, "scalar": "f64",
+                "kind": "tensor_sparse", "version": 2, "scalar": "f64",
                 "shape": [2, 3], "indices": [1, 5], "values": [7.0, -4.0],
             },
         })
@@ -46,9 +46,9 @@ class NumpySupportTests(unittest.TestCase):
     def test_sparse_indices_must_be_canonical(self) -> None:
         with self.assertRaisesRegex(ValueError, "strictly increasing"):
             self.decode({
-                "storage": "sparse",
+                "backend": "sparse",
                 "tensor": {
-                    "kind": "tensor_sparse", "version": 1, "scalar": "i64",
+                    "kind": "tensor_sparse", "version": 2, "scalar": "i64",
                     "shape": [4], "indices": [2, 1], "values": [3, 4],
                 },
             })
@@ -64,6 +64,25 @@ class NumpySupportTests(unittest.TestCase):
     def test_pre_4_schema_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported PiP 4.0 alpha"):
             self.decode({"kind": "tensor", "shape": [1], "data": [1]})
+
+    def test_alpha_1_tensor_schema_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "expected 2, got 1"):
+            self.decode({
+                "backend": "dense",
+                "tensor": {
+                    "kind": "tensor", "version": 1, "scalar": "i64",
+                    "shape": [1], "data": [1],
+                },
+            })
+
+        with self.assertRaisesRegex(ValueError, "unsupported PiP 4.0 alpha"):
+            self.decode({
+                "storage": "dense",
+                "tensor": {
+                    "kind": "tensor", "version": 1, "scalar": "i64",
+                    "shape": [1], "data": [1],
+                },
+            })
 
 
 if __name__ == "__main__":
