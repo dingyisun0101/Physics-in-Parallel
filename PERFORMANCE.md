@@ -144,3 +144,12 @@ conflict-aware parallel force schemes remain a benchmark-led future choice;
 per-worker full-system buffers are not the default. Diagonal matrix-vector
 products take O(n) for finite inputs; nonfinite input uses the general path to
 preserve implicit-zero products.
+
+## Measuring and tuning
+
+Large-data throughput and memory use are the primary targets. See
+[BENCHMARKS.md](BENCHMARKS.md) for the opt-in harness, recorded measurements and
+allocation comparisons. Elementwise SIMD operates independently of thread count.
+Allocating scale and transpose currently wait until 262,144 elements before
+splitting work across workers, following observed overhead on smaller buffers.
+Thresholds are implementation choices and remain subject to large-data evidence.

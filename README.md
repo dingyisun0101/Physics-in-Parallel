@@ -178,3 +178,18 @@ for the checked example inventory.
 See [the performance guide](PERFORMANCE.md) for SIMD dispatch (including optional
 AVX-512F), numerical ordering, reusable output APIs, sparse costs, and validation.
 SIMD selection is internal and never changes the public mathematical types.
+
+## Efficient simulation loops
+
+Run `cargo run --release --example basic_particle` for a complete loop using one
+application-owned Rayon pool. It resets acceleration, accumulates forces,
+integrates, applies walls and a thermostat, then observes at an explicit interval.
+Use `set_mass` to maintain mass/inverse-mass consistency and `kinetic_summary`
+when energy, temperature and population are needed together. Neighbor callers can
+reuse their pair buffer with `rebuild_and_collect_into`.
+
+Dense arithmetic and scaling automatically select AVX-512F or AVX2 when supported,
+with portable fallbacks. No SIMD-specific user types or CPU build flags are needed.
+See [PERFORMANCE.md](PERFORMANCE.md) for numerical contracts, storage costs,
+benchmark commands and hardware-validation limits; [advanced_api.md](advanced_api.md)
+records extension compatibility notes.

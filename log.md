@@ -205,3 +205,16 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - Added allocation-free, object-safe stored-entry callbacks and an O(n) diagonal matrix-vector kernel for finite inputs, with nonfinite fallback tests. Bounded the remaining Maxwell-Boltzmann postprocessing and advanced payload visits by the operation policy.
 - Engine/model/allocation tests, strict Clippy and warning-free rustdoc passed. Wider parallel force accumulation and architecture-specific hash traversal remain benchmark-led alternatives, rather than unmeasured default changes.
 - Final all-target tests, strict Clippy, formatting and diff checks passed before delivery.
+
+### Batch 7 — reproducible measurements and final review
+
+- Batch 6 pushed as `6c83353`.
+- Added an opt-in dependency-free release benchmark harness covering short/odd/large f32/f64 container kernels, sparse scaling, small/rectangular/large matrix products against an ordered slice reference, transpose, lattice stencils, pairing, complete Euler updates, kinetic summaries, graph replacement, force application and neighbor rebuild/query. It reports five-sample median/min/max at one- and four-thread caps in one application-owned four-worker pool.
+- Final review connected diagonal multiplication to the shared floating SIMD dispatcher and removed the remaining dense copy in public tensor random fills. Current sealed distribution implementations validate before writing; added allocation and error-atomicity checks. Added indexed fill/pair replay comparisons across caller pool sizes.
+- Fixed the benchmark's initially unhandled transpose Result, and changed a new integration test from a private random-slice helper to the public fill_at API. The first complete release suite passed before those small final corrections; rerunning release verification on the final code.
+- Expanded README, advanced extension notes and performance documentation, including new advanced neighbor error variants, stricter validation behavior, additive APIs and force rounding semantics.
+
+- Final verification passed: 64 Rust tests in debug and release, one doctest, all ten Python tests, strict all-target Clippy, warning-free rustdoc, formatting, unchanged regenerated Rust/NumPy fixtures, and diff checks. The benchmark completed with all result assertions passing.
+- Timing identified scheduling costs for allocating scale at 100,003 elements and 128×128 transpose; raised those operations' parallel threshold to 262,144 elements while retaining SIMD, then repeated the benchmark with million-element cases.
+- Rebuilt the final linked SIMD probe; its scale implementations contain packed AVX2 and AVX-512F vmulpd. Executed the host-supported path against references. The original review probe needed its empty-boundary unwrap replaced by a constructor-error check after the intended validation fix; the updated complete probe passed and confirms the recorded allocation reductions and corrected error behavior.
+- Added BENCHMARKS.md and raw local measurement CSV. User clarified that large-data performance is the design priority. Delivering the validated baseline batch before a separate large-data tuning batch concentrating on full-buffer traffic, large particle operations and occupied-cell indexing.

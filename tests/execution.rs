@@ -69,3 +69,41 @@ fn thread_budget_and_custom_failure_are_observable_contracts() {
     });
     physics_in_parallel::threading::set_max_threads(None).unwrap();
 }
+
+#[test]
+fn indexed_sampling_and_pairs_replay_across_caller_pools() {
+    use physics_in_parallel::prelude::basic::*;
+    // This test does not mutate the global cap; the other test may cap jobs,
+    // which must not affect the coordinate-to-sample mapping.
+    let rng = ResolvedRng::new(42, RngMethod::IndexedSplitMix64);
+    let mut reference = None;
+    for threads in [1, 2, 4] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let result = pool.install(|| {
+            let filler = TensorRandFiller::new(
+                RandType::Uniform {
+                    low: -1.0,
+                    high: 2.0,
+                },
+                rng,
+            )
+            .unwrap();
+            let mut values = Tensor::zeros(&[20_003], Backend::Dense).unwrap();
+            filler.fill_at(&mut values, 8, 9).unwrap();
+            let values: Vec<f64> = values.values().collect();
+            let mut pairs =
+                PairGenerator::new(&[7, 8, 9], PairingMethod::IndependentUniform, 10_003, rng)
+                    .unwrap();
+            pairs.refresh_at(11);
+            (values, pairs.targets().values().collect::<Vec<_>>())
+        });
+        if let Some(reference) = &reference {
+            assert_eq!(reference, &result);
+        } else {
+            reference = Some(result);
+        }
+    }
+}

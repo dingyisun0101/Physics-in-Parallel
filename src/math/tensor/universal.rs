@@ -518,7 +518,12 @@ impl<T: Scalar> Tensor<T> {
     pub fn scale(&self, scalar: T) -> Self {
         if let Some(values) = self.dense_values() {
             let mut values = values.to_vec();
-            for_each_chunk_mut(&mut values, 1, |_, chunk| T::scale_slice(chunk, scalar));
+            crate::threading::for_each_chunk_mut_with_minimum(
+                &mut values,
+                1,
+                262_144,
+                |_, chunk| T::scale_slice(chunk, scalar),
+            );
             return Self::from_values_unchecked(self.shape(), Backend::Dense, values);
         }
         self.map_builtin(|value| value * scalar)
@@ -570,13 +575,18 @@ impl<T: Scalar> Tensor<T> {
         }
         let input = self.dense_values().expect("dense backend");
         let mut output = vec![T::zero(); self.size()];
-        for_each_chunk_mut(&mut output, rows, |start, chunk| {
-            for (column, destination) in chunk.chunks_exact_mut(rows).enumerate() {
-                for (row, value) in destination.iter_mut().enumerate() {
-                    *value = function(input[row * columns + start / rows + column]);
+        crate::threading::for_each_chunk_mut_with_minimum(
+            &mut output,
+            rows,
+            262_144,
+            |start, chunk| {
+                for (column, destination) in chunk.chunks_exact_mut(rows).enumerate() {
+                    for (row, value) in destination.iter_mut().enumerate() {
+                        *value = function(input[row * columns + start / rows + column]);
+                    }
                 }
-            }
-        });
+            },
+        );
         Ok(Self::from_values_unchecked(
             &[columns, rows],
             self.backend(),

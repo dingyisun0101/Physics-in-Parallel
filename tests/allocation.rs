@@ -178,3 +178,37 @@ fn force_application_and_pair_replacement_do_not_allocate_dense_scratch() {
     ACTIVE.set(false);
     assert_eq!(COUNT.get(), 0);
 }
+
+#[test]
+fn indexed_dense_random_fill_reuses_storage_and_validates_before_writing() {
+    use physics_in_parallel::prelude::basic::*;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut tensor = Tensor::zeros(&[20_003], Backend::Dense).unwrap();
+        let mut filler = TensorRandFiller::new(
+            RandType::Uniform {
+                low: 0.0,
+                high: 1.0,
+            },
+            ResolvedRng::new(9, RngMethod::IndexedSplitMix64),
+        )
+        .unwrap();
+        filler.fill_at(&mut tensor, 4, 5).unwrap();
+        let expected: Vec<f64> = tensor.values().collect();
+        COUNT.set(0);
+        ACTIVE.set(true);
+        filler.fill_at(&mut tensor, 4, 5).unwrap();
+        ACTIVE.set(false);
+        assert_eq!(COUNT.get(), 0);
+        assert_eq!(tensor.values().collect::<Vec<_>>(), expected);
+        filler.set_kind(RandType::Uniform {
+            low: 2.0,
+            high: 1.0,
+        });
+        assert!(filler.fill_at(&mut tensor, 4, 5).is_err());
+        assert_eq!(tensor.values().collect::<Vec<_>>(), expected);
+    });
+}

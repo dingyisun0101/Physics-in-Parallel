@@ -257,7 +257,9 @@ impl TensorRandFiller {
         parallel_chunk_len(n)
     }
 
-    /// Refreshes tensor values in place.
+    /// Refreshes tensor values in place. Dense storage is reused; sparse output
+    /// stages logical values. Distribution/type errors precede all writes.
+    /// Stateful stream lanes remain independent of the operation thread budget.
     #[inline]
     pub fn fill<T: TensorRandElement>(
         &mut self,
@@ -265,6 +267,9 @@ impl TensorRandFiller {
     ) -> Result<(), TensorRandError> {
         if self.indexed.is_some() {
             return Err(TensorRandError::IndexedStepRequired);
+        }
+        if let Some(values) = tensor.dense_values_mut() {
+            return T::try_fill_slice(self, values);
         }
         let mut values = tensor.values().collect::<Vec<_>>();
         T::try_fill_slice(self, &mut values)?;
@@ -276,13 +281,17 @@ impl TensorRandFiller {
     ///
     /// This operation is available when the filler was constructed with
     /// [`RngMethod::IndexedSplitMix64`]. It retains the tensor's selected
-    /// backend.
+    /// backend. Dense storage is reused without an intermediate copy; sparse
+    /// output stages logical values. Configuration errors leave data unchanged.
     pub fn fill_at<T: TensorRandElement>(
         &self,
         tensor: &mut UniversalTensor<T>,
         step: u64,
         domain: u64,
     ) -> Result<(), TensorRandError> {
+        if let Some(values) = tensor.dense_values_mut() {
+            return self.try_fill_slice_at(values, step, domain);
+        }
         let mut values = tensor.values().collect::<Vec<_>>();
         self.try_fill_slice_at(&mut values, step, domain)?;
         tensor.replace_with_values(values);

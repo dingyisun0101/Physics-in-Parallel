@@ -14,7 +14,8 @@ The user approved implementation, documentation, and a commit/push after each ba
 | 4 | Boundary validation/reuse, lattice stencil and pair generation (F09–F11/S05) | Complete; validated geometry and allocation-stable spatial kernels |
 | 5 | Particle borrows, integration/observables, atomic thermostat, mass ergonomics (F12–F14/S06) | Complete; borrowed dense updates and validated model APIs |
 | 6 | Neighbor geometry/querying, graph edits, structured/force kernels (F15/F16/S07) | Complete; occupied cells, validated graph commits and borrowed force paths |
-| 7 | Benchmarks, complete examples and API documentation, final validation | Pending |
+| 7 | Benchmarks, complete examples and API documentation, final validation | Complete; debug/release/docs/Python and baseline measurements |
+| 8 | Large-data tuning requested by user: memory traffic, million-particle work, occupied-cell indexing | In progress; large throughput takes priority |
 
 The largest recurring cost is rebuilding storage inside APIs that already receive reusable objects. Fixing container traversal, mutation, and execution policy first will improve sampling, pairing, and particle stepping without forcing users onto advanced APIs.
 

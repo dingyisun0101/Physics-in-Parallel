@@ -247,8 +247,14 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
         if let Some(diagonal) = self.backend.diagonal_data()
             && input.iter().all(|value| value.is_finite())
         {
-            for ((out, &coefficient), &value) in output.iter_mut().zip(diagonal).zip(input) {
-                *out = T::zero() + coefficient * value;
+            T::binary_into(
+                diagonal,
+                input,
+                output,
+                crate::math::kernels::BinaryOp::Multiply,
+            );
+            for value in output {
+                *value = T::zero() + *value;
             }
             return Ok(());
         }

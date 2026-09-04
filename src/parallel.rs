@@ -84,12 +84,25 @@ pub(crate) fn for_each_chunk_mut<T: Send, F>(values: &mut [T], row_width: usize,
 where
     F: Fn(usize, &mut [T]) + Send + Sync,
 {
+    for_each_chunk_mut_with_minimum(values, row_width, MIN_PARALLEL_ELEMENTS, function);
+}
+
+/// Uses a kernel-specific threshold when copying/initializing output on the
+/// caller thread makes distributing small buffers more expensive than SIMD.
+pub(crate) fn for_each_chunk_mut_with_minimum<T: Send, F>(
+    values: &mut [T],
+    row_width: usize,
+    minimum: usize,
+    function: F,
+) where
+    F: Fn(usize, &mut [T]) + Send + Sync,
+{
     use rayon::prelude::*;
     assert!(row_width > 0 && values.len().is_multiple_of(row_width));
     let Some(budget) = OperationBudget::capture(values.len() / row_width) else {
         return;
     };
-    if budget.jobs == 1 || values.len() < MIN_PARALLEL_ELEMENTS {
+    if budget.jobs == 1 || values.len() < minimum {
         function(0, values);
     } else {
         let chunk = budget.chunk_len(values.len() / row_width) * row_width;

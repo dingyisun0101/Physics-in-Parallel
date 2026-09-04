@@ -348,6 +348,11 @@ impl<T: Scalar> VectorList<T> {
         self.tensor.fill(value);
     }
 
+    /// Scales each vector by the corresponding factor after validating count.
+    /// Dense storage is updated in place without scratch. Sparse zero-preserving
+    /// scaling visits stored entries with O(stored entries) scratch; factors
+    /// that change implicit zero require O(logical size) traversal. Arithmetic
+    /// panics do not roll back partial updates; length errors leave data intact.
     pub fn scale_vectors(&mut self, scales: &[T]) -> Result<(), VectorListError> {
         if scales.len() != self.num_vectors() {
             return Err(VectorListError::ScaleLength {
@@ -393,7 +398,8 @@ impl<T: Scalar> VectorList<T> {
             .collect()
     }
 
-    /// Returns real-valued norms, allocating only the output vector.
+    /// Returns real-valued norms, allocating the output vector and, for sparse
+    /// storage, ordered stored-entry scratch. No full input copy is made.
     pub fn norms_real(&self) -> Vec<T::Real> {
         self.row_reductions(Scalar::norm_sqr_real)
             .into_iter()
