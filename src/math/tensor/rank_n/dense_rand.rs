@@ -589,6 +589,7 @@ impl TensorRandElement for f64 {
         let Some(chunk_len) = filler.indexed_chunk_len(values.len()) else {
             return Ok(());
         };
+        let prepared = key.prepare(step, domain);
         match filler.kind {
             RandType::Uniform { low, high } => {
                 if !(low.is_finite() && high.is_finite() && low < high) {
@@ -599,16 +600,9 @@ impl TensorRandElement for f64 {
                     .enumerate()
                     .for_each(|(chunk_index, chunk)| {
                         let start = chunk_index * chunk_len;
-                        for (offset, value) in chunk.iter_mut().enumerate() {
-                            let index = start + offset;
-                            let unit = key.unit_f64(
-                                step,
-                                domain,
-                                (index / components) as u64,
-                                (index % components) as u64,
-                                0,
-                            );
-                            *value = low + (high - low) * unit;
+                        prepared.fill_units(chunk, start, components);
+                        for value in chunk {
+                            *value = low + (high - low) * *value;
                         }
                     });
             }
@@ -649,20 +643,9 @@ impl TensorRandElement for f64 {
                     .enumerate()
                     .for_each(|(chunk_index, chunk)| {
                         let start = chunk_index * chunk_len;
-                        for (offset, value) in chunk.iter_mut().enumerate() {
-                            let index = start + offset;
-                            *value = if key.unit_f64(
-                                step,
-                                domain,
-                                (index / components) as u64,
-                                (index % components) as u64,
-                                0,
-                            ) < p
-                            {
-                                1.0
-                            } else {
-                                0.0
-                            };
+                        prepared.fill_units(chunk, start, components);
+                        for value in chunk {
+                            *value = if *value < p { 1.0 } else { 0.0 };
                         }
                     });
             }

@@ -25,3 +25,18 @@ Run the tests with:
 ```bash
 python -m unittest python/test_numpy_support.py
 ```
+
+For already-decoded JSON, call `payload_to_ndarray(payload)`. Both entry points
+accept `max_elements=...`, a nonnegative dense-result element limit checked
+before NumPy allocation. This includes sparse expansion; it does not bound JSON
+parsing memory or Python object sizes.
+
+The helper range-checks signed/unsigned 128-bit integers before creating object
+arrays and checks complex finiteness after narrowing. Lattices lack scalar type
+metadata: integer values infer int64/uint64/object as needed, mixed real values
+become float64, and complex pairs become complex128. Original scalar width
+cannot be recovered. Booleans, malformed numbers and nonfinite values fail.
+
+`fixtures.json` contains Rust-produced documents tested alongside malformed
+variants. Regenerate with `cargo run --example numpy_fixtures > python/fixtures.json`.
+These checks cover supported cases, rather than claiming complete Serde parity.

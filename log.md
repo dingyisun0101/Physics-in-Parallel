@@ -166,3 +166,12 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - Final batch validation: all targets passed in debug; library, math, and allocation regressions passed in release. Strict all-target Clippy, formatting, and warning-free rustdoc passed after the final edits.
 - The repeated release allocation probe reports zero allocations for dense add_into/fill; sparse single-entry scale now requests 156 bytes instead of 800,156 bytes at 100,000 logical elements. Native/PiP integer-root timings are now comparable. These are local probe results, not cross-hardware throughput guarantees.
 - AVX-512F paths compile and have hardware-gated numerical tests. Execution on this AVX2-only host remains unavailable; the initial 128-element threshold needs compatible-hardware benchmarking. Public container APIs and serialized formats remain compatible.
+
+### Batch 3 — indexed randomness and interchange
+
+- Batch 2 pushed as `fd1bc7e`.
+- IndexedRng deserialization now validates the resolved method using its constructor, retaining the transparent format. Tests cover every method.
+- Hoisted seed/step/domain and item prefixes in indexed uniform/Bernoulli fills. Portable independent wrapping arithmetic is available to compiler vectorization; no AVX-512 integer-extension requirement or altered stateful stream lanes. Compared batched values to the original five-coordinate mixer across extreme seeds, split rows and odd lengths.
+- Added public Python decoded-payload adapter and optional dense-result element cap. Validated 128-bit ranges/types, post-conversion complex finiteness, and untagged lattice real/complex values. Added Rust-generated fixtures and malformed variants.
+- Kept JSON parsing and fallible scalar diagnostics unchanged; further explicit SIMD classification depends on profiling parsing versus validation.
+- Validation passed: all Rust targets, strict all-target Clippy, warning-free rustdoc and formatting; all ten NumPy tests executed successfully (none skipped).

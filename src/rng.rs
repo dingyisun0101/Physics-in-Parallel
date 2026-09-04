@@ -147,11 +147,19 @@ impl std::error::Error for RngError {}
 ///
 /// Each value is a pure function of the resolved RNG and the five supplied
 /// coordinates, so results do not depend on Rayon scheduling.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct IndexedRng(ResolvedRng);
 
+impl<'de> Deserialize<'de> for IndexedRng {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(ResolvedRng::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 impl IndexedRng {
+    /// Validates that the resolved method implements indexed randomness.
+    /// Deserialization applies the same validation and retains the wire format.
     pub fn new(rng: ResolvedRng) -> Result<Self, RngError> {
         rng.ensure_supported("IndexedRng", &[RngMethod::IndexedSplitMix64])
             .map(Self)
@@ -209,12 +217,55 @@ impl IndexedRng {
         component: u64,
         draw: u64,
     ) -> u64 {
-        let mut state = splitmix64(self.0.seed ^ 0x6a09_e667_f3bc_c909);
-        for value in [step, domain, item, component, draw] {
-            state = splitmix64(state ^ splitmix64(value.wrapping_add(0x9e37_79b9_7f4a_7c15)));
-        }
-        state
+        self.prepare(step, domain).word(item, component, draw)
     }
+
+    /// Hoists the shared seed, step and domain without changing coordinate mixing.
+    pub(crate) fn prepare(self, step: u64, domain: u64) -> PreparedIndexedRng {
+        let state = splitmix64(self.0.seed ^ 0x6a09_e667_f3bc_c909);
+        PreparedIndexedRng(mix_coordinate(mix_coordinate(state, step), domain))
+    }
+}
+
+/// Operation-local prefix; never serialized or used as a different RNG method.
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedIndexedRng(u64);
+
+impl PreparedIndexedRng {
+    fn word(self, item: u64, component: u64, draw: u64) -> u64 {
+        mix_coordinate(
+            mix_coordinate(mix_coordinate(self.0, item), component),
+            draw,
+        )
+    }
+
+    /// Fills consecutive flattened coordinates, reusing each item's prefix.
+    /// Each result exactly matches IndexedRng::unit_f64 at draw zero. Chunk
+    /// boundaries may split an item; no padding or fixed component count is needed.
+    pub(crate) fn fill_units(self, values: &mut [f64], start: usize, components: usize) {
+        assert!(components > 0);
+        const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
+        let mut item = start / components;
+        let mut component = start % components;
+        let mut rest = values;
+        while !rest.is_empty() {
+            let count = rest.len().min(components - component);
+            let (row, tail) = rest.split_at_mut(count);
+            let prefix = mix_coordinate(self.0, item as u64);
+            for (offset, value) in row.iter_mut().enumerate() {
+                let word = mix_coordinate(mix_coordinate(prefix, (component + offset) as u64), 0);
+                *value = ((word >> 11) as f64) * SCALE;
+            }
+            rest = tail;
+            item += 1;
+            component = 0;
+        }
+    }
+}
+
+#[inline]
+fn mix_coordinate(state: u64, coordinate: u64) -> u64 {
+    splitmix64(state ^ splitmix64(coordinate.wrapping_add(0x9e37_79b9_7f4a_7c15)))
 }
 
 #[inline]
@@ -240,5 +291,65 @@ mod tests {
     fn indexed_rng_rejects_stateful_methods() {
         let error = IndexedRng::new(ResolvedRng::new(3, RngMethod::SmallRng)).unwrap_err();
         assert!(matches!(error, RngError::UnsupportedMethod { .. }));
+    }
+    #[test]
+    fn indexed_deserialization_validates_every_method() {
+        for method in [
+            RngMethod::IndexedSplitMix64,
+            RngMethod::Pcg64,
+            RngMethod::Pcg64Mcg,
+            RngMethod::SmallRng,
+            RngMethod::ChaCha8,
+            RngMethod::ChaCha12,
+            RngMethod::ChaCha20,
+        ] {
+            let resolved = ResolvedRng::new(42, method);
+            let restored =
+                serde_json::from_str::<IndexedRng>(&serde_json::to_string(&resolved).unwrap());
+            assert_eq!(restored.is_ok(), IndexedRng::new(resolved).is_ok());
+            if let Ok(restored) = restored {
+                assert_eq!(restored.resolved_rng(), resolved);
+                assert_eq!(
+                    restored.unit_f64(1, 2, 3, 4, 5),
+                    IndexedRng::new(resolved).unwrap().unit_f64(1, 2, 3, 4, 5)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn batched_words_preserve_original_coordinate_mapping() {
+        fn original(seed: u64, coordinates: [u64; 5]) -> u64 {
+            let mut state = splitmix64(seed ^ 0x6a09_e667_f3bc_c909);
+            for value in coordinates {
+                state = splitmix64(state ^ splitmix64(value.wrapping_add(0x9e37_79b9_7f4a_7c15)));
+            }
+            state
+        }
+        for seed in [0, 42, u64::MAX] {
+            let rng =
+                IndexedRng::new(ResolvedRng::new(seed, RngMethod::IndexedSplitMix64)).unwrap();
+            for components in [1, 2, 3, 8, 17] {
+                for start in [0, 1, 13, 129] {
+                    let mut values = [0.0; 131];
+                    rng.prepare(u64::MAX, 7)
+                        .fill_units(&mut values, start, components);
+                    for (offset, value) in values.into_iter().enumerate() {
+                        let index = start + offset;
+                        let expected = original(
+                            seed,
+                            [
+                                u64::MAX,
+                                7,
+                                (index / components) as u64,
+                                (index % components) as u64,
+                                0,
+                            ],
+                        );
+                        assert_eq!(value, ((expected >> 11) as f64) / ((1_u64 << 53) as f64));
+                    }
+                }
+            }
+        }
     }
 }

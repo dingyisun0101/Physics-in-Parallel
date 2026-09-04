@@ -10,7 +10,7 @@ The user approved implementation, documentation, and a commit/push after each ba
 | --- | --- | --- |
 | 1 | Scalar integer roots, cast semantics, checked derived shapes (F01/F02/S01) | Complete; validated in debug/release |
 | 2 | Reusable dense/sparse container kernels, SIMD, execution budgets, traversal APIs (F03–F05/F07/S02) | Complete; runtime AVX-512F/AVX2 with portable fallback |
-| 3 | Validated RNG, exact batched randomness, Python interchange (F06/F08/S03/S04) | Pending |
+| 3 | Validated RNG, exact batched randomness, Python interchange (F06/F08/S03/S04) | Complete; exact uniform batching and validated adapters |
 | 4 | Boundary validation/reuse, lattice stencil and pair generation (F09–F11/S05) | Pending |
 | 5 | Particle borrows, integration/observables, atomic thermostat, mass ergonomics (F12–F14/S06) | Pending |
 | 6 | Neighbor geometry/querying, graph edits, structured/force kernels (F15/F16/S07) | Pending |

@@ -1,0 +1,63 @@
+[
+  {
+    "backend": "dense",
+    "tensor": {
+      "data": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "kind": "tensor",
+      "scalar": "i64",
+      "shape": [
+        2,
+        2
+      ],
+      "version": 2
+    }
+  },
+  {
+    "backend": "sparse",
+    "tensor": {
+      "indices": [
+        1,
+        3
+      ],
+      "kind": "tensor_sparse",
+      "scalar": "f64",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        2.0,
+        -4.0
+      ],
+      "version": 2
+    }
+  },
+  {
+    "geometry": {
+      "boundary": "periodic",
+      "shape": [
+        2,
+        2
+      ],
+      "spacing": [
+        1.0,
+        1.0
+      ]
+    },
+    "initialization_rng": {
+      "method": "indexed_split_mix64",
+      "seed": 17
+    },
+    "values": [
+      2,
+      1,
+      3,
+      4
+    ]
+  }
+]

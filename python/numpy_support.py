@@ -12,41 +12,58 @@ import numpy as np
 _JSON_SCHEMA_VERSION = 2
 
 
-def to_ndarray(path) -> np.ndarray:
-    """Read one PiP JSON document into a NumPy array."""
+def to_ndarray(path, *, max_elements=None) -> np.ndarray:
+    """Read a PiP JSON file; optionally cap the dense result's element count.
+
+    The cap is checked before NumPy allocation, including sparse expansion.
+    JSON parsing itself still materializes the file. See payload_to_ndarray
+    for decoded-document validation and lattice dtype inference.
+    """
     payload = json.loads(Path(path).read_text())
-    return _payload_to_ndarray(payload)
+    return payload_to_ndarray(payload, max_elements=max_elements)
 
 
-def _payload_to_ndarray(payload) -> np.ndarray:
+def payload_to_ndarray(payload, *, max_elements=None) -> np.ndarray:
+    """Validate a decoded PiP document and return a dense NumPy array.
+
+    Tensor dtypes follow the scalar tag, with checked i128/u128 object arrays.
+    Lattices have no scalar tag: real data uses NumPy numeric inference and
+    [real, imaginary] pairs become complex128. Original scalar width cannot be
+    recovered from a lattice document. Booleans and nonfinite data are rejected.
+    max_elements must be a nonnegative integer or None; it bounds element count,
+    not JSON parsing memory or object-array payload bytes. Errors are ValueError.
+    """
+    if max_elements is not None and (not isinstance(max_elements, int)
+            or isinstance(max_elements, bool) or max_elements < 0):
+        raise ValueError("max_elements must be a nonnegative integer or None")
     if not isinstance(payload, dict):
         raise ValueError("PiP array document must be a JSON object")
 
     if set(payload) == {"backend", "tensor"}:
-        return _universal_tensor_to_ndarray(payload)
+        return _universal_tensor_to_ndarray(payload, max_elements)
     if {"geometry", "values", "initialization_rng"}.issubset(payload):
-        return _lattice_to_ndarray(payload)
+        return _lattice_to_ndarray(payload, max_elements)
     raise ValueError("unsupported PiP 4.0 alpha array document")
 
 
-def _universal_tensor_to_ndarray(payload) -> np.ndarray:
+def _universal_tensor_to_ndarray(payload, max_elements) -> np.ndarray:
     backend = payload["backend"]
     tensor = payload["tensor"]
     if not isinstance(tensor, dict):
         raise ValueError("PiP tensor payload must be a JSON object")
     if backend == "dense":
-        return _dense_tensor_to_ndarray(tensor)
+        return _dense_tensor_to_ndarray(tensor, max_elements)
     if backend == "sparse":
-        return _sparse_tensor_to_ndarray(tensor)
+        return _sparse_tensor_to_ndarray(tensor, max_elements)
     raise ValueError(f"unsupported PiP tensor backend: {backend!r}")
 
 
-def _dense_tensor_to_ndarray(payload) -> np.ndarray:
+def _dense_tensor_to_ndarray(payload, max_elements) -> np.ndarray:
     _require_exact_keys(payload, {"kind", "version", "scalar", "shape", "data"})
     if payload["kind"] != "tensor":
         raise ValueError(f"dense PiP tensor kind must be 'tensor', got {payload['kind']!r}")
     _require_current_version(payload)
-    shape = _normalize_shape(payload["shape"])
+    shape = _normalize_shape(payload["shape"], max_elements)
     array = _numeric_values(payload["data"], payload["scalar"])
     expected = math.prod(shape)
     if array.size != expected:
@@ -54,7 +71,7 @@ def _dense_tensor_to_ndarray(payload) -> np.ndarray:
     return array.reshape(shape)
 
 
-def _sparse_tensor_to_ndarray(payload) -> np.ndarray:
+def _sparse_tensor_to_ndarray(payload, max_elements) -> np.ndarray:
     required = {"kind", "version", "scalar", "shape", "indices", "values"}
     _require_exact_keys(payload, required)
     if payload["kind"] != "tensor_sparse":
@@ -62,7 +79,7 @@ def _sparse_tensor_to_ndarray(payload) -> np.ndarray:
             f"sparse PiP tensor kind must be 'tensor_sparse', got {payload['kind']!r}"
         )
     _require_current_version(payload)
-    shape = _normalize_shape(payload["shape"])
+    shape = _normalize_shape(payload["shape"], max_elements)
     indices = payload["indices"]
     values = payload["values"]
     if not isinstance(indices, list) or not isinstance(values, list):
@@ -90,16 +107,28 @@ def _sparse_tensor_to_ndarray(payload) -> np.ndarray:
     return array.reshape(shape)
 
 
-def _lattice_to_ndarray(payload) -> np.ndarray:
+def _lattice_to_ndarray(payload, max_elements) -> np.ndarray:
     _require_exact_keys(payload, {"geometry", "values", "initialization_rng"})
     geometry = payload["geometry"]
     if not isinstance(geometry, dict) or "shape" not in geometry:
         raise ValueError("PiP lattice geometry must contain shape")
-    shape = _normalize_shape(geometry["shape"])
+    shape = _normalize_shape(geometry["shape"], max_elements)
     values = payload["values"]
     if not isinstance(values, list) or len(values) != math.prod(shape):
         raise ValueError("PiP lattice value count does not match geometry")
-    return np.asarray(values).reshape(shape)
+    if any(isinstance(value, list) for value in values):
+        return _numeric_values(values, "complex_f64").reshape(shape)
+    if not all(_is_finite_number(value) for value in values):
+        raise ValueError("PiP lattice values must contain only finite numbers")
+    if all(isinstance(value, int) for value in values):
+        if any(value < -(1 << 127) or value >= (1 << 128) for value in values):
+            raise ValueError("PiP lattice integer is outside supported 128-bit ranges")
+        # Avoid lossy float inference for mixtures of large signed/unsigned ints.
+        low, high = min(values), max(values)
+        dtype = np.int64 if -(1 << 63) <= low and high < (1 << 63) else (
+            np.uint64 if 0 <= low and high < (1 << 64) else object)
+        return np.asarray(values, dtype=dtype).reshape(shape)
+    return _numeric_values(values, "f64").reshape(shape)
 
 
 def _numeric_values(values, scalar) -> np.ndarray:
@@ -114,7 +143,11 @@ def _numeric_values(values, scalar) -> np.ndarray:
                 raise ValueError(f"invalid PiP complex scalar: {value!r}")
             converted.append(complex(value[0], value[1]))
         dtype = np.complex64 if scalar == "complex_f32" else np.complex128
-        return np.asarray(converted, dtype=dtype)
+        with np.errstate(over="ignore", invalid="ignore"):
+            array = np.asarray(converted, dtype=dtype)
+        if not np.all(np.isfinite(array)):
+            raise ValueError(f"PiP {scalar} values overflow their declared dtype")
+        return array
 
     integer_dtypes = {
         "i8": np.int8, "i16": np.int16, "i32": np.int32, "i64": np.int64,
@@ -130,6 +163,10 @@ def _numeric_values(values, scalar) -> np.ndarray:
                 raise ValueError(f"invalid PiP {scalar} scalar: {value!r}")
         return np.asarray(values, dtype=dtype)
     if scalar in {"i128", "u128"}:
+        low, high = (-(1 << 127), (1 << 127) - 1) if scalar == "i128" else (0, (1 << 128) - 1)
+        if any(not isinstance(value, int) or isinstance(value, bool)
+               or not low <= value <= high for value in values):
+            raise ValueError(f"invalid PiP {scalar} scalar")
         return np.asarray(values, dtype=object)
 
     float_dtypes = {"f32": np.float32, "f64": np.float64}
@@ -137,17 +174,23 @@ def _numeric_values(values, scalar) -> np.ndarray:
         raise ValueError(f"unsupported PiP scalar kind: {scalar!r}")
     if not all(_is_finite_number(value) for value in values):
         raise ValueError(f"PiP {scalar} values must contain only finite numbers")
-    array = np.asarray(values, dtype=float_dtypes[scalar])
+    with np.errstate(over="ignore", invalid="ignore"):
+        array = np.asarray(values, dtype=float_dtypes[scalar])
     if not np.all(np.isfinite(array)):
         raise ValueError(f"PiP {scalar} values overflow their declared dtype")
     return array
 
 
-def _normalize_shape(shape) -> tuple[int, ...]:
+def _normalize_shape(shape, max_elements) -> tuple[int, ...]:
     if (not isinstance(shape, list) or not shape
             or not all(isinstance(value, int) and not isinstance(value, bool) for value in shape)
             or any(value <= 0 for value in shape)):
         raise ValueError(f"invalid PiP shape metadata: {shape!r}")
+    size = math.prod(shape)
+    if size > np.iinfo(np.intp).max:
+        raise ValueError("PiP shape exceeds NumPy signed index capacity")
+    if max_elements is not None and size > max_elements:
+        raise ValueError(f"PiP dense result exceeds max_elements={max_elements}")
     return tuple(shape)
 
 
@@ -165,4 +208,7 @@ def _require_current_version(payload) -> None:
 
 
 def _is_finite_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    try:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
