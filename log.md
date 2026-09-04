@@ -194,3 +194,14 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - Added kinetic_summary for one-pass energy/temperature/count, borrowing dense inputs and preserving ordered serial accumulation. Added set_mass with finite positive mass/reciprocal checks and two-field consistency. Added a complete shared-pool example with acceleration reset, forces, integration, walls, thermostat and observation.
 - Warm allocation regression measures zero allocations for the dense integration/thermostat/built-in-boundary/observation/mass-update sequence. An initial regression reversed create_template's dimension/count arguments; fixed the test setup. Model, execution-budget and allocation tests passed on both supported backends.
 - All targets, strict Clippy, warning-free rustdoc, formatting and the executable simulation example passed before committing.
+
+### Batch 6 — advanced engines
+
+- Batch 5 pushed as `e51efd1`.
+- Neighbor geometry now checks axis/stride/count arithmetic and stores only occupied cells. High-rank stencils use a bounded allocation policy with occupied-cell comparison fallback. A trillion-cell logical grid with three particles is exercised without dense-grid allocation; invalid rebuilds preserve previous buckets.
+- Added particle rebuild-and-query, reusable-output and callback APIs. Dense positions and flags are borrowed; pre-build/count-mismatch queries fail. Documentation requires unchanged positions for the separate fast query and explicitly states nonperiodic raw-distance semantics. Tests compare moved/dead configurations against brute force.
+- Network batch insertion commits validated incoming entries without cloning the existing graph. Stack pair lookup keys avoid allocations while retaining public owned keys and serialization. Initial allocation regression exposed the payload wrapper still forwarding through allocating generic lookup; switched it to native pair lookup.
+- Force paths validate all endpoint/mass errors before direct serial edge accumulation, eliminating dense input copies and full acceleration scratch. Documented the resulting floating-rounding difference from the former temporary-sum approach. Tests verify force balance, rigid selection, validation rollback, and zero allocations for dense force application plus repeated pair replacements.
+- Added allocation-free, object-safe stored-entry callbacks and an O(n) diagonal matrix-vector kernel for finite inputs, with nonfinite fallback tests. Bounded the remaining Maxwell-Boltzmann postprocessing and advanced payload visits by the operation policy.
+- Engine/model/allocation tests, strict Clippy and warning-free rustdoc passed. Wider parallel force accumulation and architecture-specific hash traversal remain benchmark-led alternatives, rather than unmeasured default changes.
+- Final all-target tests, strict Clippy, formatting and diff checks passed before delivery.

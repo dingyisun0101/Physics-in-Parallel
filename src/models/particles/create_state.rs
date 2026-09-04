@@ -246,6 +246,7 @@ pub fn randomize_v(
             values
                 .par_chunks_mut(dim)
                 .zip(m_inv_values.par_iter())
+                .with_min_len(crate::threading::parallel_chunk_len(n).unwrap_or(1))
                 .for_each(|(row, &m_inv_i)| {
                     let sigma = (tau * m_inv_i).sqrt();
                     if sigma == 0.0 {

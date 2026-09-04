@@ -228,6 +228,8 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
     ///
     /// Dense backends read their contiguous row-major storage directly. Other
     /// backends use logical scalar access, preserving their storage semantics.
+    /// Diagonal storage takes O(n) work for finite inputs; nonfinite input
+    /// retains logical zero-product semantics through the general O(n²) path.
     pub fn mul_vector_into(&self, input: &[T], output: &mut [T]) -> Result<(), MatrixError> {
         if input.len() != self.cols() {
             return Err(MatrixError::InputLength {
@@ -240,6 +242,15 @@ impl<T: Scalar, B: MatrixBackend<T>> Matrix<T, B> {
                 expected: self.rows(),
                 actual: output.len(),
             });
+        }
+
+        if let Some(diagonal) = self.backend.diagonal_data()
+            && input.iter().all(|value| value.is_finite())
+        {
+            for ((out, &coefficient), &value) in output.iter_mut().zip(diagonal).zip(input) {
+                *out = T::zero() + coefficient * value;
+            }
+            return Ok(());
         }
 
         if let Some(data) = self.contiguous_data() {

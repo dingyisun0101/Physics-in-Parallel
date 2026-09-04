@@ -86,6 +86,14 @@ pub trait RawStorage<T: Scalar> {
     fn dense_values(&self) -> Option<&[T]>;
     fn dense_values_mut(&mut self) -> Option<&mut [T]>;
     fn stored_entries(&self) -> Vec<(usize, T)>;
+    /// Visits stored entries without allocation in PiP containers. Dense storage
+    /// includes zeros; sparse iteration order is unspecified. Custom implementors
+    /// inherit a collecting fallback and may override it. Remains object-safe.
+    fn for_each_stored_entry(&self, visitor: &mut dyn FnMut(usize, T)) {
+        for (index, value) in self.stored_entries() {
+            visitor(index, value);
+        }
+    }
 }
 
 impl<T: Scalar> RawStorage<T> for Tensor<T> {
@@ -107,6 +115,23 @@ impl<T: Scalar> RawStorage<T> for Tensor<T> {
 
     fn dense_values_mut(&mut self) -> Option<&mut [T]> {
         self.dense_values_mut()
+    }
+
+    fn for_each_stored_entry(&self, visitor: &mut dyn FnMut(usize, T)) {
+        if let Some(entries) = self.sparse_entries() {
+            for (index, value) in entries {
+                visitor(index, value);
+            }
+        } else {
+            for (index, &value) in self
+                .dense_values()
+                .expect("dense backend")
+                .iter()
+                .enumerate()
+            {
+                visitor(index, value);
+            }
+        }
     }
 
     fn stored_entries(&self) -> Vec<(usize, T)> {
@@ -137,6 +162,10 @@ macro_rules! delegate_raw_storage {
 
             fn dense_values_mut(&mut self) -> Option<&mut [T]> {
                 RawStorage::dense_values_mut(self.tensor_mut())
+            }
+
+            fn for_each_stored_entry(&self, visitor: &mut dyn FnMut(usize, T)) {
+                RawStorage::for_each_stored_entry(self.tensor(), visitor);
             }
 
             fn stored_entries(&self) -> Vec<(usize, T)> {

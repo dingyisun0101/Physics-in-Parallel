@@ -63,6 +63,10 @@ impl<T: Scalar> Diagonal<T> {
 }
 
 impl<T: Scalar> MatrixBackend<T> for Diagonal<T> {
+    fn diagonal_data(&self) -> Option<&[T]> {
+        Some(&self.diagonal)
+    }
+
     #[inline]
     fn empty(rows: usize, cols: usize) -> Self {
         assert_eq!(

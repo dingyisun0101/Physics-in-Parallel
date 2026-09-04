@@ -153,3 +153,28 @@ fn dense_particle_step_and_observation_borrow_columns() {
         assert!(result.energy.is_finite());
     });
 }
+
+#[test]
+fn force_application_and_pair_replacement_do_not_allocate_dense_scratch() {
+    use physics_in_parallel::prelude::models::*;
+    let mut particles = create_template(3, 10_000).unwrap();
+    let law = Spring::new(1.0, 1.0, None).unwrap();
+    let mut springs = SpringNetwork::new();
+    springs
+        .insert_many((0..9999).map(|i| ((i, i + 1), law)))
+        .unwrap();
+    springs
+        .apply(&mut particles, ParticleSelection::All)
+        .unwrap();
+    COUNT.set(0);
+    ACTIVE.set(true);
+    for _ in 0..100 {
+        springs.insert((1, 0), law).unwrap();
+        assert!(springs.get((0, 1)).is_some());
+    }
+    springs
+        .apply(&mut particles, ParticleSelection::All)
+        .unwrap();
+    ACTIVE.set(false);
+    assert_eq!(COUNT.get(), 0);
+}

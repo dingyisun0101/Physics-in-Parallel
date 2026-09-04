@@ -11,7 +11,7 @@ use crate::engines::soa::{Interaction, InteractionError};
 use crate::models::laws::{Spring, SpringLawError};
 use crate::models::particles::attrs::{ATTR_A, ATTR_R, ParticleSelection};
 use crate::models::particles::state::{
-    ParticleStateError, gather_inverse_mass, gather_masks, validate_vector_attr_f64,
+    BorrowedMasks, ParticleStateError, mask_labels, validate_scalar_shape, validate_vector_attr_f64,
 };
 
 /// Errors returned by spring-network operations.
@@ -232,16 +232,13 @@ impl SpringNetwork {
             checked.push((pair, law));
         }
 
-        let mut replacement = self.clone();
-        replacement.ensure_particle_bound(needed)?;
-        replacement.springs.reserve(checked.len());
+        self.ensure_particle_bound(needed)?;
+        self.springs.reserve(checked.len());
         for (pair, law) in checked {
-            replacement
-                .springs
+            self.springs
                 .set_pair(pair.0, pair.1, law)
                 .map_err(invariant)?;
         }
-        *self = replacement;
         Ok(())
     }
 
@@ -277,33 +274,46 @@ impl SpringNetwork {
     }
 
     /// Adds Hooke-law acceleration contributions to canonical particle state.
+    /// Accumulates contributions directly in stable edge-slot order after
+    /// validating all endpoints and inverse masses. Dense state needs no full
+    /// scratch. Adding each edge to existing acceleration can round differently
+    /// from summing a temporary contribution column first. Shared destinations
+    /// are updated serially; no per-worker full-system buffers are allocated.
     pub fn apply(
         &self,
         objects: &mut PhysObj,
         selection: ParticleSelection,
     ) -> Result<(), SpringNetworkError> {
-        let (dim, particle_count, positions) = {
-            let positions = objects
-                .core
-                .get::<f64>(ATTR_R)
-                .map_err(ParticleStateError::from)?;
-            (
-                positions.dim(),
-                positions.num_vectors(),
-                positions.logical_values(),
-            )
-        };
+        let positions = objects
+            .core
+            .get::<f64>(ATTR_R)
+            .map_err(ParticleStateError::from)?;
+        let (dim, particle_count) = (positions.dim(), positions.num_vectors());
         validate_vector_attr_f64(objects, ATTR_A, dim, particle_count)?;
-        let inverse_mass = gather_inverse_mass(objects, particle_count)?;
-        let masks = gather_masks(objects, particle_count, selection)?;
+        let flags = mask_labels(objects, selection);
+        let ([positions, mass, output], flags) = objects
+            .core
+            .get_mixed_mut::<f64, u8, 3, 2>(
+                [ATTR_R, super::super::attrs::ATTR_M_INV, ATTR_A],
+                flags,
+            )
+            .map_err(ParticleStateError::from)?;
+        validate_scalar_shape(
+            super::super::attrs::ATTR_M_INV,
+            mass.dim(),
+            mass.num_vectors(),
+            particle_count,
+        )?;
+        let inverse_mass = mass.borrow_values();
+        let positions = positions.borrow_values();
+        let masks = BorrowedMasks::new(flags, particle_count)?;
         for (particle, &value) in inverse_mass.iter().enumerate() {
             if !value.is_finite() || value < 0.0 {
                 return Err(SpringNetworkError::InvalidInverseMass { particle, value });
             }
         }
 
-        let mut acceleration = vec![0.0; particle_count * dim];
-        for ((i, j), law) in self.iter() {
+        for ((i, j), _) in self.iter() {
             for endpoint in [i, j] {
                 if endpoint >= particle_count {
                     return Err(SpringNetworkError::EndpointOutOfBounds {
@@ -312,48 +322,43 @@ impl SpringNetwork {
                     });
                 }
             }
-            if !masks.is_included(selection, i) || !masks.is_included(selection, j) {
-                continue;
-            }
-            let i_base = i * dim;
-            let j_base = j * dim;
-            let norm_squared = (0..dim)
-                .map(|component| {
-                    let delta = positions[i_base + component] - positions[j_base + component];
-                    delta * delta
-                })
-                .sum::<f64>();
-            if !norm_squared.is_finite() || norm_squared <= f64::EPSILON {
-                continue;
-            }
-            let norm = norm_squared.sqrt();
-            if law
-                .cutoff()
-                .is_some_and(|(minimum, maximum)| norm < minimum || norm > maximum)
-            {
-                continue;
-            }
-            let scale = -law.spring_constant() * (norm - law.rest_length()) / norm;
-            let i_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[i]);
-            let j_rigid = masks.rigid.as_ref().is_some_and(|flags| flags[j]);
-            for component in 0..dim {
-                let force = (positions[i_base + component] - positions[j_base + component]) * scale;
-                if !i_rigid {
-                    acceleration[i_base + component] += force * inverse_mass[i];
-                }
-                if !j_rigid {
-                    acceleration[j_base + component] -= force * inverse_mass[j];
-                }
-            }
         }
-
-        let output = objects
-            .core
-            .get_mut::<f64>(ATTR_A)
-            .map_err(ParticleStateError::from)?;
-        output.edit_values(|values| {
-            for (destination, contribution) in values.iter_mut().zip(acceleration) {
-                *destination += contribution;
+        output.edit_values(|acceleration| {
+            for ((i, j), law) in self.iter() {
+                if !masks.alive(i) || !masks.alive(j) {
+                    continue;
+                }
+                let i_base = i * dim;
+                let j_base = j * dim;
+                let norm_squared = (0..dim)
+                    .map(|component| {
+                        let delta = positions[i_base + component] - positions[j_base + component];
+                        delta * delta
+                    })
+                    .sum::<f64>();
+                if !norm_squared.is_finite() || norm_squared <= f64::EPSILON {
+                    continue;
+                }
+                let norm = norm_squared.sqrt();
+                if law
+                    .cutoff()
+                    .is_some_and(|(minimum, maximum)| norm < minimum || norm > maximum)
+                {
+                    continue;
+                }
+                let scale = -law.spring_constant() * (norm - law.rest_length()) / norm;
+                let i_rigid = masks.rigid(i);
+                let j_rigid = masks.rigid(j);
+                for component in 0..dim {
+                    let force =
+                        (positions[i_base + component] - positions[j_base + component]) * scale;
+                    if !i_rigid {
+                        acceleration[i_base + component] += force * inverse_mass[i];
+                    }
+                    if !j_rigid {
+                        acceleration[j_base + component] -= force * inverse_mass[j];
+                    }
+                }
             }
         });
         Ok(())

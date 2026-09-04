@@ -19,10 +19,15 @@ space or model-level code.
 */
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 /// Errors returned by neighbor-list construction and rebuild operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NeighborListError {
+    /// Derived geometry or position size cannot be represented.
+    Capacity { context: &'static str },
+    /// Nonfinite position rejected before changing existing buckets.
+    NonfinitePosition { index: usize },
     /// Cell width is not finite or is not strictly positive.
     InvalidCellWidth {
         /// Requested cell width.
@@ -49,6 +54,12 @@ pub enum NeighborListError {
 impl fmt::Display for NeighborListError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Capacity { context } => {
+                write!(f, "neighbor-list {context} exceeds representable capacity")
+            }
+            Self::NonfinitePosition { index } => {
+                write!(f, "nonfinite position at flat index {index}")
+            }
             Self::InvalidCellWidth { cell_width } => write!(
                 f,
                 "neighbor-list cell width must be finite and positive; got {cell_width}"
@@ -88,11 +99,15 @@ pub struct NeighborList {
     /// Offsets of every same/adjacent cell in `[-1, 0, 1]^dim`.
     neighbor_offsets: Vec<Vec<isize>>,
     /// Object ids stored in each cell.
-    buckets: Vec<Vec<usize>>,
+    buckets: BTreeMap<usize, Vec<usize>>,
+    logical_cells: usize,
 }
 
 impl NeighborList {
-    /// Builds an empty cell-linked list over a rectangular domain.
+    /// Builds a nonperiodic list storing only occupied cells.
+    /// Derived counts/strides are checked before allocation. High-rank grids
+    /// whose stencil exceeds 65,536 offsets compare occupied cells instead;
+    /// that fallback costs O(occupied_cells² × dimension) per query.
     pub fn new(min: &[f64], max: &[f64], cell_width: f64) -> Result<Self, NeighborListError> {
         if !cell_width.is_finite() || cell_width <= 0.0 {
             return Err(NeighborListError::InvalidCellWidth { cell_width });
@@ -117,17 +132,34 @@ impl NeighborList {
                     max: hi,
                 });
             }
-            let n_cells = ((hi - lo) / cell_width).ceil() as usize;
-            cells_per_axis[axis] = n_cells.max(1);
+            let count = ((hi - lo) / cell_width).ceil();
+            if !(hi - lo).is_finite() || !count.is_finite() || count >= isize::MAX as f64 {
+                return Err(NeighborListError::Capacity {
+                    context: "axis cell count",
+                });
+            }
+            cells_per_axis[axis] = (count as usize).max(1);
         }
 
-        let strides = compute_strides(cells_per_axis.as_slice());
-        let n_cells_total = cells_per_axis
-            .iter()
-            .copied()
-            .fold(1usize, |acc, v| acc.saturating_mul(v));
-        let buckets = vec![Vec::new(); n_cells_total];
-        let neighbor_offsets = build_neighbor_offsets(dim);
+        let mut strides = Vec::with_capacity(dim);
+        let mut logical_cells = 1usize;
+        for &count in &cells_per_axis {
+            strides.push(logical_cells);
+            logical_cells =
+                logical_cells
+                    .checked_mul(count)
+                    .ok_or(NeighborListError::Capacity {
+                        context: "cell grid",
+                    })?;
+        }
+        // High ranks use occupied-cell comparisons instead of allocating 3^dim offsets.
+        let stencil_size = (0..dim).try_fold(1usize, |size, _| size.checked_mul(3));
+        let neighbor_offsets = if stencil_size.is_some_and(|size| size <= 65_536) {
+            build_neighbor_offsets(dim)
+        } else {
+            Vec::new()
+        };
+        let buckets = BTreeMap::new();
 
         Ok(Self {
             dim,
@@ -138,6 +170,7 @@ impl NeighborList {
             strides,
             neighbor_offsets,
             buckets,
+            logical_cells,
         })
     }
 
@@ -166,26 +199,28 @@ impl NeighborList {
         self.cells_per_axis.as_slice()
     }
 
-    /// Returns total number of cells.
+    /// Returns the logical grid cell count, including unstored empty cells.
     pub fn num_cells(&self) -> usize {
-        self.buckets.len()
+        self.logical_cells
     }
 
     /// Returns number of objects currently stored across all cells.
     pub fn num_objects(&self) -> usize {
-        self.buckets.iter().map(Vec::len).sum()
+        self.buckets.values().map(Vec::len).sum()
     }
 
     /// Removes all stored object ids while preserving bucket allocation.
     #[inline]
     pub fn clear(&mut self) {
-        for bucket in self.buckets.iter_mut() {
+        for bucket in self.buckets.values_mut() {
             bucket.clear();
         }
     }
 
     /// Rebuilds cell buckets from flat row-major position data.
     ///
+    /// Nonfinite positions and layout errors leave existing buckets unchanged.
+    /// Memory scales with occupied cells and objects, not logical grid size.
     /// `positions` must have length `dim * n_objects`, with object `i` stored at
     /// `positions[i * dim .. (i + 1) * dim]`.
     pub fn rebuild(
@@ -193,7 +228,12 @@ impl NeighborList {
         positions: &[f64],
         n_objects: usize,
     ) -> Result<(), NeighborListError> {
-        let expected_len = self.dim.saturating_mul(n_objects);
+        let expected_len = self
+            .dim
+            .checked_mul(n_objects)
+            .ok_or(NeighborListError::Capacity {
+                context: "position layout",
+            })?;
         if positions.len() != expected_len {
             return Err(NeighborListError::InvalidPositionShape {
                 expected_len,
@@ -201,16 +241,25 @@ impl NeighborList {
             });
         }
 
-        self.clear();
-        let mut coord = vec![0usize; self.dim];
-        for i in 0..n_objects {
-            let i0 = i * self.dim;
-            for axis in 0..self.dim {
-                coord[axis] = self.coord_along_axis(positions[i0 + axis], axis);
-            }
-            let id = self.linear_id(coord.as_slice());
-            self.buckets[id].push(i);
+        if let Some(index) = positions.iter().position(|value| !value.is_finite()) {
+            return Err(NeighborListError::NonfinitePosition { index });
         }
+        let mut previous = std::mem::take(&mut self.buckets);
+        for bucket in previous.values_mut() {
+            bucket.clear();
+        }
+        for (index, row) in positions.chunks_exact(self.dim).enumerate() {
+            let id = row
+                .iter()
+                .enumerate()
+                .map(|(axis, &x)| self.coord_along_axis(x, axis) * self.strides[axis])
+                .sum();
+            self.buckets
+                .entry(id)
+                .or_insert_with(|| previous.remove(&id).unwrap_or_default())
+                .push(index);
+        }
+
         Ok(())
     }
 
@@ -225,13 +274,20 @@ impl NeighborList {
         let mut coord = vec![0usize; self.dim];
         let mut nbr = vec![0usize; self.dim];
 
-        for cell_id in 0..self.buckets.len() {
-            self.coord_from_linear_id(cell_id, coord.as_mut_slice());
-            let cell_objects = &self.buckets[cell_id];
-            if cell_objects.is_empty() {
-                continue;
+        if self.neighbor_offsets.is_empty() {
+            for (&cell_id, objects) in &self.buckets {
+                self.coord_from_linear_id(cell_id, &mut coord);
+                for (&other_id, other) in self.buckets.range(cell_id..) {
+                    self.coord_from_linear_id(other_id, &mut nbr);
+                    if coord.iter().zip(&nbr).all(|(a, b)| a.abs_diff(*b) <= 1) {
+                        emit_pairs(cell_id == other_id, objects, other, &mut f);
+                    }
+                }
             }
-
+            return;
+        }
+        for (&cell_id, cell_objects) in &self.buckets {
+            self.coord_from_linear_id(cell_id, coord.as_mut_slice());
             for off in self.neighbor_offsets.iter() {
                 if !self.try_offset_coord(coord.as_slice(), off.as_slice(), nbr.as_mut_slice()) {
                     continue;
@@ -241,10 +297,9 @@ impl NeighborList {
                     continue;
                 }
 
-                let nbr_objects = &self.buckets[nbr_id];
-                if nbr_objects.is_empty() {
+                let Some(nbr_objects) = self.buckets.get(&nbr_id) else {
                     continue;
-                }
+                };
 
                 if nbr_id == cell_id {
                     for a in 0..cell_objects.len() {
@@ -317,12 +372,12 @@ impl NeighborList {
     }
 }
 
-fn compute_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1usize; shape.len()];
-    for axis in 1..shape.len() {
-        strides[axis] = strides[axis - 1].saturating_mul(shape[axis - 1]);
+fn emit_pairs(same: bool, left: &[usize], right: &[usize], f: &mut impl FnMut(usize, usize)) {
+    for (offset, &i) in left.iter().enumerate() {
+        for &j in if same { &right[offset + 1..] } else { right } {
+            f(i.min(j), i.max(j));
+        }
     }
-    strides
 }
 
 fn build_neighbor_offsets(dim: usize) -> Vec<Vec<isize>> {

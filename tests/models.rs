@@ -193,3 +193,99 @@ fn integrators_mass_and_thermostat_contracts_cover_both_backends() {
         }
     }
 }
+
+#[test]
+fn neighbor_rebuild_queries_match_brute_force_after_motion_and_death() {
+    use physics_in_parallel::prelude::models::*;
+    let mut particles = create_template(2, 12).unwrap();
+    for i in 0..12 {
+        particles
+            .set_attribute_vector(ATTR_R, i, &[i as f64 * 0.31, (i % 3) as f64 * 0.2])
+            .unwrap();
+    }
+    let mut neighbors = ParticleNeighborList::from_box(&[1e6, 1e6], 0.75).unwrap();
+    assert!(
+        neighbors
+            .collect_pairs(&particles, ParticleSelection::All)
+            .is_err()
+    );
+    let mut output = Vec::new();
+    for step in 0..3 {
+        if step > 0 {
+            particles
+                .set_attribute_vector(ATTR_R, step, &[20.0, 20.0])
+                .unwrap();
+            set_alive(&mut particles, 7, false).unwrap();
+        }
+        neighbors
+            .rebuild_and_collect_into(&particles, ParticleSelection::AliveOnly, &mut output)
+            .unwrap();
+        output.sort_unstable();
+        let mut expected = Vec::new();
+        for i in 0..12 {
+            for j in i + 1..12 {
+                if !is_alive(&particles, i).unwrap() || !is_alive(&particles, j).unwrap() {
+                    continue;
+                }
+                let a = particles.attribute_vector::<f64>(ATTR_R, i).unwrap();
+                let b = particles.attribute_vector::<f64>(ATTR_R, j).unwrap();
+                let distance: f64 = a.iter().zip(b).map(|(a, b)| (a - b) * (a - b)).sum();
+                if distance > 0.0 && distance < 0.75 * 0.75 {
+                    expected.push((i, j));
+                }
+            }
+        }
+        assert_eq!(output, expected);
+    }
+}
+
+#[test]
+fn forces_preserve_balance_selection_and_validation_atomicity() {
+    use physics_in_parallel::prelude::models::*;
+    let mut particles = create_template(1, 2).unwrap();
+    particles.set_attribute_vector(ATTR_R, 1, &[2.0]).unwrap();
+    set_mass(&mut particles, 0, 2.0).unwrap();
+    let mut springs = SpringNetwork::new();
+    springs
+        .insert((0, 1), Spring::new(2.0, 1.0, None).unwrap())
+        .unwrap();
+    springs
+        .apply(&mut particles, ParticleSelection::AliveOnly)
+        .unwrap();
+    let a = particles.attribute::<f64>(ATTR_A).unwrap();
+    assert_eq!(a.get(0, 0).unwrap(), 1.0);
+    assert_eq!(a.get(1, 0).unwrap(), -2.0);
+    set_rigid(&mut particles, 0, true).unwrap();
+    springs
+        .apply(&mut particles, ParticleSelection::AliveOnly)
+        .unwrap();
+    assert_eq!(
+        particles
+            .attribute::<f64>(ATTR_A)
+            .unwrap()
+            .get(0, 0)
+            .unwrap(),
+        1.0
+    );
+    let before = particles
+        .attribute::<f64>(ATTR_A)
+        .unwrap()
+        .values()
+        .collect::<Vec<_>>();
+    springs
+        .insert((1, 2), Spring::new(1.0, 1.0, None).unwrap())
+        .unwrap();
+    assert!(
+        springs
+            .apply(&mut particles, ParticleSelection::AliveOnly)
+            .is_err()
+    );
+    assert_eq!(
+        particles
+            .attribute::<f64>(ATTR_A)
+            .unwrap()
+            .values()
+            .collect::<Vec<_>>(),
+        before
+    );
+}

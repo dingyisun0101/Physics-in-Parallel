@@ -116,3 +116,31 @@ stage logical columns. `set_mass` validates and writes mass and inverse mass
 together; rigid flags express fixed bodies. Force routines permit zero inverse
 mass, while thermostats and kinetic observers require positive finite inverse
 mass for included particles. See `examples/basic_particle.rs` for a complete loop.
+
+## Neighbor and force engines
+
+Neighbor lists store occupied cells, with checked logical counts and strides.
+For high ranks, a bounded-stencil policy falls back to comparing occupied cells
+instead of allocating exponentially many offsets. That fallback costs
+O(occupied_cells² × dimension). Nonfinite rebuild inputs fail before mutation.
+Particle queries are nonperiodic and use raw Euclidean distance: wrapping
+positions does not provide minimum-image distances. Prefer
+`rebuild_and_collect_into` to keep candidates fresh and reuse the pair buffer.
+Separate queries require unchanged positions since rebuild; count changes and
+queries before the first rebuild are rejected, but arbitrary position edits
+cannot be detected automatically.
+
+Graph batch insertion validates incoming entries before committing, without
+cloning the existing graph. Pair lookup and replacement use stack lookup keys;
+owned public interaction-node types and serialization remain unchanged.
+`RawStorage::for_each_stored_entry` provides object-safe allocation-free traversal
+for PiP containers, with unspecified sparse order.
+
+Force application validates all masses/endpoints before updating acceleration
+and borrows dense inputs. Edges update shared destinations serially in stable
+slot order. Contributions now add directly to existing acceleration, which can
+round differently from adding a separately summed contribution column. Explicit
+conflict-aware parallel force schemes remain a benchmark-led future choice;
+per-worker full-system buffers are not the default. Diagonal matrix-vector
+products take O(n) for finite inputs; nonfinite input uses the general path to
+preserve implicit-zero products.

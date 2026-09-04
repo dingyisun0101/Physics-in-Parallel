@@ -10,22 +10,7 @@ their own public error types and convert from `ParticleStateError`.
 
 pub use crate::engines::soa::phys_obj::ParticleStateError;
 use crate::engines::soa::phys_obj::PhysObj;
-use crate::models::particles::attrs::{
-    ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ParticleSelection, is_alive_value, is_rigid_value,
-};
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ParticleMasks {
-    pub alive: Option<Vec<bool>>,
-    pub rigid: Option<Vec<bool>>,
-}
-
-impl ParticleMasks {
-    #[inline]
-    pub fn is_included(&self, selection: ParticleSelection, i: usize) -> bool {
-        selection.includes_dead() || self.alive.as_ref().is_none_or(|flags| flags[i])
-    }
-}
+use crate::models::particles::attrs::{ATTR_ALIVE, ATTR_M_INV, ATTR_RIGID, ParticleSelection};
 
 pub(crate) fn validate_vector_attr_f64(
     objects: &PhysObj,
@@ -59,52 +44,6 @@ pub(crate) fn gather_inverse_mass(
     Ok((0..n)
         .map(|i| m_inv.get(i, 0).expect("validated scalar coordinates"))
         .collect())
-}
-
-pub(crate) fn gather_alive_flags(
-    objects: &PhysObj,
-    n: usize,
-    selection: ParticleSelection,
-) -> Result<Option<Vec<bool>>, ParticleStateError> {
-    if selection.includes_dead() || !objects.core.contains(ATTR_ALIVE) {
-        return Ok(None);
-    }
-
-    let alive = objects.core.get::<u8>(ATTR_ALIVE)?;
-    validate_scalar_shape(ATTR_ALIVE, alive.dim(), alive.num_vectors(), n)?;
-    Ok(Some(
-        (0..n)
-            .map(|i| is_alive_value(alive.get(i, 0).expect("validated scalar coordinates")))
-            .collect(),
-    ))
-}
-
-pub(crate) fn gather_rigid_flags(
-    objects: &PhysObj,
-    n: usize,
-) -> Result<Option<Vec<bool>>, ParticleStateError> {
-    if !objects.core.contains(ATTR_RIGID) {
-        return Ok(None);
-    }
-
-    let rigid = objects.core.get::<u8>(ATTR_RIGID)?;
-    validate_scalar_shape(ATTR_RIGID, rigid.dim(), rigid.num_vectors(), n)?;
-    Ok(Some(
-        (0..n)
-            .map(|i| is_rigid_value(rigid.get(i, 0).expect("validated scalar coordinates")))
-            .collect(),
-    ))
-}
-
-pub(crate) fn gather_masks(
-    objects: &PhysObj,
-    n: usize,
-    selection: ParticleSelection,
-) -> Result<ParticleMasks, ParticleStateError> {
-    Ok(ParticleMasks {
-        alive: gather_alive_flags(objects, n, selection)?,
-        rigid: gather_rigid_flags(objects, n)?,
-    })
 }
 
 #[inline]
@@ -162,6 +101,9 @@ impl<'a> BorrowedMasks<'a> {
     }
     pub(crate) fn alive(&self, index: usize) -> bool {
         self.alive.as_ref().is_none_or(|flags| flags[index] != 0)
+    }
+    pub(crate) fn rigid(&self, index: usize) -> bool {
+        self.rigid.as_ref().is_some_and(|flags| flags[index] != 0)
     }
     pub(crate) fn should_skip(&self, index: usize) -> bool {
         !self.alive(index) || self.rigid.as_ref().is_some_and(|flags| flags[index] != 0)

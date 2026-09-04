@@ -60,6 +60,13 @@ pub trait MatrixBackend<T: Scalar>: Send + Sync + Clone {
         None
     }
 
+    /// Borrows diagonal coefficients for a diagonal-only backend.
+    /// The default preserves existing custom backends. Consumers must still
+    /// evaluate implicit products when nonfinite input values require them.
+    fn diagonal_data(&self) -> Option<&[T]> {
+        None
+    }
+
     /// Return `[rows, cols]`.
     #[inline]
     fn shape(&self) -> [usize; 2] {

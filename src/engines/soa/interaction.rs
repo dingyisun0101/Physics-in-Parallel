@@ -54,6 +54,12 @@ pub struct InteractionNodes {
     pub nodes: Box<[ObjId]>,
 }
 
+impl std::borrow::Borrow<[ObjId]> for InteractionNodes {
+    fn borrow(&self) -> &[ObjId] {
+        &self.nodes
+    }
+}
+
 impl InteractionNodes {
     /// Builds an owned interaction-node list from object indices.
     pub fn from_slice(nodes: &[ObjId]) -> Self {
@@ -497,12 +503,21 @@ impl InteractionTopology {
         i: ObjId,
         j: ObjId,
     ) -> Result<Option<InteractionId>, InteractionError> {
-        let nodes = self.nodes_from_pair(i, j)?;
-        Ok(self.id_of_nodes.get(&nodes).copied())
+        self.validate_obj(i)?;
+        self.validate_obj(j)?;
+        let nodes = if self.order == InteractionOrder::Unordered && j < i {
+            [j, i]
+        } else {
+            [i, j]
+        };
+        Ok(self.id_of_nodes.get(nodes.as_slice()).copied())
     }
 
     /// Convenience pair add helper.
     pub fn add_pair(&mut self, i: ObjId, j: ObjId) -> Result<InteractionId, InteractionError> {
+        if let Some(id) = self.id_of_pair(i, j)? {
+            return Ok(id);
+        }
         let nodes = self.nodes_from_pair(i, j)?;
         Ok(self.add_nodes(nodes))
     }
@@ -666,11 +681,15 @@ impl<T> PayloadStore<T> {
         T: Sync,
         F: Fn(InteractionId, &T) + Send + Sync,
     {
-        self.slots.par_iter().enumerate().for_each(|(id, slot)| {
-            if let Some(payload) = slot.as_ref() {
-                f(id, payload);
-            }
-        });
+        self.slots
+            .par_iter()
+            .with_min_len(crate::threading::parallel_chunk_len(self.slots.len()).unwrap_or(1))
+            .enumerate()
+            .for_each(|(id, slot)| {
+                if let Some(payload) = slot.as_ref() {
+                    f(id, payload);
+                }
+            });
     }
 
     /// Parallel mutable visit over active payloads.
@@ -679,8 +698,10 @@ impl<T> PayloadStore<T> {
         T: Send,
         F: Fn(InteractionId, &mut T) + Send + Sync,
     {
+        let chunk = crate::threading::parallel_chunk_len(self.slots.len()).unwrap_or(1);
         self.slots
             .par_iter_mut()
+            .with_min_len(chunk)
             .enumerate()
             .for_each(|(id, slot)| {
                 if let Some(payload) = slot.as_mut() {
@@ -854,12 +875,18 @@ impl<T> Interaction<T> {
 
     /// Returns immutable payload reference by pair.
     pub fn get_pair(&self, i: ObjId, j: ObjId) -> Result<Option<&T>, InteractionError> {
-        self.get(&[i, j])
+        Ok(self
+            .topology
+            .id_of_pair(i, j)?
+            .and_then(|id| self.payloads.get(id)))
     }
 
     /// Returns mutable payload reference by pair.
     pub fn get_pair_mut(&mut self, i: ObjId, j: ObjId) -> Result<Option<&mut T>, InteractionError> {
-        self.get_mut(&[i, j])
+        Ok(self
+            .topology
+            .id_of_pair(i, j)?
+            .and_then(|id| self.payloads.get_mut(id)))
     }
 
     /// Removes one pair payload.
