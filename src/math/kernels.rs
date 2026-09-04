@@ -132,6 +132,11 @@ macro_rules! owned_scale {
 owned_scale!(f32, scaled_f32, copy_scale_f32, copy_scale_f32_512);
 owned_scale!(f64, scaled_f64, copy_scale_f64, copy_scale_f64_512);
 
+// Keep backend comparisons under tests without exposing private SIMD entry points.
+#[cfg(test)]
+#[path = "../../tests/simd/mod.rs"]
+mod simd;
+
 /// Flat all-active Euler update. Selection remains outside this kernel; each
 /// component uses separate multiplication and addition, preserving old velocity
 /// for explicit Euler. No padding, packing or extra particle buffers are needed.

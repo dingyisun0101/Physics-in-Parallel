@@ -179,6 +179,11 @@ See [the performance guide](PERFORMANCE.md) for SIMD dispatch (including optiona
 AVX-512F), numerical ordering, reusable output APIs, sparse costs, and validation.
 SIMD selection is internal and never changes the public mathematical types.
 
+Run `bash tests/run_simd.sh --timings` to compare every explicit SIMD kernel
+across scalar, AVX2, and AVX-512 implementations, with correctness summaries and
+timings printed to the terminal and saved under `target/simd-results`.
+See [the SIMD test guide](tests/SIMD.md) for coverage and measurement details.
+
 ## Efficient simulation loops
 
 Run `cargo run --release --example basic_particle` for a complete loop using one
