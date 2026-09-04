@@ -99,6 +99,15 @@ impl<'a> BorrowedMasks<'a> {
             rigid: flags[1].map(|flag| flag.borrow_values()),
         })
     }
+    pub(crate) fn all_active_in(&self, start: usize, end: usize) -> bool {
+        self.alive
+            .as_ref()
+            .is_none_or(|flags| flags[start..end].iter().all(|&flag| flag != 0))
+            && self
+                .rigid
+                .as_ref()
+                .is_none_or(|flags| flags[start..end].iter().all(|&flag| flag == 0))
+    }
     pub(crate) fn alive(&self, index: usize) -> bool {
         self.alive.as_ref().is_none_or(|flags| flags[index] != 0)
     }

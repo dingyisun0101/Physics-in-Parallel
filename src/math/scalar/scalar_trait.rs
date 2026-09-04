@@ -51,6 +51,13 @@ pub(crate) mod scalar_sealed {
             }
         }
 
+        fn scaled_values(input: &[Self], scalar: Self) -> Vec<Self>
+        where
+            Self: super::Scalar,
+        {
+            input.iter().map(|&value| value * scalar).collect()
+        }
+
         fn scale_slice(values: &mut [Self], scalar: Self)
         where
             Self: super::Scalar,

@@ -8,7 +8,8 @@ explicit and serialization retains the selected representation.
 ## SIMD and portability
 
 Dense `f32` and `f64` elementwise add/subtract/multiply/divide and scalar scaling
-use runtime CPU detection on x86 and x86-64. Chunks of at least 128 elements may
+use runtime CPU detection on x86 and x86-64. Fully active f64 Euler
+updates use the same feature dispatch across flat component blocks. Chunks of at least 128 elements may
 use AVX-512F; otherwise chunks of at least 32 may use AVX2. These are initial
 dispatch thresholds, not a promise that the widest instruction set is fastest
 on every processor. Feature detection includes the operating system's support
@@ -45,6 +46,10 @@ indexed randomness guarantees do not imply a global bitwise-reproducibility
 guarantee for every floating operation.
 
 ## Reusing storage
+
+Allocating floating scale initializes its result in one source-to-output pass,
+with workers writing disjoint chunks. It performs no full-buffer clone or zero
+initialization before scaling.
 
 Dense `fill`, `map_in_place`, elementwise `*_into`, and `matmul_into` retain
 the destination allocation. Shape validation happens before mutation. Arithmetic
@@ -110,8 +115,11 @@ Failures preserve velocities and the thermostat counter. Custom boundaries stage
 both position and velocity unless they explicitly promise infallibility after
 shape validation; external callback side effects are outside this guarantee.
 
-`kinetic_summary` computes energy, temperature and population together in ordered
-serial accumulation, with no dense input copies. Sparse model updates may still
+`kinetic_summary` computes energy, temperature and population together with no
+dense input copies. Up to 16,384 particles use one ordered pass. Larger inputs
+use fixed 16,384-particle blocks and combine block results in order, with bounded
+parallelism and O(particles / 16,384) scratch. The grouping is independent of
+thread count but can round differently from a single sequential reduction. Sparse model updates may still
 stage logical columns. `set_mass` validates and writes mass and inverse mass
 together; rigid flags express fixed bodies. Force routines permit zero inverse
 mass, while thermostats and kinetic observers require positive finite inverse
@@ -120,6 +128,11 @@ mass for included particles. See `examples/basic_particle.rs` for a complete loo
 ## Neighbor and force engines
 
 Neighbor lists store occupied cells, with checked logical counts and strides.
+Particle/cell records are sorted in reusable contiguous storage; compact cell
+ranges and a hash index replace individual cell vectors. Rebuild costs
+O(n log n) worst-case and allocates no particle-dependent storage after capacity
+is warmed. Hash iteration never determines pair order. Queries retain only two
+dimension-sized coordinate buffers in addition to caller-owned output.
 For high ranks, a bounded-stencil policy falls back to comparing occupied cells
 instead of allocating exponentially many offsets. That fallback costs
 O(occupied_cells² × dimension). Nonfinite rebuild inputs fail before mutation.
@@ -151,5 +164,12 @@ Large-data throughput and memory use are the primary targets. See
 [BENCHMARKS.md](BENCHMARKS.md) for the opt-in harness, recorded measurements and
 allocation comparisons. Elementwise SIMD operates independently of thread count.
 Allocating scale and transpose currently wait until 262,144 elements before
-splitting work across workers, following observed overhead on smaller buffers.
+splitting work across workers. The scale kernel initializes fresh output in
+worker chunks, avoiding the earlier copy-then-distribute cost at large sizes.
 Thresholds are implementation choices and remain subject to large-data evidence.
+
+Fully active particle masks are detected inside each Euler worker chunk,
+allowing contiguous SIMD across particle boundaries without a serial full-mask
+prepass. Chunks containing mixed alive/rigid selections retain the validated row
+path. Runtime AVX-512 remains available without changing the
+interleaved layout or requiring 3D-vector padding.

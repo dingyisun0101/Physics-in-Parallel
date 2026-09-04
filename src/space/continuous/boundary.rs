@@ -160,11 +160,7 @@ fn validate_bounds(min: &[f64], max: &[f64]) -> Result<(), BoundaryError> {
         });
     }
     for d in 0..min.len() {
-        if !min[d].is_finite()
-            || !max[d].is_finite()
-            || max[d] <= min[d]
-            || !(max[d] - min[d]).is_finite()
-        {
+        if !min[d].is_finite() || !max[d].is_finite() || max[d] <= min[d] {
             return Err(BoundaryError::InvalidBounds {
                 axis: d,
                 min: min[d],
@@ -217,6 +213,15 @@ impl PeriodicBox {
     /// periodic boundary identifies opposite faces of the same physical space.
     pub fn new(min: &[f64], max: &[f64]) -> Result<Self, BoundaryError> {
         validate_bounds(min, max)?;
+        for axis in 0..min.len() {
+            if !(max[axis] - min[axis]).is_finite() {
+                return Err(BoundaryError::InvalidBounds {
+                    axis,
+                    min: min[axis],
+                    max: max[axis],
+                });
+            }
+        }
         Ok(Self {
             min: min.to_vec(),
             max: max.to_vec(),

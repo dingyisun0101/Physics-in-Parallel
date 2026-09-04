@@ -517,13 +517,7 @@ impl<T: Scalar> Tensor<T> {
     /// entries) when zero maps to zero; otherwise it visits all logical values.
     pub fn scale(&self, scalar: T) -> Self {
         if let Some(values) = self.dense_values() {
-            let mut values = values.to_vec();
-            crate::threading::for_each_chunk_mut_with_minimum(
-                &mut values,
-                1,
-                262_144,
-                |_, chunk| T::scale_slice(chunk, scalar),
-            );
+            let values = T::scaled_values(values, scalar);
             return Self::from_values_unchecked(self.shape(), Backend::Dense, values);
         }
         self.map_builtin(|value| value * scalar)

@@ -112,6 +112,16 @@ fn apply_euler(objects: &mut PhysObj, dt: f64, semi_implicit: bool) -> Result<()
                 velocities,
                 dim,
                 |start, positions, velocities| {
+                    if masks.all_active_in(start / dim, (start + positions.len()) / dim) {
+                        crate::math::kernels::euler_f64(
+                            positions,
+                            velocities,
+                            &acceleration[start..start + positions.len()],
+                            dt,
+                            semi_implicit,
+                        );
+                        return Ok(());
+                    }
                     for (row, (r, v)) in positions
                         .chunks_exact_mut(dim)
                         .zip(velocities.chunks_exact_mut(dim))

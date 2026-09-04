@@ -154,6 +154,67 @@ fn spatial_and_models() {
     assert_eq!(output_pairs.len(), 9999);
 }
 
+fn large_workloads() {
+    for size in [1_000_003, 10_000_003] {
+        let a = Tensor::filled(&[size], Backend::Dense, 1.25_f64).unwrap();
+        let b = Tensor::filled(&[size], Backend::Dense, 2.5_f64).unwrap();
+        let mut out = a.clone();
+        measure(&format!("large_f64_add_into_{size}"), 3, || {
+            a.add_into(black_box(&b), black_box(&mut out)).unwrap();
+        });
+        assert_eq!(out.get(&[size - 1]).unwrap(), 3.75);
+        measure(&format!("large_f64_scale_allocating_{size}"), 3, || {
+            black_box(a.scale(black_box(1.5)));
+        });
+    }
+    let size = 512;
+    let a = Matrix::filled(size, size, Backend::Dense, 0.25_f64).unwrap();
+    let b = Matrix::filled(size, size, Backend::Dense, 0.5_f64).unwrap();
+    let mut product = Matrix::zeros(size, size, Backend::Dense).unwrap();
+    measure("large_matmul_512", 1, || {
+        a.matmul_into(black_box(&b), black_box(&mut product))
+            .unwrap();
+    });
+    assert!(product.values().all(|value| value == 64.0));
+    let lattice = SquareLatticeGeometry::periodic(&[2048, 2048]).unwrap();
+    let input = vec![2.0; lattice.num_sites()];
+    let mut output = vec![0.0; input.len()];
+    measure("large_laplacian_2048x2048", 3, || {
+        lattice
+            .laplacian(black_box(&input), 1, black_box(&mut output))
+            .unwrap();
+    });
+    assert!(output.iter().all(|value| *value == 0.0));
+    drop(input);
+    drop(output);
+    let mut particles = create_template(3, 1_000_000).unwrap();
+    particles.attribute_mut::<f64>(ATTR_V).unwrap().fill(0.25);
+    particles.attribute_mut::<f64>(ATTR_A).unwrap().fill(0.5);
+    measure("large_euler_1000000x3", 5, || {
+        ExplicitEuler
+            .apply(black_box(&mut particles), 0.001)
+            .unwrap();
+    });
+    measure("large_kinetic_1000000x3", 5, || {
+        black_box(kinetic_summary(black_box(&particles), ParticleSelection::AliveOnly).unwrap());
+    });
+    drop(particles);
+    let mut particles = create_template(3, 250_000).unwrap();
+    for i in 0..250_000 {
+        particles
+            .set_attribute_vector(ATTR_R, i, &[i as f64 * 0.01, 0.0, 0.0])
+            .unwrap();
+    }
+    let mut neighbors = ParticleNeighborList::from_box(&[3000.0; 3], 0.011).unwrap();
+    let mut pairs = Vec::new();
+    measure("large_neighbors_250000", 1, || {
+        neighbors
+            .rebuild_and_collect_into(&particles, ParticleSelection::AliveOnly, &mut pairs)
+            .unwrap();
+    });
+    assert_eq!(pairs.len(), 249_999);
+}
+
 fn main() {
     if !std::env::args().any(|argument| argument == "--run") {
         println!("Pass --run to execute timing workloads.");
@@ -174,8 +235,12 @@ fn main() {
         set_max_threads(Some(cap)).unwrap();
         println!("# caller_pool=4,pip_cap={cap}");
         pool.install(|| {
-            containers();
-            spatial_and_models();
+            if std::env::args().any(|argument| argument == "--large") {
+                large_workloads();
+            } else {
+                containers();
+                spatial_and_models();
+            }
         });
     }
     set_max_threads(None).unwrap();

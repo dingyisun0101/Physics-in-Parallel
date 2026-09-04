@@ -23,8 +23,11 @@ impl_sealed_for!(
 );
 
 macro_rules! impl_float_kernels {
-    ($ty:ty, $binary:ident, $scale:ident) => {
+    ($ty:ty, $binary:ident, $scale:ident, $owned:ident) => {
         impl Sealed for $ty {
+            fn scaled_values(input: &[Self], scalar: Self) -> Vec<Self> {
+                crate::math::kernels::$owned(input, scalar)
+            }
             fn binary_into(
                 left: &[Self],
                 right: &[Self],
@@ -39,8 +42,8 @@ macro_rules! impl_float_kernels {
         }
     };
 }
-impl_float_kernels!(f32, binary_f32, scale_f32);
-impl_float_kernels!(f64, binary_f64, scale_f64);
+impl_float_kernels!(f32, binary_f32, scale_f32, scaled_f32);
+impl_float_kernels!(f64, binary_f64, scale_f64, scaled_f64);
 
 impl Scalar for f32 {
     type Real = f32;

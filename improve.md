@@ -15,7 +15,7 @@ The user approved implementation, documentation, and a commit/push after each ba
 | 5 | Particle borrows, integration/observables, atomic thermostat, mass ergonomics (F12–F14/S06) | Complete; borrowed dense updates and validated model APIs |
 | 6 | Neighbor geometry/querying, graph edits, structured/force kernels (F15/F16/S07) | Complete; occupied cells, validated graph commits and borrowed force paths |
 | 7 | Benchmarks, complete examples and API documentation, final validation | Complete; debug/release/docs/Python and baseline measurements |
-| 8 | Large-data tuning requested by user: memory traffic, million-particle work, occupied-cell indexing | In progress; large throughput takes priority |
+| 8 | Large-data tuning requested by user: memory traffic, million-particle work, occupied-cell indexing | Complete; large parallel measurements and validation recorded |
 
 The largest recurring cost is rebuilding storage inside APIs that already receive reusable objects. Fixing container traversal, mutation, and execution policy first will improve sampling, pairing, and particle stepping without forcing users onto advanced APIs.
 
@@ -265,3 +265,21 @@ For each layer, land its focused correctness regressions, then measure represent
 Every public expensive operation should state time complexity, temporary memory, result backend, output reuse, and error-mutation behavior. Those details are currently uneven despite the README directing users to complexity sections. New examples should be compile-checked and show the basic/model API before advanced escape hatches.
 
 Baseline verification passed: **41 Rust unit/integration tests**, **one doctest**, **six Python tests**, and `cargo fmt --all -- --check`. The disposable probes demonstrated defects not covered by that baseline. Allocation measurements count requested bytes, not peak resident memory. The scalar timing is a local microbenchmark; other proposed speedups remain unmeasured. The separate workflow review has not started.
+
+## Large-data priority and measured implementation
+
+Large-data throughput and memory use are the primary design targets, per the
+user's clarification. Batch 8 fuses allocating floating scale, uses SIMD over
+active Euler chunks, parallelizes fixed kinetic reduction blocks, and replaces
+per-cell neighbor allocations with reusable sorted records and hash indexing.
+[Benchmark commands, full raw ranges and before/after comparisons](BENCHMARKS.md)
+cover ten-million-element buffers and million-particle operations. Small-case
+benchmarks remain secondary overhead checks. AVX-512F kernels compile and have
+hardware-gated tests, but this host only validates AVX2 execution.
+
+The implementation retains measured or semantically constrained fallbacks:
+ordered reductions, general sparse maps/division, nonfinite structured products,
+custom fallible boundaries and serial conflict-prone force accumulation. Future
+force packing/parallel scatter, complex SIMD, transcendental approximations and
+transpose tiling require separate measurements and numerical contracts; they
+are not represented as implemented optimizations in this pass.

@@ -78,6 +78,10 @@ fn boundary_geometry_and_reflection_parity() {
     assert!(PeriodicBox::new(&[], &[]).is_err());
     assert!(PeriodicBox::new(&[-f64::MAX], &[f64::MAX]).is_err());
     assert!(ReflectBox::new(&[0.0], &[f64::MAX]).is_err());
+    let clamp = physics_in_parallel::space::ClampBox::new(&[-f64::MAX], &[f64::MAX]).unwrap();
+    let mut position = [0.0];
+    clamp.apply_position(&mut position).unwrap();
+    assert_eq!(position, [0.0]);
     let boundary = ReflectBox::new(&[0.0], &[1.0]).unwrap();
     for (input, expected, sign) in [
         (-3.0, 1.0, -1.0),

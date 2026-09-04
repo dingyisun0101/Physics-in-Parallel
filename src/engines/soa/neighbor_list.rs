@@ -18,8 +18,9 @@ The list is non-periodic; periodic or reflective boundary policies belong in
 space or model-level code.
 */
 
+use ahash::AHashMap;
 use core::fmt;
-use std::collections::BTreeMap;
+use std::ops::Range;
 
 /// Errors returned by neighbor-list construction and rebuild operations.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,8 +99,12 @@ pub struct NeighborList {
     strides: Vec<usize>,
     /// Offsets of every same/adjacent cell in `[-1, 0, 1]^dim`.
     neighbor_offsets: Vec<Vec<isize>>,
-    /// Object ids stored in each cell.
-    buckets: BTreeMap<usize, Vec<usize>>,
+    /// Contiguous (cell id, object id) records, sorted by both keys.
+    occupants: Vec<(usize, usize)>,
+    /// Sorted occupied cell ids and ranges into occupants.
+    cells: Vec<(usize, Range<usize>)>,
+    /// Hash lookup into sorted cell metadata; never determines visitation order.
+    cell_index: AHashMap<usize, usize>,
     logical_cells: usize,
 }
 
@@ -159,7 +164,6 @@ impl NeighborList {
         } else {
             Vec::new()
         };
-        let buckets = BTreeMap::new();
 
         Ok(Self {
             dim,
@@ -169,7 +173,9 @@ impl NeighborList {
             cells_per_axis,
             strides,
             neighbor_offsets,
-            buckets,
+            occupants: Vec::new(),
+            cells: Vec::new(),
+            cell_index: AHashMap::new(),
             logical_cells,
         })
     }
@@ -206,21 +212,24 @@ impl NeighborList {
 
     /// Returns number of objects currently stored across all cells.
     pub fn num_objects(&self) -> usize {
-        self.buckets.values().map(Vec::len).sum()
+        self.occupants.len()
     }
 
-    /// Removes all stored object ids while preserving bucket allocation.
+    /// Removes all stored ids while retaining contiguous buffers and hash capacity.
     #[inline]
     pub fn clear(&mut self) {
-        for bucket in self.buckets.values_mut() {
-            bucket.clear();
-        }
+        self.occupants.clear();
+        self.cells.clear();
+        self.cell_index.clear();
     }
 
     /// Rebuilds cell buckets from flat row-major position data.
     ///
     /// Nonfinite positions and layout errors leave existing buckets unchanged.
     /// Memory scales with occupied cells and objects, not logical grid size.
+    /// Records are sorted in reusable contiguous storage; no per-cell vector is
+    /// allocated. Rebuild costs O(n log n) worst-case, with retained capacity.
+    /// Hash lookup accelerates queries while sorted records retain pair order.
     /// `positions` must have length `dim * n_objects`, with object `i` stored at
     /// `positions[i * dim .. (i + 1) * dim]`.
     pub fn rebuild(
@@ -244,20 +253,30 @@ impl NeighborList {
         if let Some(index) = positions.iter().position(|value| !value.is_finite()) {
             return Err(NeighborListError::NonfinitePosition { index });
         }
-        let mut previous = std::mem::take(&mut self.buckets);
-        for bucket in previous.values_mut() {
-            bucket.clear();
-        }
+        self.clear();
+        self.occupants.reserve(n_objects);
         for (index, row) in positions.chunks_exact(self.dim).enumerate() {
             let id = row
                 .iter()
                 .enumerate()
                 .map(|(axis, &x)| self.coord_along_axis(x, axis) * self.strides[axis])
                 .sum();
-            self.buckets
-                .entry(id)
-                .or_insert_with(|| previous.remove(&id).unwrap_or_default())
-                .push(index);
+            self.occupants.push((id, index));
+        }
+        self.occupants.sort_unstable();
+        let mut start = 0;
+        while start < self.occupants.len() {
+            let id = self.occupants[start].0;
+            let mut end = start + 1;
+            while end < self.occupants.len() && self.occupants[end].0 == id {
+                end += 1;
+            }
+            self.cells.push((id, start..end));
+            start = end;
+        }
+        self.cell_index.reserve(self.cells.len());
+        for (index, (id, _)) in self.cells.iter().enumerate() {
+            self.cell_index.insert(*id, index);
         }
 
         Ok(())
@@ -274,47 +293,38 @@ impl NeighborList {
         let mut coord = vec![0usize; self.dim];
         let mut nbr = vec![0usize; self.dim];
 
-        if self.neighbor_offsets.is_empty() {
-            for (&cell_id, objects) in &self.buckets {
-                self.coord_from_linear_id(cell_id, &mut coord);
-                for (&other_id, other) in self.buckets.range(cell_id..) {
-                    self.coord_from_linear_id(other_id, &mut nbr);
+        for (cell_index, (cell_id, range)) in self.cells.iter().enumerate() {
+            self.coord_from_linear_id(*cell_id, &mut coord);
+            let objects = &self.occupants[range.clone()];
+            if self.neighbor_offsets.is_empty() {
+                for (other_id, other_range) in &self.cells[cell_index..] {
+                    self.coord_from_linear_id(*other_id, &mut nbr);
                     if coord.iter().zip(&nbr).all(|(a, b)| a.abs_diff(*b) <= 1) {
-                        emit_pairs(cell_id == other_id, objects, other, &mut f);
+                        emit_pairs(
+                            cell_id == other_id,
+                            objects,
+                            &self.occupants[other_range.clone()],
+                            &mut f,
+                        );
                     }
                 }
-            }
-            return;
-        }
-        for (&cell_id, cell_objects) in &self.buckets {
-            self.coord_from_linear_id(cell_id, coord.as_mut_slice());
-            for off in self.neighbor_offsets.iter() {
-                if !self.try_offset_coord(coord.as_slice(), off.as_slice(), nbr.as_mut_slice()) {
-                    continue;
-                }
-                let nbr_id = self.linear_id(nbr.as_slice());
-                if nbr_id < cell_id {
-                    continue;
-                }
-
-                let Some(nbr_objects) = self.buckets.get(&nbr_id) else {
-                    continue;
-                };
-
-                if nbr_id == cell_id {
-                    for a in 0..cell_objects.len() {
-                        for b in (a + 1)..cell_objects.len() {
-                            f(cell_objects[a], cell_objects[b]);
-                        }
+            } else {
+                for offset in &self.neighbor_offsets {
+                    if !self.try_offset_coord(&coord, offset, &mut nbr) {
+                        continue;
                     }
-                } else {
-                    for &i in cell_objects {
-                        for &j in nbr_objects {
-                            let (a, b) = if i < j { (i, j) } else { (j, i) };
-                            if a != b {
-                                f(a, b);
-                            }
-                        }
+                    let other_id = self.linear_id(&nbr);
+                    if other_id < *cell_id {
+                        continue;
+                    }
+                    if let Some(&index) = self.cell_index.get(&other_id) {
+                        let other_range = self.cells[index].1.clone();
+                        emit_pairs(
+                            other_id == *cell_id,
+                            objects,
+                            &self.occupants[other_range],
+                            &mut f,
+                        );
                     }
                 }
             }
@@ -372,9 +382,14 @@ impl NeighborList {
     }
 }
 
-fn emit_pairs(same: bool, left: &[usize], right: &[usize], f: &mut impl FnMut(usize, usize)) {
-    for (offset, &i) in left.iter().enumerate() {
-        for &j in if same { &right[offset + 1..] } else { right } {
+fn emit_pairs(
+    same: bool,
+    left: &[(usize, usize)],
+    right: &[(usize, usize)],
+    f: &mut impl FnMut(usize, usize),
+) {
+    for (offset, &(_, i)) in left.iter().enumerate() {
+        for &(_, j) in if same { &right[offset + 1..] } else { right } {
             f(i.min(j), i.max(j));
         }
     }

@@ -84,8 +84,10 @@ pub struct KineticSummary {
 /// Computes energy, temperature and population together without repeated gathers.
 ///
 /// Dense columns are borrowed without allocation; sparse columns stage logical
-/// values. Mass/velocity checks and accumulation follow particle/component order
-/// on the caller thread. Every included inverse mass must be finite and positive;
+/// values. Large observations use fixed 16,384-particle blocks with bounded
+/// parallelism and ordered block combination, so grouping is independent of
+/// worker count. Scratch is O(particles / 16,384); small observations allocate
+/// none. Block grouping can round differently from one sequential reduction. Every included inverse mass must be finite and positive;
 /// every included velocity component must be finite. No state is mutated.
 pub fn kinetic_summary(
     objects: &PhysObj,
@@ -103,32 +105,62 @@ pub fn kinetic_summary(
     let masks = BorrowedMasks::new([alive, None], n)?;
     let velocity = velocity.borrow_values();
     let mass = mass.borrow_values();
-    let mut energy = 0.0;
-    let mut count = 0;
-    for (index, row) in velocity.chunks_exact(dim).enumerate() {
-        if !masks.alive(index) {
-            continue;
-        }
-        let mass = mass[index];
-        if !mass.is_finite() || mass <= 0.0 {
-            return Err(ObserveError::InvalidState {
-                field: ATTR_M_INV,
-                value: mass,
-            });
-        }
-        let mut squared = 0.0;
-        for &component in row {
-            if !component.is_finite() {
+    let fold = |start: usize, values: &[f64]| -> Result<(f64, usize), ObserveError> {
+        let all_alive = masks.all_active_in(start, start + values.len() / dim);
+        let mut energy = 0.0;
+        let mut count = 0;
+        for (index, row) in values.chunks_exact(dim).enumerate() {
+            let index = start + index;
+            if !all_alive && !masks.alive(index) {
+                continue;
+            }
+            let mass = mass[index];
+            if !mass.is_finite() || mass <= 0.0 {
                 return Err(ObserveError::InvalidState {
-                    field: ATTR_V,
-                    value: component,
+                    field: ATTR_M_INV,
+                    value: mass,
                 });
             }
-            squared += component * component;
+            let mut squared = 0.0;
+            for &component in row {
+                if !component.is_finite() {
+                    return Err(ObserveError::InvalidState {
+                        field: ATTR_V,
+                        value: component,
+                    });
+                }
+                squared += component * component;
+            }
+            energy += 0.5 * squared / mass;
+            count += 1;
         }
-        energy += 0.5 * squared / mass;
-        count += 1;
-    }
+        Ok((energy, count))
+    };
+    // Fixed blocks make arithmetic grouping independent of the execution cap.
+    // Small observations retain a single allocation-free ordered pass.
+    const BLOCK_ROWS: usize = 16_384;
+    let (energy, count) = if n <= BLOCK_ROWS {
+        fold(0, &velocity)?
+    } else {
+        let blocks = n.div_ceil(BLOCK_ROWS);
+        let mut results = vec![Ok((0.0, 0)); blocks];
+        crate::threading::for_each_chunk_mut_with_minimum(&mut results, 1, 2, |first, group| {
+            for (offset, result) in group.iter_mut().enumerate() {
+                let start = (first + offset) * BLOCK_ROWS;
+                let end = (start + BLOCK_ROWS).min(n);
+                *result = fold(start, &velocity[start * dim..end * dim]);
+            }
+        });
+        // Preserve both combination order and first-invalid-particle diagnostics.
+        let mut energy = 0.0;
+        let mut count = 0;
+        for result in results {
+            let (partial, population) = result?;
+            energy += partial;
+            count += population;
+        }
+        (energy, count)
+    };
     Ok(KineticSummary {
         energy,
         temperature: if count == 0 {

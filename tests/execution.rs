@@ -107,3 +107,66 @@ fn indexed_sampling_and_pairs_replay_across_caller_pools() {
         }
     }
 }
+
+#[test]
+fn large_kinetic_blocks_and_active_euler_are_pool_independent() {
+    let mut reference = None;
+    for threads in [1, 4] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let result = pool.install(|| {
+            let mut particles = create_template(3, 100_003).unwrap();
+            particles.attribute_mut::<f64>(ATTR_R).unwrap().fill(1.0);
+            particles.attribute_mut::<f64>(ATTR_V).unwrap().fill(0.5);
+            particles.attribute_mut::<f64>(ATTR_A).unwrap().fill(0.25);
+            ExplicitEuler.apply(&mut particles, 0.1).unwrap();
+            assert!(
+                particles
+                    .attribute::<f64>(ATTR_R)
+                    .unwrap()
+                    .values()
+                    .all(|value| value == 1.05)
+            );
+            assert!(
+                particles
+                    .attribute::<f64>(ATTR_V)
+                    .unwrap()
+                    .values()
+                    .all(|value| value == 0.525)
+            );
+            for i in [0, 16_385, 100_002] {
+                set_mass(&mut particles, i, 3.5).unwrap();
+            }
+            let result = kinetic_summary(&particles, ParticleSelection::AliveOnly).unwrap();
+            set_alive(&mut particles, 100_002, false).unwrap();
+            set_rigid(&mut particles, 16_385, true).unwrap();
+            ExplicitEuler.apply(&mut particles, 0.1).unwrap();
+            for index in [16_385, 100_002] {
+                assert_eq!(
+                    particles
+                        .attribute::<f64>(ATTR_R)
+                        .unwrap()
+                        .get(index, 0)
+                        .unwrap(),
+                    1.05
+                );
+            }
+            assert_eq!(
+                particles
+                    .attribute::<f64>(ATTR_R)
+                    .unwrap()
+                    .get(0, 0)
+                    .unwrap(),
+                1.05 + 0.525 * 0.1
+            );
+            result
+        });
+        if let Some(reference) = reference {
+            assert_eq!(result, reference);
+        } else {
+            reference = Some(result);
+        }
+    }
+}

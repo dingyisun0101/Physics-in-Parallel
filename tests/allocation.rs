@@ -212,3 +212,27 @@ fn indexed_dense_random_fill_reuses_storage_and_validates_before_writing() {
         assert_eq!(tensor.values().collect::<Vec<_>>(), expected);
     });
 }
+
+#[test]
+fn warmed_occupied_neighbor_rebuild_has_no_particle_dependent_allocations() {
+    use physics_in_parallel::advanced::NeighborList;
+    let positions: Vec<_> = (0..30_000).map(|index| (index / 3) as f64 * 0.2).collect();
+    let mut neighbors = NeighborList::new(&[0.0; 3], &[10_000.0; 3], 1.0).unwrap();
+    neighbors.rebuild(&positions, 10_000).unwrap();
+    COUNT.set(0);
+    ACTIVE.set(true);
+    neighbors.rebuild(&positions, 10_000).unwrap();
+    ACTIVE.set(false);
+    assert_eq!(COUNT.get(), 0);
+    let mut pairs = 0;
+    COUNT.set(0);
+    ACTIVE.set(true);
+    neighbors.for_each_pair_candidate(|_, _| pairs += 1);
+    ACTIVE.set(false);
+    assert_eq!(
+        COUNT.get(),
+        2,
+        "only the two dimension-sized coordinate buffers"
+    );
+    assert!(pairs > 0);
+}

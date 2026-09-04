@@ -96,6 +96,73 @@ float_kernels!(
     scale_f64_512
 );
 
+/// Allocates exactly the result buffer, then initializes it once in disjoint
+/// chunks. No clone/zero pass touches pages before workers write their results.
+macro_rules! owned_scale {
+    ($ty:ty, $name:ident, $narrow:ident, $wide:ident) => {
+        pub(crate) fn $name(input: &[$ty], scalar: $ty) -> Vec<$ty> {
+            let mut output = Vec::<$ty>::with_capacity(input.len());
+            let spare = &mut output.spare_capacity_mut()[..input.len()];
+            crate::threading::for_each_chunk_mut_with_minimum(spare, 1, 262_144, |start, chunk| {
+                let source = &input[start..start + chunk.len()];
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if chunk.len() >= 128 && std::is_x86_feature_detected!("avx512f") {
+                    // SAFETY: detected feature and equal source/destination lengths.
+                    unsafe { x86::$wide(source, chunk, scalar) };
+                    return;
+                }
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if chunk.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+                    // SAFETY: detected feature and equal source/destination lengths.
+                    unsafe { x86::$narrow(source, chunk, scalar) };
+                    return;
+                }
+                for (destination, &value) in chunk.iter_mut().zip(source) {
+                    destination.write(value * scalar);
+                }
+            });
+            // SAFETY: every disjoint chunk initialized all of its elements, and
+            // Rayon completed before this point. On panic Vec still has length
+            // zero, so no uninitialized value is ever exposed or dropped.
+            unsafe { output.set_len(input.len()) };
+            output
+        }
+    };
+}
+owned_scale!(f32, scaled_f32, copy_scale_f32, copy_scale_f32_512);
+owned_scale!(f64, scaled_f64, copy_scale_f64, copy_scale_f64_512);
+
+/// Flat all-active Euler update. Selection remains outside this kernel; each
+/// component uses separate multiplication and addition, preserving old velocity
+/// for explicit Euler. No padding, packing or extra particle buffers are needed.
+pub(crate) fn euler_f64(
+    position: &mut [f64],
+    velocity: &mut [f64],
+    acceleration: &[f64],
+    dt: f64,
+    semi: bool,
+) {
+    assert_eq!(position.len(), velocity.len());
+    assert_eq!(position.len(), acceleration.len());
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if position.len() >= 128 && std::is_x86_feature_detected!("avx512f") {
+        // SAFETY: feature detection, equal lengths and disjoint mutable borrows.
+        unsafe { x86::euler_f64_512(position, velocity, acceleration, dt, semi) };
+        return;
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if position.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+        // SAFETY: feature detection, equal lengths and disjoint mutable borrows.
+        unsafe { x86::euler_f64_256(position, velocity, acceleration, dt, semi) };
+        return;
+    }
+    for ((r, v), &a) in position.iter_mut().zip(velocity).zip(acceleration) {
+        let old = *v;
+        *v += a * dt;
+        *r += if semi { *v * dt } else { old * dt };
+    }
+}
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86 {
     #[cfg(target_arch = "x86")]
@@ -212,6 +279,132 @@ mod x86 {
         _mm512_sub_pd,
         _mm512_mul_pd,
         _mm512_div_pd
+    );
+    macro_rules! copy_scale {
+        ($feature:literal, $ty:ty, $lanes:expr, $name:ident, $load:ident, $store:ident, $splat:ident, $mul:ident) => {
+            /// Requires the declared feature and equally sized disjoint slices.
+            #[target_feature(enable = $feature)]
+            pub(super) unsafe fn $name(
+                input: &[$ty],
+                output: &mut [std::mem::MaybeUninit<$ty>],
+                scalar: $ty,
+            ) {
+                let end = input.len() / $lanes * $lanes;
+                let factor = $splat(scalar);
+                for index in (0..end).step_by($lanes) {
+                    // SAFETY: complete blocks lie within both slices. Stores
+                    // initialize MaybeUninit elements without reading them.
+                    unsafe {
+                        $store(
+                            output.as_mut_ptr().add(index).cast::<$ty>(),
+                            $mul($load(input.as_ptr().add(index)), factor),
+                        )
+                    };
+                }
+                for (destination, &value) in output[end..].iter_mut().zip(&input[end..]) {
+                    destination.write(value * scalar);
+                }
+            }
+        };
+    }
+    copy_scale!(
+        "avx2",
+        f32,
+        8,
+        copy_scale_f32,
+        _mm256_loadu_ps,
+        _mm256_storeu_ps,
+        _mm256_set1_ps,
+        _mm256_mul_ps
+    );
+    copy_scale!(
+        "avx2",
+        f64,
+        4,
+        copy_scale_f64,
+        _mm256_loadu_pd,
+        _mm256_storeu_pd,
+        _mm256_set1_pd,
+        _mm256_mul_pd
+    );
+    copy_scale!(
+        "avx512f",
+        f32,
+        16,
+        copy_scale_f32_512,
+        _mm512_loadu_ps,
+        _mm512_storeu_ps,
+        _mm512_set1_ps,
+        _mm512_mul_ps
+    );
+    copy_scale!(
+        "avx512f",
+        f64,
+        8,
+        copy_scale_f64_512,
+        _mm512_loadu_pd,
+        _mm512_storeu_pd,
+        _mm512_set1_pd,
+        _mm512_mul_pd
+    );
+
+    macro_rules! euler {
+        ($feature:literal, $lanes:expr, $name:ident, $load:ident, $store:ident, $splat:ident, $mul:ident, $add:ident) => {
+            /// Requires the declared feature and equal, disjoint valid slices.
+            #[target_feature(enable = $feature)]
+            pub(super) unsafe fn $name(
+                position: &mut [f64],
+                velocity: &mut [f64],
+                acceleration: &[f64],
+                dt: f64,
+                semi: bool,
+            ) {
+                let end = position.len() / $lanes * $lanes;
+                let dt_vector = $splat(dt);
+                for index in (0..end).step_by($lanes) {
+                    // SAFETY: full blocks lie within each validated slice; only
+                    // unaligned loads/stores are used, and inputs cannot alias outputs.
+                    unsafe {
+                        let r = $load(position.as_ptr().add(index));
+                        let old_v = $load(velocity.as_ptr().add(index));
+                        let a = $load(acceleration.as_ptr().add(index));
+                        let v = $add(old_v, $mul(a, dt_vector));
+                        let r = $add(r, $mul(if semi { v } else { old_v }, dt_vector));
+                        $store(velocity.as_mut_ptr().add(index), v);
+                        $store(position.as_mut_ptr().add(index), r);
+                    }
+                }
+                for ((r, v), &a) in position[end..]
+                    .iter_mut()
+                    .zip(&mut velocity[end..])
+                    .zip(&acceleration[end..])
+                {
+                    let old = *v;
+                    *v += a * dt;
+                    *r += if semi { *v * dt } else { old * dt };
+                }
+            }
+        };
+    }
+    euler!(
+        "avx2",
+        4,
+        euler_f64_256,
+        _mm256_loadu_pd,
+        _mm256_storeu_pd,
+        _mm256_set1_pd,
+        _mm256_mul_pd,
+        _mm256_add_pd
+    );
+    euler!(
+        "avx512f",
+        8,
+        euler_f64_512,
+        _mm512_loadu_pd,
+        _mm512_storeu_pd,
+        _mm512_set1_pd,
+        _mm512_mul_pd,
+        _mm512_add_pd
     );
 }
 
@@ -331,4 +524,68 @@ mod tests {
         binary_f64_512,
         scale_f64_512
     );
+    #[test]
+    fn owned_scale_initialization_and_euler_match_scalar_edges() {
+        let edges = [
+            0.0_f64,
+            -0.0,
+            1.0,
+            -2.0,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        fn equal(a: f64, b: f64) {
+            assert!(
+                a.to_bits() == b.to_bits() || a.is_nan() && b.is_nan(),
+                "{a:?} != {b:?}"
+            );
+        }
+        for size in 0..=263 {
+            let input: Vec<_> = (0..size + 2)
+                .map(|index| edges[index % edges.len()])
+                .collect();
+            let source = &input[1..size + 1];
+            let scaled = scaled_f64(source, -1.5);
+            for (&a, &b) in scaled.iter().zip(source) {
+                equal(a, b * -1.5);
+            }
+            let input32: Vec<_> = source.iter().map(|value| *value as f32).collect();
+            for (&actual, &value) in scaled_f32(&input32, -1.5).iter().zip(&input32) {
+                let expected = value * -1.5;
+                assert!(
+                    actual.to_bits() == expected.to_bits() || actual.is_nan() && expected.is_nan()
+                );
+            }
+            for semi in [false, true] {
+                let mut positions = input.clone();
+                let mut velocities = input.clone();
+                euler_f64(
+                    &mut positions[1..size + 1],
+                    &mut velocities[1..size + 1],
+                    source,
+                    0.125,
+                    semi,
+                );
+                equal(positions[0], input[0]);
+                equal(positions[size + 1], input[size + 1]);
+                equal(velocities[0], input[0]);
+                equal(velocities[size + 1], input[size + 1]);
+                for index in 1..size + 1 {
+                    let velocity = input[index] + input[index] * 0.125;
+                    let position = input[index]
+                        + if semi {
+                            velocity * 0.125
+                        } else {
+                            input[index] * 0.125
+                        };
+                    equal(velocities[index], velocity);
+                    equal(positions[index], position);
+                }
+            }
+        }
+    }
 }
