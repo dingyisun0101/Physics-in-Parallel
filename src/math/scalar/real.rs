@@ -19,9 +19,28 @@ macro_rules! impl_sealed_for {
 impl_sealed_for!(
     // unsigned
     u8, u16, u32, u64, u128, usize, // signed
-    i8, i16, i32, i64, i128, isize, // floats
-    f32, f64
+    i8, i16, i32, i64, i128, isize
 );
+
+macro_rules! impl_float_kernels {
+    ($ty:ty, $binary:ident, $scale:ident) => {
+        impl Sealed for $ty {
+            fn binary_into(
+                left: &[Self],
+                right: &[Self],
+                output: &mut [Self],
+                op: crate::math::kernels::BinaryOp,
+            ) {
+                crate::math::kernels::$binary(left, right, output, op);
+            }
+            fn scale_slice(values: &mut [Self], scalar: Self) {
+                crate::math::kernels::$scale(values, scalar);
+            }
+        }
+    };
+}
+impl_float_kernels!(f32, binary_f32, scale_f32);
+impl_float_kernels!(f64, binary_f64, scale_f64);
 
 impl Scalar for f32 {
     type Real = f32;

@@ -77,6 +77,31 @@ impl OperationBudget {
     }
 }
 
+/// Visits disjoint row-aligned chunks with one captured execution budget.
+/// The callback receives the flat offset of each chunk. Small inputs use the
+/// caller thread, while SIMD inside a callback remains independent of the cap.
+pub(crate) fn for_each_chunk_mut<T: Send, F>(values: &mut [T], row_width: usize, function: F)
+where
+    F: Fn(usize, &mut [T]) + Send + Sync,
+{
+    use rayon::prelude::*;
+    assert!(row_width > 0 && values.len().is_multiple_of(row_width));
+    let Some(budget) = OperationBudget::capture(values.len() / row_width) else {
+        return;
+    };
+    if budget.jobs == 1 || values.len() < MIN_PARALLEL_ELEMENTS {
+        function(0, values);
+    } else {
+        let chunk = budget.chunk_len(values.len() / row_width) * row_width;
+        values
+            .par_chunks_mut(chunk)
+            .enumerate()
+            .for_each(|(index, values)| {
+                function(index * chunk, values);
+            });
+    }
+}
+
 #[inline]
 pub(crate) fn parallel_chunk_len(work_units: usize) -> Option<usize> {
     OperationBudget::capture(work_units).map(|budget| budget.chunk_len(work_units))

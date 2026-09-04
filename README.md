@@ -172,3 +172,9 @@ API details live in the crate's rustdoc. Read the
 before using lower-level facilities, and see the
 [example guide](https://github.com/dingyisun0101/Physics-in-Parallel/blob/main/EXAMPLES.md)
 for the checked example inventory.
+
+## Execution and performance
+
+See [the performance guide](PERFORMANCE.md) for SIMD dispatch (including optional
+AVX-512F), numerical ordering, reusable output APIs, sparse costs, and validation.
+SIMD selection is internal and never changes the public mathematical types.

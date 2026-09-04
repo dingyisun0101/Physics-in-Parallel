@@ -3,6 +3,7 @@ Core math foundations.
 */
 
 pub(crate) mod io;
+pub(crate) mod kernels;
 pub(crate) mod scalar;
 pub(crate) mod tensor;
 

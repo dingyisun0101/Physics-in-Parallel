@@ -36,7 +36,30 @@ use num_traits::{Num, NumCast, One, Zero};
 
 /// Internal sealing so only this crate can implement scalar traits.
 pub(crate) mod scalar_sealed {
-    pub trait Sealed {}
+    /// Internal bulk dispatch; overrides never alter public scalar semantics.
+    pub trait Sealed: Sized {
+        fn binary_into(
+            left: &[Self],
+            right: &[Self],
+            output: &mut [Self],
+            op: crate::math::kernels::BinaryOp,
+        ) where
+            Self: super::Scalar,
+        {
+            for ((out, &a), &b) in output.iter_mut().zip(left).zip(right) {
+                *out = op.apply(a, b);
+            }
+        }
+
+        fn scale_slice(values: &mut [Self], scalar: Self)
+        where
+            Self: super::Scalar,
+        {
+            for value in values {
+                *value = *value * scalar;
+            }
+        }
+    }
 }
 
 use scalar_sealed::Sealed;

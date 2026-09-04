@@ -200,6 +200,16 @@ impl<T: Scalar> Tensor<T> {
         self.data.iter()
     }
 
+    /// Borrows canonical entries for validated internal kernels.
+    pub(crate) fn entries(&self) -> &AHashMap<usize, T> {
+        &self.data
+    }
+
+    /// Mutates canonical entries; callers must remove explicit zeros.
+    pub(crate) fn entries_mut(&mut self) -> &mut AHashMap<usize, T> {
+        &mut self.data
+    }
+
     /// **Internal helper**: build from `(flat_index, value)` pairs, dropping zeros.
     #[inline]
     /// Details:

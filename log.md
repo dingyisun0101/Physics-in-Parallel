@@ -153,3 +153,16 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - `cargo fmt --all`, warning-free `cargo doc --offline --no-deps`, and `git diff --check` passed.
 - Escalated fetch succeeded with the per-command SSH configuration; local and remote main were identical before this batch.
 - Committing scalar/layout fixes together with the approved review record and implementation checklist; pushing the batch to origin/main.
+
+### Batch 2 — containers and optional SIMD
+
+- Batch 1 was pushed as `bc356ec` to origin/main.
+- Added reusable dense output, native sparse support traversal, ordered sparse reductions, finite sparse matrix joins, and dense matrix kernels with contiguous column blocks.
+- Added private sealed scalar dispatch to stable AVX2 and AVX-512F floating kernels, with exact feature checks, ordinary slice alignment, and scalar tails. The user explicitly requested AVX-512 during this batch; it is enabled when detected for sufficiently large chunks. The host can compile but cannot execute that path.
+- Added vector/axis output-copy APIs and vector-list arithmetic output APIs; matrix multiplication now has a reusable output variant.
+- Added tests for allocation reuse, oversized sparse logical domains, backend combinations, rollback on shape errors, and unaligned floating SIMD edges. Added `PERFORMANCE.md` documenting dispatch, numerical behavior, allocation, and sparse cost.
+- Initial new-test compilation needed an explicit f64 annotation; initial strict Clippy found two collapsible conditionals, now corrected. Existing tests passed before the new regression set.
+
+- Final batch validation: all targets passed in debug; library, math, and allocation regressions passed in release. Strict all-target Clippy, formatting, and warning-free rustdoc passed after the final edits.
+- The repeated release allocation probe reports zero allocations for dense add_into/fill; sparse single-entry scale now requests 156 bytes instead of 800,156 bytes at 100,000 logical elements. Native/PiP integer-root timings are now comparable. These are local probe results, not cross-hardware throughput guarantees.
+- AVX-512F paths compile and have hardware-gated numerical tests. Execution on this AVX2-only host remains unavailable; the initial 128-element threshold needs compatible-hardware benchmarking. Public container APIs and serialized formats remain compatible.

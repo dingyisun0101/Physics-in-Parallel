@@ -280,6 +280,12 @@ impl<T: Scalar> Matrix<T> {
         Self::from_tensor(self.tensor.matmul(&rhs.tensor)?)
     }
 
+    /// Multiplies into reusable output with the caller's selected backend.
+    /// See [`Tensor::matmul_into`] for complexity and error guarantees.
+    pub fn matmul_into(&self, rhs: &Self, output: &mut Self) -> Result<(), MatrixError> {
+        Ok(self.tensor.matmul_into(&rhs.tensor, &mut output.tensor)?)
+    }
+
     pub fn trace(&self) -> T {
         (0..self.rows().min(self.columns())).fold(T::zero(), |sum, coordinate| {
             sum + self
@@ -316,9 +322,23 @@ impl<T: Scalar> Matrix<T> {
                 actual: output.len(),
             });
         }
-        for (row, output_value) in output.iter_mut().enumerate() {
-            *output_value =
-                input
+        self.mul_vector_unchecked(input, output);
+        Ok(())
+    }
+
+    fn mul_vector_unchecked(&self, input: &[T], output: &mut [T]) {
+        if let Some(values) = self.tensor.dense_values() {
+            crate::threading::for_each_chunk_mut(output, 1, |start, chunk| {
+                for (row, out) in chunk.iter_mut().enumerate() {
+                    *out = values[(start + row) * self.columns()..][..self.columns()]
+                        .iter()
+                        .zip(input)
+                        .fold(T::zero(), |sum, (&a, &b)| sum + a * b);
+                }
+            });
+        } else {
+            for (row, out) in output.iter_mut().enumerate() {
+                *out = input
                     .iter()
                     .copied()
                     .enumerate()
@@ -328,10 +348,13 @@ impl<T: Scalar> Matrix<T> {
                             .get_flat_unchecked(row * self.columns() + column)
                             * value
                     });
+            }
         }
-        Ok(())
     }
 
+    /// Applies a matrix to consecutive input vectors, reusing caller output.
+    /// O(batch * rows * columns) time and no dense scratch allocation.
+    /// All lengths are validated before the first output write.
     pub fn mul_vectors_into(&self, input: &[T], output: &mut [T]) -> Result<(), MatrixError> {
         if !input.len().is_multiple_of(self.columns()) {
             return Err(MatrixError::BatchInputLength {
@@ -355,7 +378,7 @@ impl<T: Scalar> Matrix<T> {
             .chunks_exact(self.columns())
             .zip(output.chunks_exact_mut(self.rows()))
         {
-            self.mul_vector_into(input, output)?;
+            self.mul_vector_unchecked(input, output);
         }
         Ok(())
     }

@@ -2,7 +2,6 @@
 
 use core::fmt;
 
-use num_traits::Zero;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -241,6 +240,58 @@ impl<T: Scalar> VectorList<T> {
             .collect())
     }
 
+    /// Copies one vector into caller storage without allocating.
+    /// O(dimensions) time for either backend. Bounds and output length are
+    /// checked before mutation; the backend is unchanged.
+    pub fn vector_into(&self, vector: usize, output: &mut [T]) -> Result<(), VectorListError> {
+        if vector >= self.num_vectors() {
+            return Err(TensorError::CoordinateOutOfBounds {
+                axis: 0,
+                coordinate: vector,
+                extent: self.num_vectors(),
+            }
+            .into());
+        }
+        if output.len() != self.dim() {
+            return Err(VectorListError::VectorLength {
+                expected: self.dim(),
+                actual: output.len(),
+            });
+        }
+        for (component, value) in output.iter_mut().enumerate() {
+            *value = self
+                .tensor
+                .get_flat_unchecked(vector * self.dim() + component);
+        }
+        Ok(())
+    }
+
+    /// Copies one component across all vectors into caller storage.
+    /// O(number of vectors) time, no allocation, and no writes on a length or
+    /// coordinate error. Both backends have identical coordinate semantics.
+    pub fn axis_into(&self, component: usize, output: &mut [T]) -> Result<(), VectorListError> {
+        if component >= self.dim() {
+            return Err(TensorError::CoordinateOutOfBounds {
+                axis: 1,
+                coordinate: component,
+                extent: self.dim(),
+            }
+            .into());
+        }
+        if output.len() != self.num_vectors() {
+            return Err(VectorListError::AxisLength {
+                expected: self.num_vectors(),
+                actual: output.len(),
+            });
+        }
+        for (vector, value) in output.iter_mut().enumerate() {
+            *value = self
+                .tensor
+                .get_flat_unchecked(vector * self.dim() + component);
+        }
+        Ok(())
+    }
+
     pub fn set_vector(&mut self, vector: usize, values: &[T]) -> Result<(), VectorListError> {
         if values.len() != self.dim() {
             return Err(VectorListError::VectorLength {
@@ -304,42 +355,75 @@ impl<T: Scalar> VectorList<T> {
                 actual: scales.len(),
             });
         }
-        let mut values = self.values().collect::<Vec<_>>();
-        for (vector, row) in values.chunks_exact_mut(self.dim()).enumerate() {
-            for value in row {
-                *value = *value * scales[vector];
+        let dim = self.dim();
+        if let Some(values) = self.tensor.dense_values_mut() {
+            crate::threading::for_each_chunk_mut(values, dim, |start, chunk| {
+                for (index, row) in chunk.chunks_exact_mut(dim).enumerate() {
+                    T::scale_slice(row, scales[start / dim + index]);
+                }
+            });
+        } else if scales.iter().all(|&scale| T::zero() * scale == T::zero()) {
+            let entries: Vec<_> = self
+                .tensor
+                .sparse_entries()
+                .expect("sparse backend")
+                .collect();
+            for (index, value) in entries {
+                self.tensor
+                    .set_flat_unchecked(index, value * scales[index / dim]);
+            }
+        } else {
+            for (index, &scale) in scales.iter().enumerate() {
+                for component in 0..dim {
+                    let flat = index * dim + component;
+                    self.tensor
+                        .set_flat_unchecked(flat, self.tensor.get_flat_unchecked(flat) * scale);
+                }
             }
         }
-        self.replace_values(values);
         Ok(())
     }
 
+    /// Returns each vector's norm in the original scalar category.
+    /// Uses O(number of vectors) output memory and no full input copy.
     pub fn norms(&self) -> Vec<T> {
-        self.values()
-            .collect::<Vec<_>>()
-            .chunks_exact(self.dim())
-            .map(|row| {
-                row.iter()
-                    .copied()
-                    .map(Scalar::norm_sqr)
-                    .fold(T::zero(), |left, right| left + right)
-                    .sqrt()
-            })
+        self.row_reductions(Scalar::norm_sqr)
+            .into_iter()
+            .map(Scalar::sqrt)
             .collect()
     }
 
+    /// Returns real-valued norms, allocating only the output vector.
     pub fn norms_real(&self) -> Vec<T::Real> {
-        self.values()
-            .collect::<Vec<_>>()
-            .chunks_exact(self.dim())
-            .map(|row| {
-                row.iter()
-                    .copied()
-                    .map(Scalar::norm_sqr_real)
-                    .fold(T::Real::zero(), |left, right| left + right)
-                    .sqrt()
-            })
+        self.row_reductions(Scalar::norm_sqr_real)
+            .into_iter()
+            .map(Scalar::sqrt)
             .collect()
+    }
+
+    fn row_reductions<U: Scalar>(&self, function: impl Fn(T) -> U) -> Vec<U> {
+        if let Some(values) = self.tensor.dense_values() {
+            return values
+                .chunks_exact(self.dim())
+                .map(|row| {
+                    row.iter()
+                        .copied()
+                        .map(&function)
+                        .fold(U::zero(), |a, b| a + b)
+                })
+                .collect();
+        }
+        let mut output = vec![U::zero(); self.num_vectors()];
+        let mut entries: Vec<_> = self
+            .tensor
+            .sparse_entries()
+            .expect("sparse backend")
+            .collect();
+        entries.sort_unstable_by_key(|&(index, _)| index);
+        for (index, value) in entries {
+            output[index / self.dim()] = output[index / self.dim()] + function(value);
+        }
+        output
     }
 
     pub fn normalize(&mut self) -> Result<(), VectorListError> {
@@ -396,6 +480,38 @@ impl<T: Scalar> VectorList<T> {
         Self::from_tensor(self.tensor.divide(&rhs.tensor)?)
     }
 
+    /// Writes elementwise addition to an existing vector list.
+    /// Preserves the output backend and checks shapes before mutation. Dense
+    /// output reuses storage; sparse arithmetic may allocate stored entries.
+    /// See [`Tensor::add_into`] for sparse cost and arithmetic semantics.
+    pub fn add_into(&self, rhs: &Self, output: &mut Self) -> Result<(), VectorListError> {
+        Ok(self.tensor.add_into(&rhs.tensor, &mut output.tensor)?)
+    }
+
+    /// Writes elementwise subtraction to an existing vector list.
+    /// Preserves the output backend and checks shapes before mutation. Dense
+    /// output reuses storage; sparse arithmetic may allocate stored entries.
+    /// See [`Tensor::subtract_into`] for sparse cost and arithmetic semantics.
+    pub fn subtract_into(&self, rhs: &Self, output: &mut Self) -> Result<(), VectorListError> {
+        Ok(self.tensor.subtract_into(&rhs.tensor, &mut output.tensor)?)
+    }
+
+    /// Writes elementwise multiplication to an existing vector list.
+    /// Preserves the output backend and checks shapes before mutation. Dense
+    /// output reuses storage; sparse arithmetic may allocate stored entries.
+    /// See [`Tensor::multiply_into`] for sparse cost and arithmetic semantics.
+    pub fn multiply_into(&self, rhs: &Self, output: &mut Self) -> Result<(), VectorListError> {
+        Ok(self.tensor.multiply_into(&rhs.tensor, &mut output.tensor)?)
+    }
+
+    /// Writes elementwise division to an existing vector list.
+    /// Preserves the output backend and checks shapes before mutation. Dense
+    /// output reuses storage; sparse arithmetic may allocate stored entries.
+    /// See [`Tensor::divide_into`] for sparse cost and arithmetic semantics.
+    pub fn divide_into(&self, rhs: &Self, output: &mut Self) -> Result<(), VectorListError> {
+        Ok(self.tensor.divide_into(&rhs.tensor, &mut output.tensor)?)
+    }
+
     pub fn scale(&self, scalar: T) -> Self {
         Self {
             tensor: self.tensor.scale(scalar),
@@ -409,8 +525,8 @@ impl<T: Scalar> VectorList<T> {
     }
 
     pub(crate) fn replace_values(&mut self, values: Vec<T>) {
-        self.tensor = Tensor::from_values(self.tensor.shape(), self.backend(), values)
-            .expect("existing vector-list shape is valid");
+        assert_eq!(values.len(), self.tensor.size());
+        self.tensor.replace_with_values(values);
     }
 
     pub(crate) fn logical_values(&self) -> Vec<T> {
@@ -418,6 +534,9 @@ impl<T: Scalar> VectorList<T> {
     }
 
     pub(crate) fn edit_values<R>(&mut self, edit: impl FnOnce(&mut [T]) -> R) -> R {
+        if let Some(values) = self.tensor.dense_values_mut() {
+            return edit(values);
+        }
         let mut values = self.logical_values();
         let result = edit(&mut values);
         self.replace_values(values);

@@ -1,6 +1,69 @@
 use physics_in_parallel::math::{Backend, Matrix, Tensor, TensorError, VectorList};
 
 #[test]
+fn reusable_arithmetic_covers_every_backend_combination() {
+    for left in [Backend::Dense, Backend::Sparse] {
+        for right in [Backend::Dense, Backend::Sparse] {
+            for destination in [Backend::Dense, Backend::Sparse] {
+                let a = Tensor::from_values(&[3], left, vec![0.0_f64, 2.0, -3.0]).unwrap();
+                let b = Tensor::from_values(&[3], right, vec![0.0, -2.0, 4.0]).unwrap();
+                let mut out = Tensor::filled(&[3], destination, 99.0).unwrap();
+                a.add_into(&b, &mut out).unwrap();
+                assert_eq!(out.values().collect::<Vec<_>>(), [0.0, 0.0, 1.0]);
+                a.multiply_into(&b, &mut out).unwrap();
+                assert_eq!(out.values().collect::<Vec<_>>(), [0.0, -4.0, -12.0]);
+                a.divide_into(&b, &mut out).unwrap();
+                assert!(out.get(&[0]).unwrap().is_nan());
+                assert_eq!(out.get(&[2]).unwrap(), -0.75);
+                assert_eq!(out.backend(), destination);
+                let before = out.values().collect::<Vec<_>>();
+                let bad = Tensor::zeros(&[1], left).unwrap();
+                assert!(a.add_into(&bad, &mut out).is_err());
+                for (a, b) in before.iter().zip(out.values()) {
+                    assert!(a.to_bits() == b.to_bits() || a.is_nan() && b.is_nan());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sparse_kernels_handle_huge_logical_shapes_and_nonfinite_zeros() {
+    let size = 1_000_000_000;
+    let a = Tensor::from_entries(&[size], Backend::Sparse, [(vec![7], 3.0)]).unwrap();
+    let b = a.scale(2.0);
+    assert_eq!(b.sum(), 6.0);
+    assert_eq!(a.add(&b).unwrap().sum(), 9.0);
+    assert_eq!(b.cast::<f32>().unwrap().get(&[7]).unwrap(), 6.0);
+    let matrix = Tensor::from_entries(&[size, 2], Backend::Sparse, [(vec![7, 1], 3.0)]).unwrap();
+    assert_eq!(matrix.transpose().unwrap().get(&[1, 7]).unwrap(), 3.0);
+    let mut cleared = b;
+    cleared.fill(0.0);
+    assert_eq!(cleared.sum(), 0.0);
+    let a = Tensor::<f64>::zeros(&[3], Backend::Sparse).unwrap();
+    assert!(a.scale(f64::INFINITY).values().all(f64::is_nan));
+}
+
+#[test]
+fn matrix_output_and_vector_copies_validate_before_mutating() {
+    let a = Matrix::from_values(2, 3, Backend::Dense, vec![1_i64, 2, 3, 4, 5, 6]).unwrap();
+    let b = Matrix::from_values(3, 2, Backend::Dense, vec![7_i64, 8, 9, 10, 11, 12]).unwrap();
+    for backend in [Backend::Dense, Backend::Sparse] {
+        let mut out = Matrix::zeros(2, 2, backend).unwrap();
+        a.matmul_into(&b, &mut out).unwrap();
+        assert_eq!(out.values().collect::<Vec<_>>(), [58, 64, 139, 154]);
+        let vectors = VectorList::from_values(2, 2, backend, vec![1_i64, 2, 3, 4]).unwrap();
+        let mut row = [99; 2];
+        vectors.vector_into(1, &mut row).unwrap();
+        assert_eq!(row, [3, 4]);
+        vectors.axis_into(1, &mut row).unwrap();
+        assert_eq!(row, [2, 4]);
+        assert!(vectors.axis_into(2, &mut row).is_err());
+        assert_eq!(row, [2, 4]);
+    }
+}
+
+#[test]
 fn derived_shapes_are_rejected_without_materializing_sparse_inputs() {
     let extent = 1_usize << (usize::BITS / 2);
     let lhs = Tensor::<f64>::zeros(&[extent, 1], Backend::Sparse).unwrap();

@@ -4,9 +4,10 @@ use core::fmt;
 
 use std::mem::MaybeUninit;
 
+use crate::math::kernels::BinaryOp;
+use crate::threading::for_each_chunk_mut;
 use ahash::{AHashMap, AHashSet};
 use num_traits::Zero;
-use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -39,6 +40,7 @@ enum Storage<T: Scalar> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tensor<T: Scalar> {
     storage: Storage<T>,
+    logical_size: usize,
 }
 
 enum BuilderData<T: Scalar> {
@@ -231,15 +233,20 @@ impl<T: Scalar> Tensor<T> {
 
     /// Constructs a tensor whose logical elements all equal `value`.
     ///
-    /// This costs `O(total logical elements)` for either backend. A nonzero
-    /// sparse fill stores every logical element.
+    /// Dense construction and nonzero sparse fills cost `O(total logical
+    /// elements)`. Sparse zero construction allocates no entries.
     pub fn filled(shape: &[usize], backend: Backend, value: T) -> TensorResult<Self> {
         let size = checked_num_elements(shape)?;
-        Ok(Self::from_values_unchecked(
-            shape,
-            backend,
-            vec![value; size],
-        ))
+        if backend == Backend::Dense {
+            return Ok(Self::from_values_unchecked(
+                shape,
+                backend,
+                vec![value; size],
+            ));
+        }
+        let mut tensor = Self::zeros(shape, backend)?;
+        tensor.fill(value);
+        Ok(tensor)
     }
 
     /// Constructs a tensor by evaluating coordinates in row-major order.
@@ -310,10 +317,7 @@ impl<T: Scalar> Tensor<T> {
 
     /// Returns the total logical element count.
     pub fn size(&self) -> usize {
-        match &self.storage {
-            Storage::Dense(storage) => storage.size(),
-            Storage::Sparse(storage) => storage.size(),
-        }
+        self.logical_size
     }
 
     /// Reads one logical value at strict multidimensional coordinates.
@@ -343,20 +347,42 @@ impl<T: Scalar> Tensor<T> {
         }
     }
 
-    /// Returns the sum of every logical value.
+    /// Returns the sum in logical row-major order.
+    /// Dense: O(n) time and O(1) scratch. Sparse: O(s log s) time and O(s)
+    /// scratch for sorting s stored entries, without scanning implicit zeros.
     pub fn sum(&self) -> T {
-        self.values().fold(T::zero(), |sum, value| sum + value)
+        if let Some(values) = self.dense_values() {
+            return values
+                .iter()
+                .copied()
+                .fold(T::zero(), |sum, value| sum + value);
+        }
+        let mut entries: Vec<_> = self.sparse_entries().expect("sparse backend").collect();
+        entries.sort_unstable_by_key(|&(index, _)| index);
+        entries
+            .into_iter()
+            .fold(T::zero(), |sum, (_, value)| sum + value)
     }
 
     /// Replaces every logical value while retaining the current backend.
     ///
     /// # Complexity
     ///
-    /// A nonzero fill on the sparse backend writes every logical element and can
-    /// require dense-scale memory.
+    /// Dense fill is O(n) time without allocation. Sparse zero fill clears
+    /// stored entries while retaining capacity; nonzero fill inserts n entries
+    /// without a dense temporary and may allocate O(n) storage.
     pub fn fill(&mut self, value: T) {
-        let values = vec![value; self.size()];
-        self.replace_with_values(values);
+        let size = self.size();
+        match &mut self.storage {
+            Storage::Dense(storage) => storage.storage_mut().data_mut().fill(value),
+            Storage::Sparse(storage) => {
+                let entries = storage.storage_mut().entries_mut();
+                entries.clear();
+                if value != T::zero() {
+                    entries.extend((0..size).map(|index| (index, value)));
+                }
+            }
+        }
     }
 
     /// Maps every logical value while retaining the receiver's backend.
@@ -374,131 +400,238 @@ impl<T: Scalar> Tensor<T> {
     where
         F: Fn(T) -> T + Send + Sync,
     {
-        let values = self.values().map(function).collect();
-        Self::from_values_unchecked(self.shape(), self.backend(), values)
+        if let Some(values) = self.dense_values() {
+            return Self::from_values_unchecked(
+                self.shape(),
+                Backend::Dense,
+                values.iter().copied().map(function).collect(),
+            );
+        }
+        // A general map must evaluate implicit zeros as well.
+        let entries = self
+            .values()
+            .enumerate()
+            .filter_map(|(index, value)| {
+                let mapped = function(value);
+                (mapped != T::zero()).then_some((index, mapped))
+            })
+            .collect();
+        Self::from_sparse_flat_entries_unchecked(self.shape().to_vec(), entries)
     }
 
     /// Maps every logical value in place without changing backend.
+    /// Dense: O(n) time, no allocation. Sparse: O(n) evaluations and O(result
+    /// occupancy) staging, including implicit zeros. A panicking callback can
+    /// leave a dense destination partially changed; no rollback is promised.
     pub fn map_in_place<F>(&mut self, function: F)
     where
         F: Fn(T) -> T + Send + Sync,
     {
-        let values = self.values().map(function).collect();
-        self.replace_with_values(values);
+        if let Some(values) = self.dense_values_mut() {
+            for value in values {
+                *value = function(*value);
+            }
+        } else {
+            *self = self.map(function);
+        }
     }
 
     /// Adds two equally shaped tensors.
     pub fn add(&self, rhs: &Self) -> TensorResult<Self> {
-        self.zip(rhs, |left, right| left + right)
+        self.zip(rhs, BinaryOp::Add)
     }
 
     /// Subtracts two equally shaped tensors.
     pub fn subtract(&self, rhs: &Self) -> TensorResult<Self> {
-        self.zip(rhs, |left, right| left - right)
+        self.zip(rhs, BinaryOp::Subtract)
     }
 
     /// Multiplies two equally shaped tensors element by element.
     pub fn multiply(&self, rhs: &Self) -> TensorResult<Self> {
-        self.zip(rhs, |left, right| left * right)
+        self.zip(rhs, BinaryOp::Multiply)
     }
 
     /// Divides two equally shaped tensors element by element.
     pub fn divide(&self, rhs: &Self) -> TensorResult<Self> {
-        self.zip(rhs, |left, right| left / right)
+        self.zip(rhs, BinaryOp::Divide)
     }
 
     /// Writes elementwise addition into an existing output tensor.
+    ///
+    /// Dense output reuses its storage; sparse output retains capacity and
+    /// stores only nonzero results. Shape errors do not mutate output.
+    /// Arithmetic panics may leave partially updated output.
+    ///
+    /// # Complexity
+    /// O(n) for dense/mixed backends; sparse/sparse add, subtract and multiply
+    /// visit the union of stored entries (plus O(n) to clear dense output).
+    /// Division visits all logical elements, preserving implicit 0/0 behavior.
     pub fn add_into(&self, rhs: &Self, output: &mut Self) -> TensorResult<()> {
-        self.zip_into(rhs, output, |left, right| left + right)
+        self.zip_into(rhs, output, BinaryOp::Add)
     }
 
     /// Writes elementwise subtraction into an existing output tensor.
+    ///
+    /// Dense output reuses its storage; sparse output retains capacity and
+    /// stores only nonzero results. Shape errors do not mutate output.
+    /// Arithmetic panics may leave partially updated output.
+    ///
+    /// # Complexity
+    /// O(n) for dense/mixed backends; sparse/sparse add, subtract and multiply
+    /// visit the union of stored entries (plus O(n) to clear dense output).
+    /// Division visits all logical elements, preserving implicit 0/0 behavior.
     pub fn subtract_into(&self, rhs: &Self, output: &mut Self) -> TensorResult<()> {
-        self.zip_into(rhs, output, |left, right| left - right)
+        self.zip_into(rhs, output, BinaryOp::Subtract)
     }
 
     /// Writes elementwise multiplication into an existing output tensor.
+    ///
+    /// Dense output reuses its storage; sparse output retains capacity and
+    /// stores only nonzero results. Shape errors do not mutate output.
+    /// Arithmetic panics may leave partially updated output.
+    ///
+    /// # Complexity
+    /// O(n) for dense/mixed backends; sparse/sparse add, subtract and multiply
+    /// visit the union of stored entries (plus O(n) to clear dense output).
+    /// Division visits all logical elements, preserving implicit 0/0 behavior.
     pub fn multiply_into(&self, rhs: &Self, output: &mut Self) -> TensorResult<()> {
-        self.zip_into(rhs, output, |left, right| left * right)
+        self.zip_into(rhs, output, BinaryOp::Multiply)
     }
 
     /// Writes elementwise division into an existing output tensor.
+    ///
+    /// Dense output reuses its storage; sparse output retains capacity and
+    /// stores only nonzero results. Shape errors do not mutate output.
+    /// Arithmetic panics may leave partially updated output.
+    ///
+    /// # Complexity
+    /// O(n) for dense/mixed backends; sparse/sparse add, subtract and multiply
+    /// visit the union of stored entries (plus O(n) to clear dense output).
+    /// Division visits all logical elements, preserving implicit 0/0 behavior.
     pub fn divide_into(&self, rhs: &Self, output: &mut Self) -> TensorResult<()> {
-        self.zip_into(rhs, output, |left, right| left / right)
+        self.zip_into(rhs, output, BinaryOp::Divide)
     }
 
-    /// Multiplies every logical value by a scalar.
+    /// Multiplies every logical value by a scalar, retaining the backend.
+    /// Dense O(n) kernels select SIMD internally. Sparse work is O(stored
+    /// entries) when zero maps to zero; otherwise it visits all logical values.
     pub fn scale(&self, scalar: T) -> Self {
-        self.map(|value| value * scalar)
+        if let Some(values) = self.dense_values() {
+            let mut values = values.to_vec();
+            for_each_chunk_mut(&mut values, 1, |_, chunk| T::scale_slice(chunk, scalar));
+            return Self::from_values_unchecked(self.shape(), Backend::Dense, values);
+        }
+        self.map_builtin(|value| value * scalar)
     }
 
     /// Returns the elementwise complex conjugate.
     pub fn conjugate(&self) -> Self {
-        self.map(Scalar::conj)
+        self.map_builtin(Scalar::conj)
     }
 
     /// Returns the elementwise absolute value in the same scalar category.
     pub fn abs(&self) -> Self {
-        self.map(Scalar::abs)
+        self.map_builtin(Scalar::abs)
     }
 
     /// Returns the elementwise squared norm in the same scalar category.
     pub fn norm_squared(&self) -> Self {
-        self.map(Scalar::norm_sqr)
+        self.map_builtin(Scalar::norm_sqr)
     }
 
     /// Returns the elementwise square root.
     pub fn sqrt(&self) -> Self {
-        self.map(Scalar::sqrt)
+        self.map_builtin(Scalar::sqrt)
     }
 
     /// Returns the rank-two transpose while preserving the backend.
     pub fn transpose(&self) -> TensorResult<Self> {
+        self.transpose_with(|value| value)
+    }
+
+    /// Transposes and conjugates in one pass, preserving the backend.
+    /// Dense work is O(rows * columns); sparse work visits only stored entries.
+    pub fn hermitian_transpose(&self) -> TensorResult<Self> {
+        self.transpose_with(Scalar::conj)
+    }
+
+    fn transpose_with(&self, function: impl Fn(T) -> T + Sync) -> TensorResult<Self> {
         self.ensure_rank("transpose", 2)?;
-        let rows = self.shape()[0];
-        let columns = self.shape()[1];
-        let values = (0..columns * rows)
-            .map(|index| {
-                let row = index / rows;
-                let column = index % rows;
-                self.get_flat_unchecked(column * columns + row)
-            })
-            .collect();
+        let [rows, columns] = [self.shape()[0], self.shape()[1]];
+        if let Some(entries) = self.sparse_entries() {
+            return Ok(Self::from_sparse_flat_entries_unchecked(
+                vec![columns, rows],
+                entries
+                    .map(|(index, value)| {
+                        ((index % columns) * rows + index / columns, function(value))
+                    })
+                    .collect(),
+            ));
+        }
+        let input = self.dense_values().expect("dense backend");
+        let mut output = vec![T::zero(); self.size()];
+        for_each_chunk_mut(&mut output, rows, |start, chunk| {
+            for (column, destination) in chunk.chunks_exact_mut(rows).enumerate() {
+                for (row, value) in destination.iter_mut().enumerate() {
+                    *value = function(input[row * columns + start / rows + column]);
+                }
+            }
+        });
         Ok(Self::from_values_unchecked(
             &[columns, rows],
             self.backend(),
-            values,
+            output,
         ))
     }
 
-    /// Returns the rank-two Hermitian transpose while preserving the backend.
-    pub fn hermitian_transpose(&self) -> TensorResult<Self> {
-        Ok(self.transpose()?.conjugate())
-    }
-
-    /// Computes a dot product over equally shaped logical values.
+    /// Computes a dot product in logical row-major accumulation order.
+    /// O(logical size) time, O(1) auxiliary memory; no backend conversion.
     pub fn dot(&self, rhs: &Self) -> TensorResult<T> {
         ensure_same_shape(self.shape(), rhs.shape())?;
-        Ok((0..self.size())
-            .into_par_iter()
-            .map(|index| self.get_flat_unchecked(index) * rhs.get_flat_unchecked(index))
-            .reduce(T::zero, |left, right| left + right))
+        if let (Some(left), Some(right)) = (self.dense_values(), rhs.dense_values()) {
+            return Ok(left
+                .iter()
+                .zip(right)
+                .fold(T::zero(), |sum, (&a, &b)| sum + a * b));
+        }
+        Ok(self
+            .values()
+            .zip(rhs.values())
+            .fold(T::zero(), |sum, (a, b)| sum + a * b))
     }
 
-    /// Computes a Hermitian dot product over equally shaped logical values.
+    /// Computes a conjugated dot product in logical row-major accumulation order.
+    /// O(logical size) time and O(1) auxiliary memory.
     pub fn hermitian_dot(&self, rhs: &Self) -> TensorResult<T> {
         ensure_same_shape(self.shape(), rhs.shape())?;
-        Ok((0..self.size())
-            .into_par_iter()
-            .map(|index| self.get_flat_unchecked(index).conj() * rhs.get_flat_unchecked(index))
-            .reduce(T::zero, |left, right| left + right))
+        if let (Some(left), Some(right)) = (self.dense_values(), rhs.dense_values()) {
+            return Ok(left
+                .iter()
+                .zip(right)
+                .fold(T::zero(), |sum, (&a, &b)| sum + a.conj() * b));
+        }
+        Ok(self
+            .values()
+            .zip(rhs.values())
+            .fold(T::zero(), |sum, (a, b)| sum + a.conj() * b))
     }
 
     /// Returns the real-valued squared Euclidean norm.
     pub fn norm_squared_real(&self) -> T::Real {
-        self.values()
-            .map(Scalar::norm_sqr_real)
-            .fold(T::Real::zero(), |left, right| left + right)
+        if let Some(values) = self.dense_values() {
+            return values
+                .iter()
+                .copied()
+                .map(Scalar::norm_sqr_real)
+                .fold(T::Real::zero(), |a, b| a + b);
+        }
+        let mut entries: Vec<_> = self.sparse_entries().expect("sparse backend").collect();
+        entries.sort_unstable_by_key(|&(index, _)| index);
+        entries
+            .into_iter()
+            .fold(T::Real::zero(), |sum, (_, value)| {
+                sum + value.norm_sqr_real()
+            })
     }
 
     /// Returns the Euclidean norm in the tensor scalar category.
@@ -580,87 +713,220 @@ impl<T: Scalar> Tensor<T> {
     /// The general kernel performs `O(mkn)` scalar operations. Preserving a
     /// sparse receiver can create dense occupancy.
     pub fn matmul(&self, rhs: &Self) -> TensorResult<Self> {
+        let shape = self.matmul_shape(rhs)?;
+        let mut output = Self::zeros(&shape, self.backend())?;
+        self.matmul_into(rhs, &mut output)?;
+        Ok(output)
+    }
+
+    /// Multiplies into a caller-owned result, retaining its backend.
+    ///
+    /// # Errors
+    /// Rank, inner-dimension, derived-shape and output-shape errors are checked
+    /// before mutation. Arithmetic panics do not guarantee rollback.
+    ///
+    /// # Complexity
+    /// O(mkn) arithmetic. Dense output reuses its allocation without scratch;
+    /// sparse output stores nonzero results directly. Two finite sparse inputs
+    /// instead sort their support and visit matching products, using O(stored
+    /// inputs) scratch plus the result's stored entries. Dense inputs use blocked
+    /// row kernels, preserving each element's increasing-k accumulation order.
+    pub fn matmul_into(&self, rhs: &Self, output: &mut Self) -> TensorResult<()> {
+        let [rows, columns] = self.matmul_shape(rhs)?;
+        ensure_same_shape(&[rows, columns], output.shape())?;
+        let inner = self.shape()[1];
+        if let (Some(left), Some(right)) = (self.sparse_entries(), rhs.sparse_entries()) {
+            let mut left: Vec<_> = left.collect();
+            let mut right: Vec<_> = right.collect();
+            // Nonfinite operands require evaluating implicit zero products.
+            if left
+                .iter()
+                .chain(&right)
+                .all(|&(_, value)| value.is_finite())
+            {
+                left.sort_unstable_by_key(|&(index, _)| index);
+                right.sort_unstable_by_key(|&(index, _)| index);
+                let mut right_rows = std::collections::BTreeMap::<usize, Vec<(usize, T)>>::new();
+                for (index, value) in right {
+                    right_rows
+                        .entry(index / columns)
+                        .or_default()
+                        .push((index % columns, value));
+                }
+                output.fill(T::zero());
+                for (index, a) in left {
+                    if let Some(row) = right_rows.get(&(index % inner)) {
+                        for &(column, b) in row {
+                            let index = (index / inner) * columns + column;
+                            output.set_flat_unchecked(
+                                index,
+                                output.get_flat_unchecked(index) + a * b,
+                            );
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
+        if let (Some(left), Some(right), Some(destination)) = (
+            self.dense_values(),
+            rhs.dense_values(),
+            output.dense_values_mut(),
+        ) {
+            for_each_chunk_mut(destination, columns, |start, chunk| {
+                for (row, out) in chunk.chunks_exact_mut(columns).enumerate() {
+                    out.fill(T::zero());
+                    let left = &left[(start / columns + row) * inner..][..inner];
+                    for block in (0..columns).step_by(64) {
+                        let end = (block + 64).min(columns);
+                        for (k, &a) in left.iter().enumerate() {
+                            for (out, &b) in out[block..end]
+                                .iter_mut()
+                                .zip(&right[k * columns + block..k * columns + end])
+                            {
+                                *out = *out + a * b;
+                            }
+                        }
+                    }
+                }
+            });
+        } else {
+            output.fill(T::zero());
+            for row in 0..rows {
+                for column in 0..columns {
+                    let value = (0..inner).fold(T::zero(), |sum, k| {
+                        sum + self.get_flat_unchecked(row * inner + k)
+                            * rhs.get_flat_unchecked(k * columns + column)
+                    });
+                    output.set_flat_unchecked(row * columns + column, value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn matmul_shape(&self, rhs: &Self) -> TensorResult<[usize; 2]> {
         self.ensure_rank("matmul", 2)?;
         rhs.ensure_rank("matmul", 2)?;
-        let rows = self.shape()[0];
-        let inner = self.shape()[1];
-        if inner != rhs.shape()[0] {
+        if self.shape()[1] != rhs.shape()[0] {
             return Err(TensorError::DimensionMismatch {
                 operation: "matmul",
-                lhs: inner,
+                lhs: self.shape()[1],
                 rhs: rhs.shape()[0],
             });
         }
-        let columns = rhs.shape()[1];
-        let output_size = checked_num_elements(&[rows, columns])?;
-        let values = (0..output_size)
-            .into_par_iter()
-            .map(|index| {
-                let row = index / columns;
-                let column = index % columns;
-                (0..inner).fold(T::zero(), |sum, offset| {
-                    sum + self.get_flat_unchecked(row * inner + offset)
-                        * rhs.get_flat_unchecked(offset * columns + column)
-                })
-            })
-            .collect();
-        Ok(Self::from_values_unchecked(
-            &[rows, columns],
-            self.backend(),
-            values,
-        ))
+        let shape = [self.shape()[0], rhs.shape()[1]];
+        checked_num_elements(&shape)?;
+        Ok(shape)
     }
 
     /// Casts every logical value while preserving the backend.
     pub fn cast<U: Scalar>(&self) -> Result<Tensor<U>, ScalarCastError> {
+        if let Some(entries) = self.sparse_entries() {
+            let mut entries: Vec<_> = entries.collect();
+            entries.sort_unstable_by_key(|&(index, _)| index);
+            let entries = entries
+                .into_iter()
+                .map(|(index, value)| value.try_cast::<U>().map(|value| (index, value)))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Tensor::from_sparse_flat_entries_unchecked(
+                self.shape().to_vec(),
+                entries,
+            ));
+        }
         let values = self
-            .values()
-            .map(|value| value.try_cast::<U>())
+            .dense_values()
+            .expect("dense backend")
+            .iter()
+            .copied()
+            .map(Scalar::try_cast)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Tensor::<U>::from_values_unchecked(
+        Ok(Tensor::from_values_unchecked(
             self.shape(),
-            self.backend(),
+            Backend::Dense,
             values,
         ))
     }
 
-    fn zip<F>(&self, rhs: &Self, function: F) -> TensorResult<Self>
-    where
-        F: Fn(T, T) -> T + Send + Sync,
-    {
+    fn map_builtin(&self, function: impl Fn(T) -> T + Send + Sync) -> Self {
+        if function(T::zero()) == T::zero()
+            && let Some(entries) = self.sparse_entries()
+        {
+            return Self::from_sparse_flat_entries_unchecked(
+                self.shape().to_vec(),
+                entries
+                    .map(|(index, value)| (index, function(value)))
+                    .collect(),
+            );
+        }
+        self.map(function)
+    }
+
+    fn zip(&self, rhs: &Self, op: BinaryOp) -> TensorResult<Self> {
         ensure_same_shape(self.shape(), rhs.shape())?;
-        let values = (0..self.size())
-            .into_par_iter()
-            .map(|index| {
-                function(
-                    self.get_flat_unchecked(index),
-                    rhs.get_flat_unchecked(index),
-                )
-            })
-            .collect();
-        Ok(Self::from_values_unchecked(
-            self.shape(),
-            self.backend(),
-            values,
-        ))
+        let mut output = Self::zeros(self.shape(), self.backend())?;
+        self.zip_into(rhs, &mut output, op)?;
+        Ok(output)
     }
 
-    fn zip_into<F>(&self, rhs: &Self, output: &mut Self, function: F) -> TensorResult<()>
-    where
-        F: Fn(T, T) -> T + Send + Sync,
-    {
+    fn zip_into(&self, rhs: &Self, output: &mut Self, op: BinaryOp) -> TensorResult<()> {
         ensure_same_shape(self.shape(), rhs.shape())?;
         ensure_same_shape(self.shape(), output.shape())?;
-        let values = (0..self.size())
-            .into_par_iter()
-            .map(|index| {
-                function(
-                    self.get_flat_unchecked(index),
-                    rhs.get_flat_unchecked(index),
+        if let (Some(left), Some(right), Some(out)) = (
+            self.dense_values(),
+            rhs.dense_values(),
+            output.dense_values_mut(),
+        ) {
+            for_each_chunk_mut(out, 1, |start, chunk| {
+                T::binary_into(
+                    &left[start..start + chunk.len()],
+                    &right[start..start + chunk.len()],
+                    chunk,
+                    op,
                 )
-            })
-            .collect();
-        output.replace_with_values(values);
+            });
+            return Ok(());
+        }
+        if let (Storage::Sparse(left), Storage::Sparse(right)) = (&self.storage, &rhs.storage)
+            && op.preserves_implicit_zero()
+        {
+            output.fill(T::zero());
+            let left = left.storage().entries();
+            let right = right.storage().entries();
+            for (&index, &a) in left {
+                output.set_flat_unchecked(
+                    index,
+                    op.apply(a, right.get(&index).copied().unwrap_or_else(T::zero)),
+                );
+            }
+            for (&index, &b) in right {
+                if !left.contains_key(&index) {
+                    output.set_flat_unchecked(index, op.apply(T::zero(), b));
+                }
+            }
+            return Ok(());
+        }
+        if let Some(out) = output.dense_values_mut() {
+            for_each_chunk_mut(out, 1, |start, chunk| {
+                for (offset, value) in chunk.iter_mut().enumerate() {
+                    *value = op.apply(
+                        self.get_flat_unchecked(start + offset),
+                        rhs.get_flat_unchecked(start + offset),
+                    );
+                }
+            });
+        } else {
+            output.fill(T::zero());
+            for index in 0..self.size() {
+                output.set_flat_unchecked(
+                    index,
+                    op.apply(
+                        self.get_flat_unchecked(index),
+                        rhs.get_flat_unchecked(index),
+                    ),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -693,6 +959,7 @@ impl<T: Scalar> Tensor<T> {
 
     fn from_values_unchecked(shape: &[usize], backend: Backend, values: Vec<T>) -> Self {
         Self {
+            logical_size: values.len(),
             storage: Self::storage_from_values_unchecked(shape, backend, values),
         }
     }
@@ -724,6 +991,7 @@ impl<T: Scalar> Tensor<T> {
         entries: Vec<(usize, T)>,
     ) -> Self {
         Self {
+            logical_size: checked_num_elements(&shape).expect("validated sparse shape"),
             storage: Storage::Sparse(BackendTensor::<T, Sparse>::from_storage(
                 super::rank_n::sparse::Tensor::from_flat_pairs(shape, entries),
             )),
@@ -733,16 +1001,28 @@ impl<T: Scalar> Tensor<T> {
     pub(crate) fn get_flat_unchecked(&self, index: usize) -> T {
         debug_assert!(index < self.size());
         match &self.storage {
-            Storage::Dense(storage) => storage.get_flat(index as isize),
-            Storage::Sparse(storage) => storage.get_flat(index as isize),
+            Storage::Dense(storage) => storage.storage().data()[index],
+            Storage::Sparse(storage) => storage
+                .storage()
+                .entries()
+                .get(&index)
+                .copied()
+                .unwrap_or_else(T::zero),
         }
     }
 
     pub(crate) fn set_flat_unchecked(&mut self, index: usize, value: T) {
         debug_assert!(index < self.size());
         match &mut self.storage {
-            Storage::Dense(storage) => storage.set_flat(index as isize, value),
-            Storage::Sparse(storage) => storage.set_flat(index as isize, value),
+            Storage::Dense(storage) => storage.storage_mut().data_mut()[index] = value,
+            Storage::Sparse(storage) => {
+                let entries = storage.storage_mut().entries_mut();
+                if value == T::zero() {
+                    entries.remove(&index);
+                } else {
+                    entries.insert(index, value);
+                }
+            }
         }
     }
 
@@ -864,7 +1144,14 @@ where
             StorageOwned::Dense(storage) => Storage::Dense(storage),
             StorageOwned::Sparse(storage) => Storage::Sparse(storage),
         };
-        Ok(Self { storage })
+        let logical_size = match &storage {
+            Storage::Dense(value) => value.size(),
+            Storage::Sparse(value) => value.size(),
+        };
+        Ok(Self {
+            storage,
+            logical_size,
+        })
     }
 }
 
