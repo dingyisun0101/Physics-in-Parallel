@@ -532,6 +532,12 @@ impl<T: Scalar> Tensor<T> {
     }
 
     /// Computes the exterior product of two equally sized rank-one tensors.
+    ///
+    /// # Errors
+    /// Returns a rank, dimension, or output-shape error before allocating.
+    ///
+    /// # Complexity
+    /// Uses O(n²) time and temporary storage, preserving the receiver backend.
     pub fn wedge(&self, rhs: &Self) -> TensorResult<Self> {
         self.ensure_rank("wedge", 1)?;
         rhs.ensure_rank("wedge", 1)?;
@@ -543,7 +549,8 @@ impl<T: Scalar> Tensor<T> {
             });
         }
         let size = self.shape()[0];
-        let values = (0..size * size)
+        let output_size = checked_num_elements(&[size, size])?;
+        let values = (0..output_size)
             .map(|index| {
                 let row = index / size;
                 let column = index % size;
@@ -566,6 +573,10 @@ impl<T: Scalar> Tensor<T> {
     ///
     /// # Complexity
     ///
+    /// # Errors
+    /// Invalid ranks, incompatible inner dimensions, and unrepresentable output
+    /// shapes return an error before output allocation.
+    ///
     /// The general kernel performs `O(mkn)` scalar operations. Preserving a
     /// sparse receiver can create dense occupancy.
     pub fn matmul(&self, rhs: &Self) -> TensorResult<Self> {
@@ -581,7 +592,8 @@ impl<T: Scalar> Tensor<T> {
             });
         }
         let columns = rhs.shape()[1];
-        let values = (0..rows * columns)
+        let output_size = checked_num_elements(&[rows, columns])?;
+        let values = (0..output_size)
             .into_par_iter()
             .map(|index| {
                 let row = index / columns;

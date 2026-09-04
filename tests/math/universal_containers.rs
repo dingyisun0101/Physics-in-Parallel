@@ -1,6 +1,28 @@
 use physics_in_parallel::math::{Backend, Matrix, Tensor, TensorError, VectorList};
 
 #[test]
+fn derived_shapes_are_rejected_without_materializing_sparse_inputs() {
+    let extent = 1_usize << (usize::BITS / 2);
+    let lhs = Tensor::<f64>::zeros(&[extent, 1], Backend::Sparse).unwrap();
+    let rhs = Tensor::<f64>::zeros(&[1, extent], Backend::Sparse).unwrap();
+    assert!(matches!(
+        lhs.matmul(&rhs),
+        Err(TensorError::ShapeProductOverflow { .. })
+    ));
+    let vector = Tensor::<f64>::zeros(&[extent], Backend::Sparse).unwrap();
+    assert!(matches!(
+        vector.wedge(&vector),
+        Err(TensorError::ShapeProductOverflow { .. })
+    ));
+    let lhs = Tensor::<f64>::zeros(&[isize::MAX as usize, 1], Backend::Sparse).unwrap();
+    let rhs = Tensor::<f64>::zeros(&[1, 2], Backend::Sparse).unwrap();
+    assert!(matches!(
+        lhs.matmul(&rhs),
+        Err(TensorError::IndexSpaceOverflow { .. })
+    ));
+}
+
+#[test]
 fn tensor_construction_selects_backend_without_changing_the_public_type() {
     let values = vec![1_i64, 0, 0, 2];
     let dense = Tensor::from_values(&[2, 2], Backend::Dense, values.clone()).unwrap();

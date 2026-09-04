@@ -12,28 +12,6 @@
 
 use super::scalar_trait::{Scalar, scalar_sealed::Sealed};
 
-#[inline]
-/// Integer square root for `u128`.
-///
-/// Returns:
-///	- the largest integer `r` such that `r * r <= n`.
-fn isqrt_u128(n: u128) -> u128 {
-    if n < 2 {
-        return n;
-    }
-    let mut lo = 0u128;
-    let mut hi = 1u128 << 64; // sqrt(u128::MAX) < 2^64
-    while lo + 1 < hi {
-        let mid = lo + ((hi - lo) >> 1);
-        if mid <= n / mid {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
-}
-
 macro_rules! impl_sealed_for {
     ($($t:ty),* $(,)?) => { $(impl Sealed for $t {})* };
 }
@@ -170,7 +148,7 @@ macro_rules! impl_scalar_unsigned {
 
             #[inline]
             fn sqrt(self) -> Self {
-                isqrt_u128(self as u128) as $t
+                self.isqrt()
             }
 
             #[inline]
@@ -223,7 +201,7 @@ macro_rules! impl_scalar_signed {
                 if self <= 0 {
                     0 as $t
                 } else {
-                    isqrt_u128(self as u128) as $t
+                    self.isqrt()
                 }
             }
 

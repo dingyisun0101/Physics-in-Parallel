@@ -202,6 +202,9 @@ pub trait Scalar:
     /// located at the real-domain boundary rather than in the type-preserving
     /// section because the target scalar type may differ from the source type.
     ///
+    /// This is a range-checked conversion, not a lossless conversion: floating
+    /// precision may be rounded and fractional parts truncated by integer targets.
+    ///
     /// Semantics:
     ///	- `Self` is projected to `(self.re(), self.im())`.
     ///	- Each component is cast into `U::Real` with `NumCast`.

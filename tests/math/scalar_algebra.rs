@@ -1,5 +1,22 @@
 use physics_in_parallel::prelude::basic::{Complex, Scalar, ScalarCastError};
 
+#[test]
+fn integer_square_roots_preserve_extremes_and_square_boundaries() {
+    for n in 0..=u16::MAX {
+        let root = <u16 as Scalar>::sqrt(n) as u32;
+        assert!(root * root <= u32::from(n));
+        assert!((root + 1) * (root + 1) > u32::from(n));
+    }
+    for n in [0, 1, 2, (1_u128 << 126) - 1, 1_u128 << 126, u128::MAX] {
+        let root = <u128 as Scalar>::sqrt(n);
+        assert!(root == 0 || root <= n / root);
+        assert!(root + 1 > n / (root + 1));
+    }
+    assert_eq!(<i128 as Scalar>::sqrt(i128::MIN), 0);
+    assert_eq!(<i128 as Scalar>::sqrt(-1), 0);
+    assert_eq!(<i128 as Scalar>::sqrt(i128::MAX), i128::MAX.isqrt());
+}
+
 fn assert_close_f64(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 1e-12,
