@@ -118,3 +118,38 @@ fn spatial_refresh_reuses_storage() {
         }
     });
 }
+
+#[test]
+fn dense_particle_step_and_observation_borrow_columns() {
+    use physics_in_parallel::prelude::models::*;
+    use physics_in_parallel::rng::{ResolvedRng, RngMethod};
+    use physics_in_parallel::space::ReflectBox;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut particles = create_template(3, 10_000).unwrap();
+        let boundary = ReflectBox::new(&[0.0; 3], &[1.0; 3]).unwrap();
+        let mut thermostat = LangevinThermostat::new(
+            1.0,
+            0.5,
+            ResolvedRng::new(5, RngMethod::IndexedSplitMix64),
+            ParticleSelection::AliveOnly,
+        )
+        .unwrap();
+        ExplicitEuler.apply(&mut particles, 0.01).unwrap();
+        thermostat.apply(&mut particles, 0.01).unwrap();
+        COUNT.set(0);
+        ACTIVE.set(true);
+        ExplicitEuler.apply(&mut particles, 0.01).unwrap();
+        SemiImplicitEuler.apply(&mut particles, 0.01).unwrap();
+        thermostat.apply(&mut particles, 0.01).unwrap();
+        boundary.apply_to_particles(&mut particles).unwrap();
+        let result = kinetic_summary(&particles, ParticleSelection::AliveOnly).unwrap();
+        set_mass(&mut particles, 0, 2.0).unwrap();
+        ACTIVE.set(false);
+        assert_eq!(COUNT.get(), 0);
+        assert!(result.energy.is_finite());
+    });
+}

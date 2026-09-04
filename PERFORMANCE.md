@@ -100,3 +100,19 @@ retain their own allocation and failure behavior.
 The lattice Laplacian uses contiguous interior spans with fixed neighbor offsets
 and separate boundary spans; inverse spacings are cached in validated geometry.
 It allocates no per-call scratch and retains increasing-axis accumulation order.
+
+## Particle operations
+
+Dense Euler integration, Langevin updates, built-in particle boundaries and
+kinetic observations borrow validated columns. Euler updates are fused per row;
+thermostat amplitudes are checked for every included particle before mutation.
+Failures preserve velocities and the thermostat counter. Custom boundaries stage
+both position and velocity unless they explicitly promise infallibility after
+shape validation; external callback side effects are outside this guarantee.
+
+`kinetic_summary` computes energy, temperature and population together in ordered
+serial accumulation, with no dense input copies. Sparse model updates may still
+stage logical columns. `set_mass` validates and writes mass and inverse mass
+together; rigid flags express fixed bodies. Force routines permit zero inverse
+mass, while thermostats and kinetic observers require positive finite inverse
+mass for included particles. See `examples/basic_particle.rs` for a complete loop.

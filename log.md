@@ -184,3 +184,13 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - Lattice stencils traverse contiguous per-axis interior spans with fixed offsets and retain general boundary spans. Cached inverse spacing is omitted from serialization and reconstructed by validation. Exact comparisons cover ranks 1–4, tiny extents, three boundary kinds, anisotropic spacing and component counts 1/2/3/8/17.
 - An initial test imported a private implementation module; corrected it to the public space API. Spatial/allocation regressions and strict Clippy passed.
 - All-target Rust tests, warning-free rustdoc, formatting and diff checks passed before delivery.
+
+### Batch 5 — particle state and model ergonomics
+
+- Batch 4 pushed as `e433e4a`.
+- Added safe disjoint typed attribute borrows with optional borrowed flag columns, and moved successful attribute type-name formatting off the hot path. Euler updates fuse each row while preserving the explicit/implicit velocity convention. Dense updates, masks and read columns now avoid full-column copies.
+- Thermostats prevalidate every included inverse mass and derived sigma before writes. Regression cases put invalid mass first/last, verify untouched velocities and counter, and verify continuation against a restored thermostat for dense/sparse backends.
+- Built-in boundaries update position and velocity together. Custom boundaries conservatively stage both columns for error atomicity; the new defaulted trait method documents when an implementation can opt out of staging after dimension validation. A four-worker caller pool with a one-thread PiP cap records exactly one callback worker.
+- Added kinetic_summary for one-pass energy/temperature/count, borrowing dense inputs and preserving ordered serial accumulation. Added set_mass with finite positive mass/reciprocal checks and two-field consistency. Added a complete shared-pool example with acceleration reset, forces, integration, walls, thermostat and observation.
+- Warm allocation regression measures zero allocations for the dense integration/thermostat/built-in-boundary/observation/mass-update sequence. An initial regression reversed create_template's dimension/count arguments; fixed the test setup. Model, execution-budget and allocation tests passed on both supported backends.
+- All targets, strict Clippy, warning-free rustdoc, formatting and the executable simulation example passed before committing.

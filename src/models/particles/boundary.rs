@@ -20,12 +20,12 @@ Particle-specific behavior is limited to storage traversal and masks:
 
 use core::fmt;
 
-use rayon::prelude::*;
+use crate::threading::try_for_each_pair_chunk_mut;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_R, ATTR_V, ParticleSelection};
 use crate::models::particles::state::{
-    ParticleMasks, ParticleStateError, gather_masks, validate_vector_attr_f64,
+    BorrowedMasks, ParticleStateError, mask_labels, validate_vector_attr_f64,
 };
 use crate::space::continuous::boundary::{
     BoundaryError as ContinuousBoundaryError, ContinuousBoundary,
@@ -77,7 +77,9 @@ impl std::error::Error for ParticleBoundaryError {
 
 pub trait ParticleBoundary: ContinuousBoundary + Send + Sync {
     /// Apply this continuous boundary to canonical particle positions and
-    /// velocities stored in `PhysObj`.
+    /// velocities stored in `PhysObj`. Built-in boundaries borrow dense buffers.
+    /// Fallible custom boundaries stage both columns and commit only on success;
+    /// callback side effects outside particle state cannot be rolled back.
     fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError>;
 }
 
@@ -86,7 +88,9 @@ where
     T: ContinuousBoundary + Send + Sync,
 {
     fn apply_to_particles(&self, objects: &mut PhysObj) -> Result<(), ParticleBoundaryError> {
-        let (dim, n, masks) = shape_alive_rigid(objects)?;
+        let r = objects.core.get::<f64>(ATTR_R)?;
+        let (dim, n) = (r.dim(), r.num_vectors());
+        validate_vector_attr_f64(objects, ATTR_V, dim, n)?;
         if self.dim() != dim {
             return Err(ContinuousBoundaryError::InvalidVectorDimension {
                 label: "bounds",
@@ -95,60 +99,40 @@ where
             }
             .into());
         }
-
-        let mut flip_mask: Vec<u8> = vec![0; n * dim];
-
-        {
-            let r = objects.core.get_mut::<f64>(ATTR_R)?;
-            r.edit_values(|values| {
-                values
-                    .par_chunks_mut(dim)
-                    .zip(flip_mask.par_chunks_mut(dim))
-                    .enumerate()
-                    .try_for_each(|(i, (r_row, mask_row))| {
-                        if masks.should_skip(i) {
-                            return Ok(());
+        let flags = mask_labels(objects, ParticleSelection::AliveOnly);
+        let ([r, v], flags) = objects
+            .core
+            .get_mixed_mut::<f64, u8, 2, 2>([ATTR_R, ATTR_V], flags)?;
+        let masks = BorrowedMasks::new(flags, n)?;
+        let apply = |positions: &mut [f64], velocities: &mut [f64]| {
+            try_for_each_pair_chunk_mut(
+                positions,
+                velocities,
+                dim,
+                |start, positions, velocities| {
+                    for (index, (r, v)) in positions
+                        .chunks_exact_mut(dim)
+                        .zip(velocities.chunks_exact_mut(dim))
+                        .enumerate()
+                    {
+                        if !masks.should_skip(start / dim + index) {
+                            self.apply_position_velocity(r, v)?;
                         }
-                        self.apply_position_with_velocity_flip_mask(r_row, mask_row)
-                    })
-            })?;
+                    }
+                    Ok::<_, ContinuousBoundaryError>(())
+                },
+            )
+        };
+        if self.may_fail_after_validation() {
+            // Arbitrary callbacks can fail after earlier rows were updated.
+            let mut positions = r.logical_values();
+            let mut velocities = v.logical_values();
+            apply(&mut positions, &mut velocities)?;
+            r.replace_values(positions);
+            v.replace_values(velocities);
+        } else {
+            r.edit_values(|positions| v.edit_values(|velocities| apply(positions, velocities)))?;
         }
-
-        {
-            let v = objects.core.get_mut::<f64>(ATTR_V)?;
-            v.edit_values(|values| {
-                values
-                    .par_chunks_mut(dim)
-                    .zip(flip_mask.par_chunks(dim))
-                    .enumerate()
-                    .for_each(|(i, (v_row, mask_row))| {
-                        if masks.should_skip(i) {
-                            return;
-                        }
-
-                        for d in 0..dim {
-                            if mask_row[d] == 1 {
-                                v_row[d] = -v_row[d];
-                            }
-                        }
-                    });
-            });
-        }
-
         Ok(())
     }
-}
-
-#[inline]
-fn shape_alive_rigid(
-    objects: &PhysObj,
-) -> Result<(usize, usize, ParticleMasks), ParticleBoundaryError> {
-    let (dim, n) = {
-        let r = objects.core.get::<f64>(ATTR_R)?;
-        (r.dim(), r.num_vectors())
-    };
-
-    validate_vector_attr_f64(objects, ATTR_V, dim, n)?;
-    let masks = gather_masks(objects, n, ParticleSelection::AliveOnly)?;
-    Ok((dim, n, masks))
 }

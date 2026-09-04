@@ -19,11 +19,13 @@ particle and velocity component. The random stream is deterministic for a fixed
 
 use core::fmt;
 
-use rayon::prelude::*;
+use crate::threading::for_each_chunk_mut;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
-use crate::models::particles::state::{ParticleStateError, gather_inverse_mass, gather_masks};
+use crate::models::particles::state::{
+    BorrowedMasks, ParticleStateError, mask_labels, validate_scalar_shape,
+};
 use crate::rng::{ResolvedRng, RngError};
 use crate::space::discrete::square_lattice::random::IndexedRng;
 
@@ -180,6 +182,8 @@ impl LangevinThermostat {
 }
 
 impl Thermostat for LangevinThermostat {
+    /// Validates all masses and noise amplitudes before mutation. On error,
+    /// velocities and the replay counter are unchanged for either backend.
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), ThermostatError> {
         validate_dt(dt)?;
 
@@ -188,8 +192,13 @@ impl Thermostat for LangevinThermostat {
             (v.dim(), v.num_vectors())
         };
 
-        let m_inv_values = gather_inverse_mass(objects, n)?;
-        let masks = gather_masks(objects, n, self.selection)?;
+        let flags = mask_labels(objects, self.selection);
+        let ([v, mass], flags) = objects
+            .core
+            .get_mixed_mut::<f64, u8, 2, 2>([ATTR_V, ATTR_M_INV], flags)?;
+        validate_scalar_shape(ATTR_M_INV, mass.dim(), mass.num_vectors(), n)?;
+        let m_inv_values = mass.borrow_values();
+        let masks = BorrowedMasks::new(flags, n)?;
 
         let c = (-self.gamma * dt).exp();
         let one_minus_c2 = (1.0 - c * c).max(0.0);
@@ -197,44 +206,46 @@ impl Thermostat for LangevinThermostat {
         let rng = self.rng;
         let tau_target = self.tau_target;
 
-        let v = objects.core.get_mut::<f64>(ATTR_V)?;
+        // Validate every included mass and derived amplitude before any write.
+        // Recomputing the cheap square root avoids a full-system sigma buffer.
+        for (i, &mass) in m_inv_values.iter().enumerate() {
+            if masks.should_skip(i) {
+                continue;
+            }
+            if !mass.is_finite() || mass <= 0.0 {
+                return Err(ThermostatError::InvalidParam {
+                    field: ATTR_M_INV,
+                    value: mass,
+                });
+            }
+            let sigma = (tau_target * mass * one_minus_c2).sqrt();
+            if !sigma.is_finite() {
+                return Err(ThermostatError::InvalidParam {
+                    field: "sigma",
+                    value: sigma,
+                });
+            }
+        }
         v.edit_values(|values| {
-            values.par_chunks_mut(dim).enumerate().try_for_each(
-                |(i, row)| -> Result<(), ThermostatError> {
+            for_each_chunk_mut(values, dim, |start, chunk| {
+                for (row, values) in chunk.chunks_exact_mut(dim).enumerate() {
+                    let i = start / dim + row;
                     if masks.should_skip(i) {
-                        return Ok(());
+                        continue;
                     }
-
-                    let m_inv = m_inv_values[i];
-                    if !m_inv.is_finite() || m_inv <= 0.0 {
-                        return Err(ThermostatError::InvalidParam {
-                            field: ATTR_M_INV,
-                            value: m_inv,
-                        });
-                    }
-
-                    let sigma = (tau_target * m_inv * one_minus_c2).sqrt();
-                    if !sigma.is_finite() {
-                        return Err(ThermostatError::InvalidParam {
-                            field: "sigma",
-                            value: sigma,
-                        });
-                    }
-
-                    for (component, vd) in row.iter_mut().enumerate() {
+                    let sigma = (tau_target * m_inv_values[i] * one_minus_c2).sqrt();
+                    for (component, value) in values.iter_mut().enumerate() {
                         let z = rng.standard_normal(
                             step,
                             DOMAIN_LANGEVIN_NORMAL,
                             i as u64,
                             component as u64,
                         );
-                        *vd = c * *vd + sigma * z;
+                        *value = c * *value + sigma * z;
                     }
-
-                    Ok(())
-                },
-            )
-        })?;
+                }
+            });
+        });
 
         self.step_counter = self.step_counter.wrapping_add(1);
         Ok(())

@@ -510,10 +510,66 @@ impl AttrsCore {
         ))
     }
 
+    /// Borrows disjoint typed columns and optional read-only flags without
+    /// cloning storage. All names/types are checked before returning; callers
+    /// still validate shapes on every operation. Scans attribute metadata only.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn get_mixed_mut<
+        T: Scalar + 'static,
+        U: Scalar + 'static,
+        const N: usize,
+        const M: usize,
+    >(
+        &mut self,
+        labels: [&str; N],
+        optional: [Option<&str>; M],
+    ) -> Result<([&mut VectorList<T>; N], [Option<&VectorList<U>>; M]), AttrsError> {
+        let mut ids = [0; N];
+        let mut other_ids = [None; M];
+        for (index, label) in labels.iter().enumerate() {
+            ids[index] = self.id_of(label)?;
+            self.get::<T>(label)?;
+            if ids[..index].contains(&ids[index]) {
+                return Err(AttrsError::DuplicateLabel {
+                    label: (*label).to_string(),
+                });
+            }
+        }
+        for (index, label) in optional.iter().enumerate() {
+            if let Some(label) = label {
+                let id = self.id_of(label)?;
+                self.get::<U>(label)?;
+                if ids.contains(&id) || other_ids[..index].contains(&Some(id)) {
+                    return Err(AttrsError::DuplicateLabel {
+                        label: (*label).to_string(),
+                    });
+                }
+                other_ids[index] = Some(id);
+            }
+        }
+        let mut columns: [Option<&mut VectorList<T>>; N] = std::array::from_fn(|_| None);
+        let mut flags: [Option<&VectorList<U>>; M] = std::array::from_fn(|_| None);
+        for (id, entry) in self.entries.iter_mut().enumerate() {
+            let Some(entry) = entry else { continue };
+            if let Some(index) = ids.iter().position(|&candidate| candidate == id) {
+                columns[index] = Some(Self::entry_data_mut(entry)?);
+            } else if let Some(index) = other_ids
+                .iter()
+                .position(|&candidate| candidate == Some(id))
+            {
+                flags[index] = entry.data.as_any().downcast_ref::<VectorList<U>>();
+            }
+        }
+        Ok((
+            columns.map(|column| column.expect("validated attribute id")),
+            flags,
+        ))
+    }
+
     fn entry_data_mut<T: Scalar + 'static>(
         entry: &mut AttrEntry,
     ) -> Result<&mut VectorList<T>, AttrsError> {
-        let got = entry.data.type_name().to_string();
+        let got = entry.data.type_name();
 
         entry
             .data
@@ -522,7 +578,7 @@ impl AttrsCore {
             .ok_or_else(|| AttrsError::WrongType {
                 label: entry.label.clone(),
                 expected: std::any::type_name::<T>().to_string(),
-                got,
+                got: got.to_string(),
             })
     }
 

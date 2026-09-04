@@ -23,10 +23,7 @@ use core::fmt;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_M_INV, ATTR_V, ParticleSelection};
-use crate::models::particles::state::{
-    ParticleMasks, ParticleStateError, gather_alive_flags, gather_inverse_mass,
-};
-use rayon::prelude::*;
+use crate::models::particles::state::{BorrowedMasks, ParticleStateError, validate_scalar_shape};
 
 /// Errors returned by particle observers.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,68 +70,74 @@ impl std::error::Error for ObserveError {
     }
 }
 
-#[derive(Debug, Clone)]
-struct KineticContext {
-    dim: usize,
-    n: usize,
-    v_data: Vec<f64>,
-    m_inv_values: Vec<f64>,
-    masks: ParticleMasks,
-    selection: ParticleSelection,
+/// Combined kinetic observation from one validated pass over included particles.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KineticSummary {
+    /// Total `0.5 * |v|² / m_inv`, including rigid particles if selected.
+    pub energy: f64,
+    /// `2 * energy / (particle_count * dimension)`, or zero for no particles.
+    pub temperature: f64,
+    /// Number of selected particles (rigidity does not remove degrees of freedom).
+    pub particle_count: usize,
 }
 
-fn gather_kinetic_context(
+/// Computes energy, temperature and population together without repeated gathers.
+///
+/// Dense columns are borrowed without allocation; sparse columns stage logical
+/// values. Mass/velocity checks and accumulation follow particle/component order
+/// on the caller thread. Every included inverse mass must be finite and positive;
+/// every included velocity component must be finite. No state is mutated.
+pub fn kinetic_summary(
     objects: &PhysObj,
     selection: ParticleSelection,
-) -> Result<KineticContext, ObserveError> {
-    let (dim, n, v_data) = {
-        let v = objects.core.get::<f64>(ATTR_V)?;
-        (v.dim(), v.num_vectors(), v.logical_values())
+) -> Result<KineticSummary, ObserveError> {
+    let velocity = objects.core.get::<f64>(ATTR_V)?;
+    let (dim, n) = (velocity.dim(), velocity.num_vectors());
+    let mass = objects.core.get::<f64>(ATTR_M_INV)?;
+    validate_scalar_shape(ATTR_M_INV, mass.dim(), mass.num_vectors(), n)?;
+    let alive = if !selection.includes_dead() && objects.core.contains(super::attrs::ATTR_ALIVE) {
+        Some(objects.core.get::<u8>(super::attrs::ATTR_ALIVE)?)
+    } else {
+        None
     };
-
-    Ok(KineticContext {
-        dim,
-        n,
-        v_data,
-        m_inv_values: gather_inverse_mass(objects, n)?,
-        masks: ParticleMasks {
-            alive: gather_alive_flags(objects, n, selection)?,
-            rigid: None,
-        },
-        selection,
-    })
-}
-
-fn kinetic_energy_from_context(ctx: &KineticContext) -> Result<f64, ObserveError> {
-    (0..ctx.n)
-        .into_par_iter()
-        .map(|i| -> Result<f64, ObserveError> {
-            if !ctx.masks.is_included(ctx.selection, i) {
-                return Ok(0.0);
-            }
-
-            let m_inv_i = ctx.m_inv_values[i];
-            if !m_inv_i.is_finite() || m_inv_i <= 0.0 {
+    let masks = BorrowedMasks::new([alive, None], n)?;
+    let velocity = velocity.borrow_values();
+    let mass = mass.borrow_values();
+    let mut energy = 0.0;
+    let mut count = 0;
+    for (index, row) in velocity.chunks_exact(dim).enumerate() {
+        if !masks.alive(index) {
+            continue;
+        }
+        let mass = mass[index];
+        if !mass.is_finite() || mass <= 0.0 {
+            return Err(ObserveError::InvalidState {
+                field: ATTR_M_INV,
+                value: mass,
+            });
+        }
+        let mut squared = 0.0;
+        for &component in row {
+            if !component.is_finite() {
                 return Err(ObserveError::InvalidState {
-                    field: ATTR_M_INV,
-                    value: m_inv_i,
+                    field: ATTR_V,
+                    value: component,
                 });
             }
-
-            let row = &ctx.v_data[i * ctx.dim..(i + 1) * ctx.dim];
-            let mut v2 = 0.0;
-            for &component in row {
-                if !component.is_finite() {
-                    return Err(ObserveError::InvalidState {
-                        field: ATTR_V,
-                        value: component,
-                    });
-                }
-                v2 += component * component;
-            }
-            Ok(0.5 * v2 / m_inv_i)
-        })
-        .try_reduce(|| 0.0, |a, b| Ok(a + b))
+            squared += component * component;
+        }
+        energy += 0.5 * squared / mass;
+        count += 1;
+    }
+    Ok(KineticSummary {
+        energy,
+        temperature: if count == 0 {
+            0.0
+        } else {
+            2.0 * energy / (count * dim) as f64
+        },
+        particle_count: count,
+    })
 }
 
 /// Computes one observable from the current particle state.
@@ -176,8 +179,7 @@ impl Observer for KineticEnergyObserver {
     type Output = f64;
 
     fn observe(&self, objects: &PhysObj) -> Result<Self::Output, ObserveError> {
-        let ctx = gather_kinetic_context(objects, self.selection)?;
-        kinetic_energy_from_context(&ctx)
+        Ok(kinetic_summary(objects, self.selection)?.energy)
     }
 }
 
@@ -212,14 +214,6 @@ impl Observer for TemperatureObserver {
     type Output = f64;
 
     fn observe(&self, objects: &PhysObj) -> Result<Self::Output, ObserveError> {
-        let ctx = gather_kinetic_context(objects, self.selection)?;
-        let ke = kinetic_energy_from_context(&ctx)?;
-        let count = ctx.masks.included_count(ctx.selection, ctx.n);
-
-        if count == 0 || ctx.dim == 0 {
-            return Ok(0.0);
-        }
-
-        Ok((2.0 * ke) / ((count * ctx.dim) as f64))
+        Ok(kinetic_summary(objects, self.selection)?.temperature)
     }
 }

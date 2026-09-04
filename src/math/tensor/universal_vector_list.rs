@@ -529,6 +529,14 @@ impl<T: Scalar> VectorList<T> {
         self.tensor.replace_with_values(values);
     }
 
+    /// Borrows dense data; sparse consumers explicitly stage logical values.
+    pub(crate) fn borrow_values(&self) -> std::borrow::Cow<'_, [T]> {
+        match self.tensor.dense_values() {
+            Some(values) => std::borrow::Cow::Borrowed(values),
+            None => std::borrow::Cow::Owned(self.logical_values()),
+        }
+    }
+
     pub(crate) fn logical_values(&self) -> Vec<T> {
         self.values().collect()
     }

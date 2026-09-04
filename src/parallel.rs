@@ -102,6 +102,33 @@ where
     }
 }
 
+/// Paired disjoint chunks with one captured budget and a serial small-input path.
+/// A callback error stops remaining work; callers requiring atomicity stage data.
+pub(crate) fn try_for_each_pair_chunk_mut<T: Send, U: Send, E: Send, F>(
+    left: &mut [T],
+    right: &mut [U],
+    width: usize,
+    function: F,
+) -> Result<(), E>
+where
+    F: Fn(usize, &mut [T], &mut [U]) -> Result<(), E> + Send + Sync,
+{
+    use rayon::prelude::*;
+    assert_eq!(left.len(), right.len());
+    assert!(width > 0 && left.len().is_multiple_of(width));
+    let Some(budget) = OperationBudget::capture(left.len() / width) else {
+        return Ok(());
+    };
+    if budget.jobs == 1 || left.len() < MIN_PARALLEL_ELEMENTS {
+        return function(0, left, right);
+    }
+    let chunk = budget.chunk_len(left.len() / width) * width;
+    left.par_chunks_mut(chunk)
+        .zip(right.par_chunks_mut(chunk))
+        .enumerate()
+        .try_for_each(|(index, (left, right))| function(index * chunk, left, right))
+}
+
 #[inline]
 pub(crate) fn parallel_chunk_len(work_units: usize) -> Option<usize> {
     OperationBudget::capture(work_units).map(|budget| budget.chunk_len(work_units))

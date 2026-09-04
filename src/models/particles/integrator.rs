@@ -19,12 +19,12 @@ left to the caller.
 
 use core::fmt;
 
-use rayon::prelude::*;
+use crate::threading::try_for_each_pair_chunk_mut;
 
 use crate::engines::soa::phys_obj::{AttrsError, PhysObj};
 use crate::models::particles::attrs::{ATTR_A, ATTR_R, ATTR_V, ParticleSelection};
 use crate::models::particles::state::{
-    ParticleMasks, ParticleStateError, gather_masks, validate_vector_attr_f64,
+    BorrowedMasks, ParticleStateError, mask_labels, validate_vector_attr_f64,
 };
 
 /// Errors returned by time integrators.
@@ -88,138 +88,63 @@ pub struct ExplicitEuler;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SemiImplicitEuler;
 
-#[derive(Debug, Clone)]
-struct IntegratorContext {
-    dim: usize,
-    masks: ParticleMasks,
-}
-
-fn validate_dt(dt: f64) -> Result<(), IntegratorError> {
+/// Validates once and fuses each row's position/velocity update. Dense columns
+/// are borrowed; sparse mutations use the vector-list staging path. The explicit
+/// variant saves old velocity before writing either result.
+fn apply_euler(objects: &mut PhysObj, dt: f64, semi_implicit: bool) -> Result<(), IntegratorError> {
     if !dt.is_finite() || dt <= 0.0 {
         return Err(IntegratorError::InvalidDt { dt });
     }
-    Ok(())
-}
-
-fn validate_core_shapes(objects: &PhysObj) -> Result<IntegratorContext, IntegratorError> {
-    let (dim, n) = {
-        let v = objects.core.get::<f64>(ATTR_V)?;
-        (v.dim(), v.num_vectors())
-    };
-
+    let v = objects.core.get::<f64>(ATTR_V)?;
+    let (dim, n) = (v.dim(), v.num_vectors());
     validate_vector_attr_f64(objects, ATTR_A, dim, n)?;
     validate_vector_attr_f64(objects, ATTR_R, dim, n)?;
-
-    Ok(IntegratorContext {
-        dim,
-        masks: gather_masks(objects, n, ParticleSelection::AliveOnly)?,
-    })
-}
-
-fn should_skip(ctx: &IntegratorContext, i: usize) -> bool {
-    ctx.masks.should_skip(i)
-}
-
-fn apply_explicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-    validate_dt(dt)?;
-    let ctx = validate_core_shapes(objects)?;
-
-    {
-        let (r, v) = objects.core.get_two_mut::<f64>(ATTR_R, ATTR_V)?;
-        let v_data = v.logical_values();
-        r.edit_values(|values| {
-            values
-                .par_chunks_mut(ctx.dim)
-                .enumerate()
-                .for_each(|(i, r_row)| {
-                    if should_skip(&ctx, i) {
-                        return;
+    let flags = mask_labels(objects, ParticleSelection::AliveOnly);
+    let ([r, v, a], flags) = objects
+        .core
+        .get_mixed_mut::<f64, u8, 3, 2>([ATTR_R, ATTR_V, ATTR_A], flags)?;
+    let masks = BorrowedMasks::new(flags, n)?;
+    let acceleration = a.borrow_values();
+    r.edit_values(|positions| {
+        v.edit_values(|velocities| {
+            try_for_each_pair_chunk_mut(
+                positions,
+                velocities,
+                dim,
+                |start, positions, velocities| {
+                    for (row, (r, v)) in positions
+                        .chunks_exact_mut(dim)
+                        .zip(velocities.chunks_exact_mut(dim))
+                        .enumerate()
+                    {
+                        let index = start / dim + row;
+                        if masks.should_skip(index) {
+                            continue;
+                        }
+                        let a = &acceleration[index * dim..][..dim];
+                        for ((r, v), &a) in r.iter_mut().zip(v).zip(a) {
+                            let old = *v;
+                            *v += a * dt;
+                            *r += if semi_implicit { *v * dt } else { old * dt };
+                        }
                     }
-
-                    let v_row = &v_data[i * ctx.dim..(i + 1) * ctx.dim];
-                    for k in 0..ctx.dim {
-                        r_row[k] += v_row[k] * dt;
-                    }
-                });
-        });
-    }
-
-    {
-        let (v, a) = objects.core.get_two_mut::<f64>(ATTR_V, ATTR_A)?;
-        let a_data = a.logical_values();
-        v.edit_values(|values| {
-            values
-                .par_chunks_mut(ctx.dim)
-                .enumerate()
-                .for_each(|(i, v_row)| {
-                    if should_skip(&ctx, i) {
-                        return;
-                    }
-
-                    let a_row = &a_data[i * ctx.dim..(i + 1) * ctx.dim];
-                    for k in 0..ctx.dim {
-                        v_row[k] += a_row[k] * dt;
-                    }
-                });
-        });
-    }
-
-    Ok(())
-}
-
-fn apply_semi_implicit_euler(objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-    validate_dt(dt)?;
-    let ctx = validate_core_shapes(objects)?;
-
-    let (a, v, r) = objects.core.get_three_mut::<f64>(ATTR_A, ATTR_V, ATTR_R)?;
-    let a_data = a.logical_values();
-
-    v.edit_values(|values| {
-        values
-            .par_chunks_mut(ctx.dim)
-            .enumerate()
-            .for_each(|(i, v_row)| {
-                if should_skip(&ctx, i) {
-                    return;
-                }
-
-                let a_row = &a_data[i * ctx.dim..(i + 1) * ctx.dim];
-                for k in 0..ctx.dim {
-                    v_row[k] += a_row[k] * dt;
-                }
-            });
+                    Ok::<_, std::convert::Infallible>(())
+                },
+            )
+            .expect("infallible validated integration");
+        })
     });
-
-    {
-        let v_data = v.logical_values();
-        r.edit_values(|values| {
-            values
-                .par_chunks_mut(ctx.dim)
-                .enumerate()
-                .for_each(|(i, r_row)| {
-                    if should_skip(&ctx, i) {
-                        return;
-                    }
-
-                    let v_row = &v_data[i * ctx.dim..(i + 1) * ctx.dim];
-                    for k in 0..ctx.dim {
-                        r_row[k] += v_row[k] * dt;
-                    }
-                });
-        });
-    }
-
     Ok(())
 }
 
 impl Integrator for ExplicitEuler {
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-        apply_explicit_euler(objects, dt)
+        apply_euler(objects, dt, false)
     }
 }
 
 impl Integrator for SemiImplicitEuler {
     fn apply(&mut self, objects: &mut PhysObj, dt: f64) -> Result<(), IntegratorError> {
-        apply_semi_implicit_euler(objects, dt)
+        apply_euler(objects, dt, true)
     }
 }

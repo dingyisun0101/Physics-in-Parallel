@@ -115,3 +115,66 @@ impl ParticleSelection {
         matches!(self, Self::All)
     }
 }
+
+/// Invalid consistent mass update.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MassError {
+    /// Mass and reciprocal must both be finite and strictly positive.
+    InvalidMass { mass: f64 },
+    /// Missing, mistyped, malformed or out-of-bounds particle attributes.
+    State(crate::models::ParticleStateError),
+}
+impl std::fmt::Display for MassError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidMass { mass } => write!(
+                f,
+                "mass and its reciprocal must be finite and positive; got {mass}"
+            ),
+            Self::State(error) => write!(f, "invalid mass state: {error}"),
+        }
+    }
+}
+impl std::error::Error for MassError {}
+impl From<AttrsError> for MassError {
+    fn from(error: AttrsError) -> Self {
+        Self::State(error.into())
+    }
+}
+impl From<crate::models::ParticleStateError> for MassError {
+    fn from(error: crate::models::ParticleStateError) -> Self {
+        Self::State(error)
+    }
+}
+
+/// Sets mass and inverse mass together after validating both columns and index.
+///
+/// Returns an error without mutation for zero, negative or nonfinite mass, an
+/// unrepresentable reciprocal, or invalid state. Use rigidity for fixed bodies.
+/// Advanced raw edits may represent zero inverse mass, but kinetic observers and
+/// thermostats require positive finite inverse mass for included particles.
+/// Dense updates allocate no storage; sparse insertion may allocate an entry.
+pub fn set_mass(objects: &mut PhysObj, particle: usize, mass: f64) -> Result<(), MassError> {
+    let inverse = 1.0 / mass;
+    if !mass.is_finite() || mass <= 0.0 || !inverse.is_finite() || inverse <= 0.0 {
+        return Err(MassError::InvalidMass { mass });
+    }
+    let (m, m_inv) = objects.core.get_two_mut::<f64>(ATTR_M, ATTR_M_INV)?;
+    let n = m.num_vectors();
+    super::state::validate_scalar_shape(ATTR_M, m.dim(), n, n)?;
+    super::state::validate_scalar_shape(ATTR_M_INV, m_inv.dim(), m_inv.num_vectors(), n)?;
+    if particle >= n {
+        return Err(MassError::State(
+            crate::models::ParticleStateError::ParticleOutOfBounds {
+                label: ATTR_M.to_string(),
+                particle,
+                particle_count: n,
+            },
+        ));
+    }
+    m.set(particle, 0, mass).expect("validated mass index");
+    m_inv
+        .set(particle, 0, inverse)
+        .expect("validated inverse-mass index");
+    Ok(())
+}

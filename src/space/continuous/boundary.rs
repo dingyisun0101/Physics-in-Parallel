@@ -78,6 +78,16 @@ impl std::error::Error for BoundaryError {}
 pub trait ContinuousBoundary: Sync {
     fn dim(&self) -> usize;
 
+    /// Whether correctly dimensioned vectors can still produce an error.
+    ///
+    /// The conservative default lets particle adapters stage fallible custom
+    /// transformations and commit only on success. Override with `false` only
+    /// when both position and position/velocity methods cannot fail after shape
+    /// validation. This is an error-atomicity contract, not a memory-safety one.
+    fn may_fail_after_validation(&self) -> bool {
+        true
+    }
+
     fn apply_position(&self, r: &mut [f64]) -> Result<(), BoundaryError>;
 
     fn apply_position_velocity(&self, r: &mut [f64], v: &mut [f64]) -> Result<(), BoundaryError> {
@@ -230,6 +240,10 @@ impl PeriodicBox {
 }
 
 impl ContinuousBoundary for PeriodicBox {
+    fn may_fail_after_validation(&self) -> bool {
+        false
+    }
+
     #[inline]
     fn dim(&self) -> usize {
         self.dim()
@@ -296,6 +310,10 @@ impl ClampBox {
 }
 
 impl ContinuousBoundary for ClampBox {
+    fn may_fail_after_validation(&self) -> bool {
+        false
+    }
+
     #[inline]
     fn dim(&self) -> usize {
         self.dim()
@@ -363,6 +381,10 @@ impl ReflectBox {
 }
 
 impl ContinuousBoundary for ReflectBox {
+    fn may_fail_after_validation(&self) -> bool {
+        false
+    }
+
     #[inline]
     fn dim(&self) -> usize {
         self.dim()

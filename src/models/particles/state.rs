@@ -8,8 +8,6 @@ alive and rigid masks, and reads inverse-mass values. Higher-level modules keep
 their own public error types and convert from `ParticleStateError`.
 */
 
-use rayon::prelude::*;
-
 pub use crate::engines::soa::phys_obj::ParticleStateError;
 use crate::engines::soa::phys_obj::PhysObj;
 use crate::models::particles::attrs::{
@@ -24,23 +22,8 @@ pub(crate) struct ParticleMasks {
 
 impl ParticleMasks {
     #[inline]
-    pub fn should_skip(&self, i: usize) -> bool {
-        self.alive.as_ref().is_some_and(|flags| !flags[i])
-            || self.rigid.as_ref().is_some_and(|flags| flags[i])
-    }
-
-    #[inline]
     pub fn is_included(&self, selection: ParticleSelection, i: usize) -> bool {
         selection.includes_dead() || self.alive.as_ref().is_none_or(|flags| flags[i])
-    }
-
-    pub fn included_count(&self, selection: ParticleSelection, n: usize) -> usize {
-        if selection.includes_dead() {
-            return n;
-        }
-        self.alive
-            .as_ref()
-            .map_or(n, |flags| flags.par_iter().filter(|&&alive| alive).count())
     }
 }
 
@@ -154,4 +137,43 @@ fn validate_attr_count(
         });
     }
     Ok(())
+}
+
+/// Short-lived mask snapshot borrowing dense storage without boolean gathers.
+pub(crate) struct BorrowedMasks<'a> {
+    alive: Option<std::borrow::Cow<'a, [u8]>>,
+    rigid: Option<std::borrow::Cow<'a, [u8]>>,
+}
+
+impl<'a> BorrowedMasks<'a> {
+    pub(crate) fn new(
+        flags: [Option<&'a crate::math::VectorList<u8>>; 2],
+        n: usize,
+    ) -> Result<Self, ParticleStateError> {
+        for (flag, label) in flags.iter().zip([ATTR_ALIVE, ATTR_RIGID]) {
+            if let Some(flag) = flag {
+                validate_scalar_shape(label, flag.dim(), flag.num_vectors(), n)?;
+            }
+        }
+        Ok(Self {
+            alive: flags[0].map(|flag| flag.borrow_values()),
+            rigid: flags[1].map(|flag| flag.borrow_values()),
+        })
+    }
+    pub(crate) fn alive(&self, index: usize) -> bool {
+        self.alive.as_ref().is_none_or(|flags| flags[index] != 0)
+    }
+    pub(crate) fn should_skip(&self, index: usize) -> bool {
+        !self.alive(index) || self.rigid.as_ref().is_some_and(|flags| flags[index] != 0)
+    }
+}
+
+pub(crate) fn mask_labels(
+    objects: &PhysObj,
+    selection: ParticleSelection,
+) -> [Option<&'static str>; 2] {
+    [
+        (!selection.includes_dead() && objects.core.contains(ATTR_ALIVE)).then_some(ATTR_ALIVE),
+        objects.core.contains(ATTR_RIGID).then_some(ATTR_RIGID),
+    ]
 }

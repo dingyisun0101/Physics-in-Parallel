@@ -86,3 +86,110 @@ fn model_traits_and_errors_have_the_approved_concurrency_bounds() {
     network.insert_all_to_all(3, law).unwrap();
     assert_eq!(network.len(), 3);
 }
+
+#[test]
+fn integrators_mass_and_thermostat_contracts_cover_both_backends() {
+    use physics_in_parallel::prelude::basic::{Backend, ResolvedRng, RngMethod};
+    use physics_in_parallel::prelude::models::*;
+    for backend in [Backend::Dense, Backend::Sparse] {
+        let mut base = create_template(2, 3).unwrap();
+        for label in [ATTR_R, ATTR_V, ATTR_A, ATTR_M, ATTR_M_INV] {
+            base.attribute_mut::<f64>(label)
+                .unwrap()
+                .set_backend(backend);
+        }
+        for i in 0..3 {
+            base.set_attribute_vector(ATTR_V, i, &[2.0, 3.0]).unwrap();
+            base.set_attribute_vector(ATTR_A, i, &[4.0, -2.0]).unwrap();
+        }
+        set_alive(&mut base, 1, false).unwrap();
+        set_rigid(&mut base, 2, true).unwrap();
+        set_mass(&mut base, 0, 2.0).unwrap();
+        assert_eq!(
+            base.attribute::<f64>(ATTR_M_INV)
+                .unwrap()
+                .get(0, 0)
+                .unwrap(),
+            0.5
+        );
+        assert!(set_mass(&mut base, 0, 0.0).is_err());
+        let mut explicit = base.clone();
+        ExplicitEuler.apply(&mut explicit, 0.25).unwrap();
+        let mut semi = base.clone();
+        SemiImplicitEuler.apply(&mut semi, 0.25).unwrap();
+        assert_eq!(
+            explicit.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
+            [0.5, 0.75]
+        );
+        assert_eq!(
+            semi.attribute_vector::<f64>(ATTR_R, 0).unwrap(),
+            [0.75, 0.625]
+        );
+        assert_eq!(
+            explicit.attribute_vector::<f64>(ATTR_V, 0).unwrap(),
+            [3.0, 2.5]
+        );
+        for i in [1, 2] {
+            assert_eq!(
+                explicit.attribute_vector::<f64>(ATTR_R, i).unwrap(),
+                base.attribute_vector::<f64>(ATTR_R, i).unwrap()
+            );
+        }
+        let summary = kinetic_summary(&base, ParticleSelection::AliveOnly).unwrap();
+        assert_eq!(summary.particle_count, 2);
+        assert_eq!(
+            summary.energy,
+            KineticEnergyObserver::default().observe(&base).unwrap()
+        );
+        assert_eq!(
+            summary.temperature,
+            TemperatureObserver::default().observe(&base).unwrap()
+        );
+        set_alive(&mut base, 1, true).unwrap();
+        set_rigid(&mut base, 2, false).unwrap();
+        let rng = ResolvedRng::new(9, RngMethod::IndexedSplitMix64);
+        for bad in [0, 2] {
+            let mut particles = base.clone();
+            particles
+                .attribute_mut::<f64>(ATTR_M_INV)
+                .unwrap()
+                .set(bad, 0, -1.0)
+                .unwrap();
+            let before = particles
+                .attribute::<f64>(ATTR_V)
+                .unwrap()
+                .values()
+                .collect::<Vec<_>>();
+            let mut thermostat =
+                LangevinThermostat::new(1.0, 0.5, rng, ParticleSelection::All).unwrap();
+            assert!(thermostat.apply(&mut particles, 0.1).is_err());
+            assert_eq!(thermostat.step_counter(), 0);
+            assert_eq!(
+                particles
+                    .attribute::<f64>(ATTR_V)
+                    .unwrap()
+                    .values()
+                    .collect::<Vec<_>>(),
+                before
+            );
+            set_mass(&mut particles, bad, 1.0).unwrap();
+            let mut replay = particles.clone();
+            let mut restored =
+                LangevinThermostat::from_state(1.0, 0.5, rng, 0, ParticleSelection::All).unwrap();
+            thermostat.apply(&mut particles, 0.1).unwrap();
+            restored.apply(&mut replay, 0.1).unwrap();
+            assert_eq!(
+                particles
+                    .attribute::<f64>(ATTR_V)
+                    .unwrap()
+                    .values()
+                    .collect::<Vec<_>>(),
+                replay
+                    .attribute::<f64>(ATTR_V)
+                    .unwrap()
+                    .values()
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
