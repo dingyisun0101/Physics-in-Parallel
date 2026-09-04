@@ -54,7 +54,7 @@ impl fmt::Display for BoundaryError {
         match self {
             Self::InvalidBounds { axis, min, max } => write!(
                 f,
-                "boundary bounds on axis {axis} must be finite with min < max; got min={min}, max={max}"
+                "boundary bounds on axis {axis} must be finite with min < max and a representable required span; got min={min}, max={max}"
             ),
             Self::InvalidVectorDimension {
                 label,
@@ -135,6 +135,13 @@ pub trait ContinuousBoundary: Sync {
 }
 
 fn validate_bounds(min: &[f64], max: &[f64]) -> Result<(), BoundaryError> {
+    if min.is_empty() {
+        return Err(BoundaryError::InvalidVectorDimension {
+            label: "bounds",
+            expected: 1,
+            got: 0,
+        });
+    }
     if min.len() != max.len() {
         return Err(BoundaryError::InvalidVectorDimension {
             label: "bounds",
@@ -143,7 +150,11 @@ fn validate_bounds(min: &[f64], max: &[f64]) -> Result<(), BoundaryError> {
         });
     }
     for d in 0..min.len() {
-        if !min[d].is_finite() || !max[d].is_finite() || max[d] <= min[d] {
+        if !min[d].is_finite()
+            || !max[d].is_finite()
+            || max[d] <= min[d]
+            || !(max[d] - min[d]).is_finite()
+        {
             return Err(BoundaryError::InvalidBounds {
                 axis: d,
                 min: min[d],
@@ -176,7 +187,7 @@ fn validate_flat_vector_list(
     dim: usize,
     len: usize,
 ) -> Result<(), BoundaryError> {
-    if !len.is_multiple_of(dim) {
+    if dim == 0 || !len.is_multiple_of(dim) {
         return Err(BoundaryError::InvalidFlatVectorListLength { label, dim, len });
     }
     Ok(())
@@ -189,7 +200,7 @@ pub struct PeriodicBox {
 }
 
 impl PeriodicBox {
-    /// Construct a periodic box from per-axis lower and upper bounds.
+    /// Construct a nonempty periodic box with finite, representable axis spans.
     ///
     /// A coordinate below `min[d]` re-enters from `max[d]`; a coordinate at or
     /// above `max[d]` re-enters from `min[d]`. Velocity is unchanged because a
@@ -224,6 +235,11 @@ impl ContinuousBoundary for PeriodicBox {
         self.dim()
     }
 
+    fn apply_position_velocity(&self, r: &mut [f64], v: &mut [f64]) -> Result<(), BoundaryError> {
+        validate_vector_len("velocity", self.dim(), v.len())?;
+        self.apply_position(r)
+    }
+
     fn apply_position(&self, r: &mut [f64]) -> Result<(), BoundaryError> {
         validate_vector_len("position", self.dim(), r.len())?;
         for (d, x) in r.iter_mut().enumerate() {
@@ -233,7 +249,10 @@ impl ContinuousBoundary for PeriodicBox {
             let lo = self.min[d];
             let hi = self.max[d];
             let w = hi - lo;
-            *x = lo + (*x - lo).rem_euclid(w);
+            *x = lo + shifted_remainder(*x, lo, w);
+            if *x >= hi {
+                *x = lo;
+            }
         }
         Ok(())
     }
@@ -282,6 +301,11 @@ impl ContinuousBoundary for ClampBox {
         self.dim()
     }
 
+    fn apply_position_velocity(&self, r: &mut [f64], v: &mut [f64]) -> Result<(), BoundaryError> {
+        validate_vector_len("velocity", self.dim(), v.len())?;
+        self.apply_position(r)
+    }
+
     fn apply_position(&self, r: &mut [f64]) -> Result<(), BoundaryError> {
         validate_vector_len("position", self.dim(), r.len())?;
         for (d, x) in r.iter_mut().enumerate() {
@@ -298,14 +322,24 @@ pub struct ReflectBox {
 }
 
 impl ReflectBox {
-    /// Construct a reflecting box from per-axis lower and upper bounds.
+    /// Construct a nonempty reflecting box with finite doubled axis spans.
     ///
     /// A coordinate outside the box is mirrored back by reflecting through the
     /// box faces. The matching velocity component changes sign only when the
     /// unfolded trajectory crosses an odd number of faces. Large overshoots are
-    /// handled by repeated reflection rather than by a single clamp.
+    /// handled by a remainder fold without per-position allocation. Nonfinite
+    /// coordinates pass through unchanged; velocity flips follow wall parity.
     pub fn new(min: &[f64], max: &[f64]) -> Result<Self, BoundaryError> {
         validate_bounds(min, max)?;
+        for axis in 0..min.len() {
+            if !(2.0 * (max[axis] - min[axis])).is_finite() {
+                return Err(BoundaryError::InvalidBounds {
+                    axis,
+                    min: min[axis],
+                    max: max[axis],
+                });
+            }
+        }
         Ok(Self {
             min: min.to_vec(),
             max: max.to_vec(),
@@ -335,8 +369,24 @@ impl ContinuousBoundary for ReflectBox {
     }
 
     fn apply_position(&self, r: &mut [f64]) -> Result<(), BoundaryError> {
-        let mut flip_mask = vec![0; self.dim()];
-        self.apply_position_with_velocity_flip_mask(r, &mut flip_mask)
+        validate_vector_len("position", self.dim(), r.len())?;
+        for (axis, value) in r.iter_mut().enumerate() {
+            *value = reflect(*value, self.min[axis], self.max[axis]).0;
+        }
+        Ok(())
+    }
+
+    fn apply_position_velocity(&self, r: &mut [f64], v: &mut [f64]) -> Result<(), BoundaryError> {
+        validate_vector_len("position", self.dim(), r.len())?;
+        validate_vector_len("velocity", self.dim(), v.len())?;
+        for (axis, (position, velocity)) in r.iter_mut().zip(v).enumerate() {
+            let (value, flip) = reflect(*position, self.min[axis], self.max[axis]);
+            *position = value;
+            if flip {
+                *velocity = -*velocity;
+            }
+        }
+        Ok(())
     }
 
     fn apply_position_with_velocity_flip_mask(
@@ -346,33 +396,42 @@ impl ContinuousBoundary for ReflectBox {
     ) -> Result<(), BoundaryError> {
         validate_vector_len("position", self.dim(), r.len())?;
         validate_vector_len("velocity_flip_mask", self.dim(), flip_mask.len())?;
-        flip_mask.fill(0);
-
-        for d in 0..self.dim() {
-            let x = r[d];
-            if !x.is_finite() {
-                continue;
-            }
-
-            let lo = self.min[d];
-            let hi = self.max[d];
-            if !(x < lo || x > hi) {
-                continue;
-            }
-
-            let w = hi - lo;
-            let y = (x - lo).rem_euclid(2.0 * w);
-            r[d] = if y <= w { lo + y } else { hi - (y - w) };
-
-            let flips = if x < lo {
-                ((lo - x) / w).ceil() as i64
-            } else {
-                ((x - hi) / w).ceil() as i64
-            };
-            if flips & 1 == 1 {
-                flip_mask[d] = 1;
-            }
+        for (axis, (position, mask)) in r.iter_mut().zip(flip_mask).enumerate() {
+            let (value, flip) = reflect(*position, self.min[axis], self.max[axis]);
+            *position = value;
+            *mask = u8::from(flip);
         }
         Ok(())
     }
+}
+
+/// Avoids overflow in translating a finite coordinate far from the origin.
+fn shifted_remainder(value: f64, origin: f64, period: f64) -> f64 {
+    let shifted = value - origin;
+    if shifted.is_finite() {
+        shifted.rem_euclid(period)
+    } else {
+        (value.rem_euclid(period) - origin.rem_euclid(period)).rem_euclid(period)
+    }
+}
+
+/// Folds the unfolded coordinate and reports reflection parity without an
+/// integer crossing count. Exact wall landings retain the existing convention.
+fn reflect(value: f64, low: f64, high: f64) -> (f64, bool) {
+    if !value.is_finite() || (low..=high).contains(&value) {
+        return (value, false);
+    }
+    let width = high - low;
+    let offset = shifted_remainder(value, low, 2.0 * width);
+    let folded = if offset <= width {
+        low + offset
+    } else {
+        high - (offset - width)
+    };
+    let flip = if value < low {
+        offset >= width
+    } else {
+        offset > width || offset == 0.0
+    };
+    (folded.clamp(low, high), flip)
 }

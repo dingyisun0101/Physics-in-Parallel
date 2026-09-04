@@ -67,6 +67,8 @@ pub struct SquareLatticeGeometry {
     spacing: Vec<f64>,
     #[serde(skip)]
     layout: RowMajorLayout,
+    #[serde(skip)]
+    inverse_spacing_squared: Vec<f64>,
 }
 
 impl SquareLatticeGeometry {
@@ -119,6 +121,7 @@ impl SquareLatticeGeometry {
         Ok(Self {
             shape: shape.to_vec(),
             boundary,
+            inverse_spacing_squared: spacing.iter().map(|s| 1.0 / (s * s)).collect(),
             spacing,
             layout,
         })
@@ -219,6 +222,12 @@ impl SquareLatticeGeometry {
     }
 
     /// Applies the scalar-grid Laplacian independently to interleaved components.
+    ///
+    /// Validates lengths before mutation and reuses output without scratch.
+    /// Contiguous interior spans use fixed neighbor offsets; boundary spans
+    /// retain the configured normalization, including one-site axes. Each
+    /// output accumulates axes in increasing order with separate multiply/add.
+    /// Work is O(sites × components × rank), under the operation thread budget.
     pub fn laplacian(
         &self,
         input: &[f64],
@@ -236,32 +245,48 @@ impl SquareLatticeGeometry {
                 output: output.len(),
             });
         }
-        let inverse_spacing_squared: Vec<f64> = self
-            .spacing
-            .iter()
-            .map(|spacing| 1.0 / (spacing * spacing))
-            .collect();
-        let min_sites_per_job = parallel_chunk_len(self.num_sites()).unwrap_or(1);
-        output
-            .par_chunks_mut(components)
-            .with_min_len(min_sites_per_job)
-            .enumerate()
-            .for_each(|(flat, output_site)| {
-                output_site.fill(0.0);
-                let center_start = flat * components;
-                for (axis, inverse_spacing_squared) in
-                    inverse_spacing_squared.iter().copied().enumerate()
-                {
-                    let plus_start = self.neighbor_canonical(flat, axis, 1) * components;
-                    let minus_start = self.neighbor_canonical(flat, axis, -1) * components;
-                    for component in 0..components {
-                        output_site[component] += (input[plus_start + component]
-                            + input[minus_start + component]
-                            - 2.0 * input[center_start + component])
-                            * inverse_spacing_squared;
+        crate::threading::for_each_chunk_mut(output, components, |start, chunk| {
+            chunk.fill(0.0);
+            for axis in 0..self.rank() {
+                let stride = self.layout.strides()[axis] * components;
+                let extent = self.shape[axis];
+                let scale = self.inverse_spacing_squared[axis];
+                let mut offset = 0;
+                while offset < chunk.len() {
+                    let flat = start + offset;
+                    let coordinate = (flat / stride) % extent;
+                    let within = flat % stride;
+                    // An entire interior run has fixed +/-stride neighbors.
+                    let interior = coordinate > 0 && coordinate + 1 < extent;
+                    let run = if interior {
+                        (extent - 1 - coordinate) * stride - within
+                    } else {
+                        stride - within
+                    };
+                    let count = run.min(chunk.len() - offset);
+                    let (plus, minus) = if interior {
+                        (flat + stride, flat - stride)
+                    } else {
+                        let base = flat - coordinate * stride;
+                        (
+                            base + self.boundary.normalize(coordinate as isize + 1, extent)
+                                * stride,
+                            base + self.boundary.normalize(coordinate as isize - 1, extent)
+                                * stride,
+                        )
+                    };
+                    for (((out, &center), &plus), &minus) in chunk[offset..offset + count]
+                        .iter_mut()
+                        .zip(&input[flat..flat + count])
+                        .zip(&input[plus..plus + count])
+                        .zip(&input[minus..minus + count])
+                    {
+                        *out += (plus + minus - 2.0 * center) * scale;
                     }
+                    offset += count;
                 }
-            });
+            }
+        });
         Ok(())
     }
 }

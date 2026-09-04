@@ -88,3 +88,15 @@ single-worker allocation regression checks warmed dense output reuse without
 mixing allocations from unrelated test threads. Inspect final linked release
 assembly when evaluating vectorization: pre-LTO library assembly and vector
 register names alone do not establish packed numerical execution.
+
+## Spatial kernels
+
+Pair generators own and reuse their source/displacement/target buffers and
+sampling workspaces across explicit sweeps. Built-in reflection and periodic
+position/velocity operations allocate no per-position scratch. Empty geometry
+and unrepresentable spans fail during construction. Custom boundary callbacks
+retain their own allocation and failure behavior.
+
+The lattice Laplacian uses contiguous interior spans with fixed neighbor offsets
+and separate boundary spans; inverse spacings are cached in validated geometry.
+It allocates no per-call scratch and retains increasing-axis accumulation order.

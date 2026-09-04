@@ -175,3 +175,12 @@ objdump -d --no-show-raw-insn --disassemble=pip_scale /tmp/pip-simd-probe/native
 - Added public Python decoded-payload adapter and optional dense-result element cap. Validated 128-bit ranges/types, post-conversion complex finiteness, and untagged lattice real/complex values. Added Rust-generated fixtures and malformed variants.
 - Kept JSON parsing and fallible scalar diagnostics unchanged; further explicit SIMD classification depends on profiling parsing versus validation.
 - Validation passed: all Rust targets, strict all-target Clippy, warning-free rustdoc and formatting; all ten NumPy tests executed successfully (none skipped).
+
+### Batch 4 — spatial primitives
+
+- Batch 3 pushed as `df7926b`.
+- Rejected empty and unrepresentable boundary spans using existing structured errors; reflecting geometry also validates doubled width. Reflection uses direct position/velocity updates and remainder parity, avoiding per-position masks and saturating integer crossing counts. Periodic translation handles finite overshoots whose subtraction would overflow.
+- Pair generation now writes into all retained dense caches for independent, nearest-neighbor and radial methods. Warm single-worker tests count zero allocations across refresh plus bulk reflection, and verify same-sweep replay and source/displacement/target identity.
+- Lattice stencils traverse contiguous per-axis interior spans with fixed offsets and retain general boundary spans. Cached inverse spacing is omitted from serialization and reconstructed by validation. Exact comparisons cover ranks 1–4, tiny extents, three boundary kinds, anisotropic spacing and component counts 1/2/3/8/17.
+- An initial test imported a private implementation module; corrected it to the public space API. Spatial/allocation regressions and strict Clippy passed.
+- All-target Rust tests, warning-free rustdoc, formatting and diff checks passed before delivery.

@@ -60,3 +60,61 @@ fn warmed_dense_outputs_do_not_allocate() {
         assert_eq!(product.get(0, 0).unwrap(), 42.0);
     });
 }
+
+#[test]
+fn spatial_refresh_reuses_storage() {
+    use physics_in_parallel::rng::{ResolvedRng, RngMethod};
+    use physics_in_parallel::space::{
+        ContinuousBoundary, KernelType, PairGenerator, PairingMethod, ReflectBox, SourceMode,
+    };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let boundary = ReflectBox::new(&[0.0; 3], &[1.0; 3]).unwrap();
+        let mut positions = vec![2.25; 30_000];
+        let mut velocities = vec![1.0; 30_000];
+        boundary
+            .apply_positions_velocities(&mut positions, &mut velocities)
+            .unwrap();
+        for method in [
+            PairingMethod::IndependentUniform,
+            PairingMethod::Kernel {
+                kernel: KernelType::NearestNeighbor { dimension: 3 },
+                sources: SourceMode::RandomUniform,
+            },
+            PairingMethod::Kernel {
+                kernel: KernelType::UniformDistance { l: 3.0, c: 1.0 },
+                sources: SourceMode::RandomUniform,
+            },
+        ] {
+            let mut generator = PairGenerator::new(
+                &[8, 9, 10],
+                method,
+                10_000,
+                ResolvedRng::new(3, RngMethod::IndexedSplitMix64),
+            )
+            .unwrap();
+            generator.refresh_at(7);
+            let expected: Vec<_> = generator.targets().values().collect();
+            COUNT.set(0);
+            ACTIVE.set(true);
+            generator.refresh_at(7);
+            boundary
+                .apply_positions_velocities(&mut positions, &mut velocities)
+                .unwrap();
+            ACTIVE.set(false);
+            assert_eq!(COUNT.get(), 0, "{method:?}");
+            assert_eq!(generator.targets().values().collect::<Vec<_>>(), expected);
+            for ((source, displacement), target) in generator
+                .sources()
+                .values()
+                .zip(generator.displacements().values())
+                .zip(generator.targets().values())
+            {
+                assert_eq!(source + displacement, target);
+            }
+        }
+    });
+}

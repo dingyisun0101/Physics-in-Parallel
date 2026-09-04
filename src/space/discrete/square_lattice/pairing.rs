@@ -276,17 +276,30 @@ impl PairGenerator {
     /// Replaces every cached pair for an explicit scientific sweep.
     ///
     /// Repeating this call with the same sweep reproduces the same batch
-    /// exactly. No mutable RNG cursor participates in the result.
+    /// exactly. No mutable RNG cursor participates in the result. All three
+    /// dense caches and kernel workspaces retain their storage across sweeps.
     pub fn refresh_at(&mut self, sweep: u64) {
         match &mut self.workspace {
             PairingWorkspace::IndependentUniform => {
                 let rank = self.layout.shape().len();
-                let mut sources = vec![0; self.num_pairs() * rank];
-                let mut targets = vec![0; self.num_pairs() * rank];
-                let mut displacements = vec![0; self.num_pairs() * rank];
+                let sources = self
+                    .source_coords_cache
+                    .tensor_mut()
+                    .dense_values_mut()
+                    .expect("dense pair cache");
+                let targets = self
+                    .target_coords_cache
+                    .tensor_mut()
+                    .dense_values_mut()
+                    .expect("dense pair cache");
+                let displacements = self
+                    .displacement_coords_cache
+                    .tensor_mut()
+                    .dense_values_mut()
+                    .expect("dense pair cache");
                 self.random_filler
                     .try_fill_index_pairs_with(
-                        (&mut sources, &mut targets, &mut displacements),
+                        (sources, targets, displacements),
                         rank,
                         self.layout.size(),
                         sweep,
@@ -307,9 +320,6 @@ impl PairGenerator {
                         },
                     )
                     .expect("validated indexed independent-uniform filler");
-                self.source_coords_cache.replace_values(sources);
-                self.target_coords_cache.replace_values(targets);
-                self.displacement_coords_cache.replace_values(displacements);
             }
             PairingWorkspace::Kernel {
                 source_sites,
@@ -467,9 +477,15 @@ fn assemble_nearest_neighbor(
 ) {
     let rank = sources.dim();
     let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
-    let source_values = sources.logical_values();
-    let mut displacement_values = vec![0; source_values.len()];
-    let mut target_values = vec![0; source_values.len()];
+    let source_values = sources.tensor().dense_values().expect("dense pair cache");
+    let displacement_values = displacements
+        .tensor_mut()
+        .dense_values_mut()
+        .expect("dense pair cache");
+    let target_values = targets
+        .tensor_mut()
+        .dense_values_mut()
+        .expect("dense pair cache");
     source_values
         .par_chunks_exact(rank)
         .zip(directions.as_tensor().data().par_chunks_exact(rank))
@@ -487,8 +503,6 @@ fn assemble_nearest_neighbor(
                 *target = source + direction;
             }
         });
-    displacements.replace_values(displacement_values);
-    targets.replace_values(target_values);
 }
 
 fn assemble_radial(
@@ -501,9 +515,15 @@ fn assemble_radial(
 ) {
     let rank = sources.dim();
     let min_pairs_per_job = parallel_chunk_len(sources.num_vectors()).unwrap_or(1);
-    let source_values = sources.logical_values();
-    let mut displacement_values = vec![0; source_values.len()];
-    let mut target_values = vec![0; source_values.len()];
+    let source_values = sources.tensor().dense_values().expect("dense pair cache");
+    let displacement_values = displacements
+        .tensor_mut()
+        .dense_values_mut()
+        .expect("dense pair cache");
+    let target_values = targets
+        .tensor_mut()
+        .dense_values_mut()
+        .expect("dense pair cache");
     source_values
         .par_chunks_exact(rank)
         .zip(directions.as_tensor().data().par_chunks_exact(rank))
@@ -524,6 +544,4 @@ fn assemble_radial(
                 *target = source + component;
             }
         });
-    displacements.replace_values(displacement_values);
-    targets.replace_values(target_values);
 }
