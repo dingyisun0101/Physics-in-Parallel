@@ -184,6 +184,10 @@ across scalar, AVX2, and AVX-512 implementations, with correctness summaries and
 timings printed to the terminal and saved under `target/simd-results`.
 See [the SIMD test guide](tests/SIMD.md) for coverage and measurement details.
 
+Run `bash tests/run_correctness.sh` for independent numerical references across
+the basic, model, and advanced APIs, with error summaries and saved logs.
+See [the correctness test guide](tests/CORRECTNESS.md) for coverage and tolerances.
+
 ## Efficient simulation loops
 
 Run `cargo run --release --example basic_particle` for a complete loop using one
