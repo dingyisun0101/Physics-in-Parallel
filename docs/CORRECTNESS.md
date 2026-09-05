@@ -44,6 +44,7 @@ it does not independently validate the third-party random-number algorithms.
 | --- | --- |
 | Scalar / `math.rs` | All signed/unsigned primitive widths; integer square roots, saturation, projections, real f32/f64 operations; Complex<f32/f64> magnitude, square root, products, division, dot and Hermitian operations |
 | Tensor, Matrix, VectorList / `math.rs` | Allocating and reusable add/subtract/multiply/divide, scale, maps, reductions, casts, geometry, constructors/builders, mutation, backend conversion, and Serde |
+| JSON / `json.rs` | Independent versioned fixtures for every scalar type and all three containers; structured dense/sparse matrix schemas; heterogeneous attributes and slot IDs; reordered fields with full-width i128/u128 values; bitwise floating round trips; malformed schemas, duplicate fields, sparse ordering, missing/null/crossed storage arrays, nonfinite values, and index-space overflow |
 | Linear algebra / `math.rs` | Tensor/Matrix products, reusable products, transposes, Hermitian transposes, trace, maximum magnitude, matrix-vector and batched products, cross/wedge, vector norms, normalization, polar decomposition, axes/rows, per-vector scaling |
 | Advanced storage / `advanced.rs` | Object-safe raw storage, dense buffers, sparse entries, callbacks, heterogeneous attributes, and PhysObj adapters against vectors/maps |
 | Structured matrices / `advanced.rs` | All seven structures: logical and wrapped access, dense materialization, matrix-vector/batch products, trace, maximum magnitude, addition/subtraction/scaling, dense-returning elementwise/product/transpose methods, casts, and sparse conversion; large diagonal SIMD lengths |
@@ -95,5 +96,14 @@ sizes spanning SIMD and parallel thresholds. Model reference tests also create
 one- and four-worker caller pools. Seeds and input formulas are fixed, so no
 statistical/flaky probability thresholds or speed assertions are needed.
 
+JSON fixtures are built from scalar arrays and literal schema fields, then
+decoded independently of PiP's serializers. Large integers are compared through
+typed arrays rather than a floating-point JSON intermediate. Oversized sparse
+shapes must return a deserialization error without panicking, and valid payloads
+must preserve 128-bit integers regardless of JSON member order. Sparse documents
+with a billion logical elements are checked through their stored entries, without
+materializing the implicit zeros.
+
 This suite measures correctness. Use `bash tests/run_simd.sh --timings` for
-controlled performance measurements with scalar auto-vectorization disabled.
+normal release kernel timings, or add `--no-autovectorize` for a controlled
+strictly scalar reference. Neither timing mode asserts a speedup.

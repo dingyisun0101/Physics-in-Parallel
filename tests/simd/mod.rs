@@ -1,5 +1,5 @@
 //! Direct comparisons of every explicit SIMD kernel, compiled as crate unit tests.
-//! See ../SIMD.md and ../run_simd.sh for reproducible scalar builds and logging.
+//! See ../../docs/SIMD.md and ../run_simd.sh for release/scalar builds and logging.
 use super::*;
 use std::hint::black_box;
 use std::mem::MaybeUninit;

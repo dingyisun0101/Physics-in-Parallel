@@ -5,6 +5,35 @@ PiP selects execution kernels internally. Ordinary `Tensor`, `Matrix`, and
 annotations, or an application-owned SIMD dispatcher. Backend selection remains
 explicit and serialization retains the selected representation.
 
+## Release builds
+
+Build and run production workloads with `cargo build --release` or
+`cargo run --release`. The repository explicitly uses:
+
+```toml
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+incremental = false
+debug-assertions = false
+overflow-checks = false
+```
+
+LLVM loop and SLP auto-vectorization are enabled under normal release settings.
+No `no-vectorize` flags are set by the package. Fat LTO permits optimization
+across crates, at the cost of longer linking. Integer overflow checks and debug
+assertions follow normal Rust release behavior; explicit validation remains.
+
+**Applications must put profile settings in their own workspace-root
+`Cargo.toml`.** Cargo ignores profile settings in dependencies. Environment or
+Cargo configuration overrides can also change the effective settings. See
+[Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
+`bash tests/run_simd.sh --timings` uses normal release compilation. Add
+`--no-autovectorize` only to isolate explicit SIMD against a strictly scalar
+reference; those flags are scoped to the script's child processes.
+
 ## SIMD and portability
 
 Dense `f32` and `f64` elementwise add/subtract/multiply/divide and scalar scaling
@@ -20,9 +49,10 @@ AVX-512 integer extensions or FMA.
 Short chunks and other architectures use portable Rust loops. The compiler may
 vectorize those loops too. Both explicit paths use unaligned loads/stores and
 scalar tails: arbitrary valid slices and dimensions are supported. AVX-512
-implementations compile on the supported Rust toolchain; the development host
-has AVX2 but no AVX-512, so AVX-512 execution and performance remain unverified
-there. Feature-gated regression tests execute those kernels on suitable hosts.
+implementations have also been executed on an Intel Xeon Gold 6148 with
+AVX2 and AVX-512F. Both passed the direct correctness suite. The earlier
+large-workload benchmark host had AVX2 only; see [measured results](BENCHMARKS.md)
+for the separate machines, baselines, and performance limits.
 
 No project-wide `target-cpu=native`, nightly feature, or extra dependency is
 required. Applications intentionally building for their own machine can use

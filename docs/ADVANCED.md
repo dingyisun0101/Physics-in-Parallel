@@ -1,7 +1,7 @@
 # PiP Advanced API
 
-> **Alpha API:** this guide targets `4.0.0-alpha.2`. Advanced interfaces may
-> change between alpha releases and have no compatibility contract with 3.x.
+> **Breaking release:** this guide targets PiP `4.1.0-alpha`. Review the
+> [migration notes](RELEASES.md) when upgrading from 3.x or a 4.0 alpha.
 
 The advanced API is opt-in:
 
@@ -92,9 +92,9 @@ serialization, randomness, or thread-pool ownership. Direct Serde remains the
 only conversion API, and `set_max_threads` remains the only PiP-wide execution
 setting.
 
-## Refactor compatibility notes
+## Compatibility with the 4.0 alphas
 
-This pass retains container types, explicit backend selection, RNG coordinates,
+PiP 4.1 alpha retains container types, explicit backend selection, RNG coordinates,
 serialized formats, and caller-owned pools. It adds reusable output/observation
 helpers and defaulted extension hooks. SIMD widths and dispatch stay internal.
 `NeighborListError` adds capacity and nonfinite-position variants; downstream

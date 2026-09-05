@@ -2,11 +2,15 @@
 Physics in Parallel provides backend-agnostic numerical containers, spatial
 tools, and reusable physical models.
 
-# Alpha warning
+# Breaking release: 4.1.0-alpha
 
-PiP 4.0 is an unstable, clean-slate rewrite. Alpha releases are incompatible
-with PiP 3.x, and their public API and serialized representations may change
-without migration support before 4.0.0.
+PiP 4.1 alpha replaces the 3.x API and tightens validation compared with the 4.0
+alphas. Review the [migration notes](https://github.com/dingyisun0101/Physics-in-Parallel/blob/v4.1.0-alpha/docs/RELEASES.md)
+before upgrading code or persisted data. Pin the exact alpha version; public
+APIs and serialized representations may change between alpha releases.
+
+Start with the [documentation index](https://github.com/dingyisun0101/Physics-in-Parallel/blob/v4.1.0-alpha/docs/README.md)
+for installation, examples, performance, correctness, and advanced API guides.
 
 # Thread-pool responsibility
 

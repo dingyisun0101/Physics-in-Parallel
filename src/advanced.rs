@@ -2,7 +2,7 @@
 //!
 //! These items support custom algorithms and integrations that are not covered
 //! by PiP's foundational or ready-model facades. Their invariants are catalogued
-//! in the repository's `advanced_api.md`.
+//! in the [advanced guide](https://github.com/dingyisun0101/Physics-in-Parallel/blob/v4.1.0-alpha/docs/ADVANCED.md).
 
 pub use crate::engines::soa::interaction::{
     Interaction, InteractionError, InteractionId, InteractionNodes, InteractionOrder,

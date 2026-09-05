@@ -1,12 +1,14 @@
 # PiP NumPy Helper
 
-> **Alpha schema:** this helper targets PiP `4.0.0-alpha.2`. It does not read
-> PiP 3.x documents, and its accepted schema may change between alpha releases.
+> **Breaking release:** this helper targets PiP `4.1.0-alpha` and its schema-v2
+> documents. It does not read PiP 3.x or 4.0.0-alpha.1 tensor documents.
+> The 4.0.0-alpha.2 tensor wire format is retained.
 
-`numpy_support.py` reads JSON produced by direct PiP 4.0 alpha Serde:
+`python/numpy_support.py` reads JSON produced by direct PiP 4.1 alpha Serde.
+Run from the repository root:
 
 ```python
-from numpy_support import to_ndarray
+from python.numpy_support import to_ndarray
 
 array = to_ndarray("tensor.json")
 ```

@@ -167,6 +167,11 @@ pub fn checked_num_elements(shape: &[usize], context: &str) -> Result<usize, Str
             .checked_mul(dim)
             .ok_or_else(|| format!("{context} shape product overflow: {shape:?}"))?;
     }
+    if expected_len > isize::MAX as usize {
+        return Err(format!(
+            "{context} shape exceeds the signed public index space: {shape:?}"
+        ));
+    }
     Ok(expected_len)
 }
 

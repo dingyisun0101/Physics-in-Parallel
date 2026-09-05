@@ -4,7 +4,8 @@ From `pip`, run:
 
 ```sh
 bash tests/run_simd.sh             # release correctness, terminal output + saved log
-bash tests/run_simd.sh --timings   # also compare execution times for every operation
+bash tests/run_simd.sh --timings   # normal release timings; references may auto-vectorize
+bash tests/run_simd.sh --timings --no-autovectorize  # strictly scalar baseline
 ```
 
 Logs go to `target/simd-results/<UTC timestamp>-<PID>.log`. Set `SIMD_LOG_DIR`
@@ -60,17 +61,20 @@ Correctness cases cover:
 
 `--timings` runs the same correctness suite plus an otherwise ignored test.
 `TIMING` CSV rows report type, operation, backend, element count, median/min/max
-nanoseconds per call, nanoseconds per element, and speedup over scalar. There
+nanoseconds per call, nanoseconds per element, and speedup over the `Scalar`
+reference. In normal release mode that reference may itself auto-vectorize. There
 are three warmups and seven samples, with repeated calls per sample. Timings
 use one Rayon worker and sizes 31, 128, 4,099, 262,145, and 1,048,589. Allocation
 is included in `allocating_scale`; `copy_scale` measures just writes into an
 existing destination and therefore has no `Auto` timing row. In-place scale
 uses -1 to avoid repeated multiplication drifting into overflow/subnormals.
 
-The runner disables both LLVM auto-vectorizers with `-Cno-vectorize-loops
--Cno-vectorize-slp`, leaving the explicit target-feature intrinsics intact.
-This makes the `Scalar` reference a no-packed-SIMD baseline. Normal `cargo test`
-without those flags may auto-vectorize reference loops. Scalar floating-point
+By default the runner preserves normal release auto-vectorization. The optional
+`--no-autovectorize` flag disables both LLVM auto-vectorizers with
+`-Cno-vectorize-loops -Cno-vectorize-slp`, leaving explicit target-feature
+intrinsics intact. Only this mode makes `Scalar` a no-packed-SIMD baseline.
+The script preserves caller flags and prints them, along with the selected mode.
+Caller overrides can still disable vectorization in normal mode. Scalar floating-point
 instructions still use the architecture's floating registers. The scalar
 reference implements the documented formulas independently; it is not a
 runtime override of production dispatch. Direct SIMD calls bypass dispatch
@@ -79,6 +83,11 @@ sizes even when automatic dispatch would choose another backend.
 
 Timing ratios are informational, with no flaky speed assertions. They include
 small test-wrapper overhead and depend on CPU frequency, cache, system load,
-and AVX-512 throttling. The disabled auto-vectorizers also mean these numbers
-are controlled kernel comparisons, not application performance predictions.
+and AVX-512 throttling. Disabling auto-vectorizers measures a deliberately
+scalar baseline and can overstate gains over optimized application code. Neither
+mode measures complete application performance.
 Build flags and compiler version are recorded in every log.
+
+The [recorded SIMD measurements](BENCHMARKS.md#simd-kernel-measurements) used
+the old runner with auto-vectorization disabled. New default-mode timings must
+be labeled separately when comparing results.

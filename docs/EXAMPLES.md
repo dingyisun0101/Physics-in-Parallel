@@ -1,7 +1,7 @@
 # Examples
 
-These examples target PiP `4.0.0-alpha.2`. They are not compatible with PiP
-3.x and may change between 4.0 alpha releases.
+These examples target PiP `4.1.0-alpha`. See the [migration notes](RELEASES.md)
+before adapting code written for earlier releases. Run commands from the repository root.
 
 ## Basic Particle Model
 
@@ -9,15 +9,15 @@ These examples target PiP `4.0.0-alpha.2`. They are not compatible with PiP
 
 - configure PiP's process-wide per-method thread cap
 - create canonical particle state
-- adapt an explicit seed and method into `ResolvedRng`
-- sample positions
+- initialize particle positions and keep mass/inverse mass consistent
+- adapt an explicit seed and method into `ResolvedRng` for Langevin noise
 - construct and apply a validated pair-keyed spring network
-- inspect a typed universal particle attribute
+- integrate, reflect at walls, apply a thermostat, and report kinetic summaries
 
 Run it with:
 
 ```bash
-cargo run --example basic_particle
+cargo run --release --example basic_particle
 ```
 
 PiP uses the active Rayon pool. Real applications should configure one shared
@@ -31,3 +31,13 @@ coverage or when measurement justifies backend-sensitive access.
 
 Performance benchmarks should live in a dedicated benchmark harness so normal
 examples remain small, current, and compile-checked with the public API.
+
+## NumPy interchange fixtures
+
+`examples/numpy_fixtures.rs` emits schema-v2 documents for the
+[NumPy helper](NUMPY.md). Regenerate its fixtures from the repository root:
+
+```sh
+cargo run --release --example numpy_fixtures > python/fixtures.json
+python3 -m unittest python/test_numpy_support.py
+```

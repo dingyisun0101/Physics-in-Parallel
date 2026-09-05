@@ -36,7 +36,7 @@ where
     }
 }
 
-fn dense_from_payload<T>(payload: FlatPayload<T>) -> Result<DenseStorage<T>, String>
+pub(crate) fn dense_from_payload<T>(payload: FlatPayload<T>) -> Result<DenseStorage<T>, String>
 where
     T: Scalar + DeserializeOwned,
 {
@@ -75,7 +75,7 @@ where
     }
 }
 
-fn sparse_from_payload<T>(payload: SparsePayload<T>) -> Result<SparseStorage<T>, String>
+pub(crate) fn sparse_from_payload<T>(payload: SparsePayload<T>) -> Result<SparseStorage<T>, String>
 where
     T: Scalar + DeserializeOwned,
 {

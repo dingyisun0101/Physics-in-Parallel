@@ -1114,11 +1114,36 @@ enum StorageRef<'a, T: Scalar + Serialize> {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "backend", content = "tensor", rename_all = "snake_case")]
 #[serde(bound(deserialize = "T: DeserializeOwned"))]
-enum StorageOwned<T: Scalar> {
-    Dense(BackendTensor<T, Dense>),
-    Sparse(BackendTensor<T, Sparse>),
+struct StorageOwned<T: Scalar> {
+    backend: Backend,
+    tensor: StoragePayload<T>,
+}
+
+// Deserialize scalar arrays with their concrete type regardless of JSON field
+// order. Serde's adjacently tagged enum buffers an early `tensor` field as
+// untyped Content, whose deserializer does not support i128/u128.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, bound(deserialize = "T: DeserializeOwned"))]
+struct StoragePayload<T> {
+    kind: String,
+    version: u32,
+    scalar: String,
+    shape: Vec<usize>,
+    #[serde(default, deserialize_with = "present_array")]
+    data: Option<Vec<T>>,
+    #[serde(default, deserialize_with = "present_array")]
+    indices: Option<Vec<usize>>,
+    #[serde(default, deserialize_with = "present_array")]
+    values: Option<Vec<T>>,
+}
+
+// Missing arrays are allowed until the backend is known, but an explicitly
+// present null must still be rejected rather than treated as a missing field.
+fn present_array<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<T>>, D::Error> {
+    Vec::<T>::deserialize(deserializer).map(Some)
 }
 
 impl<T> Serialize for Tensor<T>
@@ -1144,9 +1169,55 @@ where
     where
         D: Deserializer<'de>,
     {
-        let storage = match StorageOwned::<T>::deserialize(deserializer)? {
-            StorageOwned::Dense(storage) => Storage::Dense(storage),
-            StorageOwned::Sparse(storage) => Storage::Sparse(storage),
+        use crate::math::io::json::{FlatPayload, SparsePayload};
+        use crate::math::io::tensor::{dense_from_payload, sparse_from_payload};
+        use serde::de::Error;
+
+        let document = StorageOwned::<T>::deserialize(deserializer)?;
+        let StoragePayload {
+            kind,
+            version,
+            scalar,
+            shape,
+            data,
+            indices,
+            values,
+        } = document.tensor;
+        let storage = match document.backend {
+            Backend::Dense => {
+                if indices.is_some() || values.is_some() {
+                    return Err(D::Error::custom(
+                        "dense tensor cannot contain sparse fields",
+                    ));
+                }
+                let data = data.ok_or_else(|| D::Error::missing_field("data"))?;
+                let inner = dense_from_payload(FlatPayload {
+                    kind,
+                    version,
+                    scalar,
+                    shape,
+                    data,
+                })
+                .map_err(D::Error::custom)?;
+                Storage::Dense(BackendTensor::from_storage(inner))
+            }
+            Backend::Sparse => {
+                if data.is_some() {
+                    return Err(D::Error::custom("sparse tensor cannot contain dense data"));
+                }
+                let indices = indices.ok_or_else(|| D::Error::missing_field("indices"))?;
+                let values = values.ok_or_else(|| D::Error::missing_field("values"))?;
+                let inner = sparse_from_payload(SparsePayload {
+                    kind,
+                    version,
+                    scalar,
+                    shape,
+                    indices,
+                    values,
+                })
+                .map_err(D::Error::custom)?;
+                Storage::Sparse(BackendTensor::from_storage(inner))
+            }
         };
         let logical_size = match &storage {
             Storage::Dense(value) => value.size(),
